@@ -1,0 +1,61 @@
+version: "2"
+
+run:
+  go: "1.25"
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - whitespace
+
+    # correctness
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - bodyclose
+    - contextcheck
+
+    # API / library hygiene
+    - errorlint
+    - nilerr
+    - nilnil
+    - unconvert
+    - unparam
+    - revive
+
+    # maintainability
+    - gocyclo
+    - gocritic
+    - misspell
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes: github.com/justapithecus/lode
+
+linters-settings:
+  contextcheck:
+    check-typed-errors: true
+
+  gocyclo:
+    min-complexity: 12
+
+  revive:
+    severity: error
+    rules:
+      - name: exported
+      - name: package-comments
+      - name: error-strings
+      - name: error-return
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
