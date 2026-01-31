@@ -1,0 +1,195 @@
+# Lode — Implementation Plan (Contract-First)
+
+This plan reflects Lode’s clarified scope: **persistence structure only**.
+It introduces an explicit **contract-freezing phase** before any implementation
+details harden.
+
+Lode’s core principle:
+
+> **Lode defines structure, not execution.**  
+> It stores facts, not interpretations.
+
+---
+
+## Conceptual Stack
+
+```
+Data Producer (any language / system)
+        ↓
+Lode Write API (structure + metadata)
+        ↓
+Storage Adapter (FS, S3, etc.)
+        ↓
+Immutable Objects + Manifests
+        ↓
+External Readers (query engines, tools)
+```
+
+---
+
+## Phase 0 — Foundations & Guardrails
+
+### Goal
+Establish repo discipline and enforce boundary constraints before adding behavior.
+
+### Deliverables
+- Repo skeleton with `lode/`, `internal/`, `docs/`, `examples/`
+- `AGENTS.md` constraints applied
+- Taskfile scaffolding (even if minimal)
+
+### Mini-milestones
+- [x] Guardrails exist and are visible
+- [ ] Task targets are present (build / test / lint)
+- [ ] No execution logic introduced
+
+---
+
+## Phase 0.5 — Contract Definitions (NO CODE)
+
+### Goal
+Freeze **interfaces and invariants** required for parallel implementation,
+without committing to internal details.
+
+This phase produces **authoritative documents**, not code.
+
+### Deliverables
+
+#### 0.5.1 Core Model Contract (`docs/contracts/CONTRACT_CORE.md`)
+Defines:
+- Dataset and snapshot identity
+- Manifest self-description requirements
+- Metadata explicitness and persistence
+- Immutability rules and linear history
+
+#### 0.5.2 Write API Contract (`docs/contracts/CONTRACT_WRITE_API.md`)
+Defines:
+- `Dataset.Write` semantics and error behavior
+- Snapshot creation and parent linkage
+- Empty dataset behavior
+- Prohibited behaviors (no in-place mutation)
+
+#### 0.5.3 Storage Adapter Contract (`docs/contracts/CONTRACT_STORAGE.md`)
+Defines:
+- Adapter obligations for `Put/Get/List/Exists/Delete`
+- Safe write semantics (no overwrite)
+- Atomic commit expectations (manifest presence as commit signal)
+
+#### 0.5.4 Layout & Component Contract (`docs/contracts/CONTRACT_LAYOUT.md`)
+Defines:
+- Logical key layout ownership
+- Partitioner / compressor / codec roles
+- NoOp components and explicit recording
+- Canonical object key persistence
+
+#### 0.5.5 Iterator Contract (`docs/contracts/CONTRACT_ITERATION.md`)
+Defines:
+- Object iterator lifecycle semantics
+- Close/Err/Next behavior guarantees
+
+#### 0.5.6 Read API Contract (Stretch) (`docs/contracts/CONTRACT_READ_API.md`)
+Defines:
+- Adapter-agnostic read surface
+- Range-read requirements
+- Manifest-driven discovery
+
+### Exit criteria
+- All contract documents exist
+- Ambiguity is resolved by contract references
+- Phase 0 plan assertions are captured in contracts
+
+---
+
+## Phase 1 — Core Persistence Skeleton
+
+### Goal
+Implement the minimal, end-to-end write path with immutable snapshots.
+
+### Deliverables
+- Dataset abstraction
+- Manifest schema and persistence
+- Snapshot creation with explicit metadata
+- Safe write semantics enforced
+
+### Mini-milestones
+- [ ] Write → manifest → snapshot works
+- [ ] No metadata inference or defaults
+- [ ] Empty dataset behavior matches contracts
+
+---
+
+## Phase 2 — Adapters & Components
+
+### Goal
+Make storage and format choices pluggable without changing semantics.
+
+### Deliverables
+- Filesystem and in-memory adapters
+- JSONL codec
+- Gzip compression
+- Hive-style partitioner
+- NoOp components for partitioning/compression
+
+### Mini-milestones
+- [ ] Manifests record component names
+- [ ] No nil component handling
+- [ ] Layout is portable across adapters
+
+---
+
+## Phase 3 — Read Surface (Optional)
+
+### Goal
+Provide a minimal read facade for external consumers.
+
+### Deliverables
+- Dataset / partition / segment listing
+- Manifest access
+- Object open and random access via adapter
+
+### Mini-milestones
+- [ ] Range reads are true range reads
+- [ ] Manifests are sufficient for discovery
+- [ ] No planning or query logic added
+
+---
+
+## Phase 4 — Hardening
+
+### Goal
+Stabilize behavior and validate invariants with tests and examples.
+
+### Deliverables
+- Error taxonomy and test coverage
+- Example: write → list → read
+- Explicit metadata visibility on disk
+
+### Mini-milestones
+- [ ] Tests enforce immutability
+- [ ] Examples align with contracts
+- [ ] No hidden state detected
+
+---
+
+## Phase 5 — Expansion Experiments (Optional)
+
+### Goal
+Explore new adapters or codecs without expanding the public API.
+
+### Deliverables
+- S3 adapter (if needed)
+- Parquet codec
+- Manifest stats (optional, additive)
+
+### Mini-milestones
+- [ ] No API surface growth
+- [ ] No backend-specific conditionals
+- [ ] Explicitly marked experimental
+
+---
+
+## Contract Change Protocol
+
+Any change that affects contract behavior must:
+1. Update the relevant `docs/contracts/CONTRACT_*.md` file.
+2. Include a compatibility note (breaking vs additive).
+3. Avoid expanding public API without explicit justification.
