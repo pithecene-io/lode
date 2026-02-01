@@ -58,19 +58,20 @@ type Manifest struct {
 	// ParentSnapshotID optionally references the previous snapshot.
 	ParentSnapshotID SnapshotID `json:"parent_snapshot_id,omitempty"`
 
-	// RowCount is the total number of records in this snapshot.
+	// RowCount is the total number of data units in this snapshot.
 	RowCount int64 `json:"row_count"`
 
-	// MinTimestamp is the earliest timestamp in the snapshot (if records are timestamped).
+	// MinTimestamp is the earliest timestamp in the snapshot (if data units are timestamped).
 	// Omitted when not applicable.
 	MinTimestamp *time.Time `json:"min_timestamp,omitempty"`
 
-	// MaxTimestamp is the latest timestamp in the snapshot (if records are timestamped).
+	// MaxTimestamp is the latest timestamp in the snapshot (if data units are timestamped).
 	// Omitted when not applicable.
 	MaxTimestamp *time.Time `json:"max_timestamp,omitempty"`
 
-	// Codec records the codec used to serialize records (e.g., "jsonl").
-	Codec string `json:"codec"`
+	// Codec records the codec used to serialize structured data (e.g., "jsonl").
+	// Omitted when no codec is configured.
+	Codec string `json:"codec,omitempty"`
 
 	// Compressor records the compression format (e.g., "gzip", "noop").
 	Compressor string `json:"compressor"`
@@ -196,7 +197,7 @@ type Dataset interface {
 	ID() DatasetID
 
 	// Write commits new data and metadata as an immutable snapshot.
-	Write(ctx context.Context, records []any, metadata Metadata) (*Snapshot, error)
+	Write(ctx context.Context, data []any, metadata Metadata) (*Snapshot, error)
 
 	// Snapshot retrieves a specific snapshot by ID.
 	Snapshot(ctx context.Context, id SnapshotID) (*Snapshot, error)
@@ -204,7 +205,7 @@ type Dataset interface {
 	// Snapshots lists all committed snapshots.
 	Snapshots(ctx context.Context) ([]*Snapshot, error)
 
-	// Read retrieves all records from a specific snapshot.
+	// Read retrieves all data units from a specific snapshot.
 	Read(ctx context.Context, id SnapshotID) ([]any, error)
 
 	// Latest returns the most recently committed snapshot.

@@ -26,13 +26,15 @@ It is authoritative for any `Dataset` implementation.
 
 ### Required behavior
 
-- `Write(ctx, records, metadata)` MUST create a new snapshot on success.
+- `Write(ctx, data, metadata)` MUST create a new snapshot on success.
 - `metadata` MUST be non-nil; nil MUST return an error.
 - Empty metadata is valid and MUST be persisted explicitly.
 - The new snapshot MUST reference the previous snapshot as its parent (if any).
 - Writes MUST NOT mutate existing snapshots or manifests.
 - The manifest MUST include all required fields defined in `CONTRACT_CORE.md`
   (including row/event count and min/max timestamp when applicable).
+- When no codec is configured, each write represents a single data unit and
+  the row/event count MUST be `1`.
 
 ### Empty dataset behavior
 
