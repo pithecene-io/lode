@@ -34,6 +34,9 @@ type Metadata map[string]any
 // A manifest is self-contained and includes the dataset ID, snapshot ID,
 // format version, metadata, and all data file references.
 type Manifest struct {
+	// SchemaName identifies the manifest schema (e.g., "lode-manifest").
+	SchemaName string `json:"schema_name"`
+
 	// FormatVersion identifies the manifest schema version.
 	FormatVersion string `json:"format_version"`
 
@@ -54,6 +57,15 @@ type Manifest struct {
 
 	// ParentSnapshotID optionally references the previous snapshot.
 	ParentSnapshotID SnapshotID `json:"parent_snapshot_id,omitempty"`
+
+	// Codec records the codec used to serialize records (e.g., "jsonl").
+	Codec string `json:"codec"`
+
+	// Compressor records the compression format (e.g., "gzip", "noop").
+	Compressor string `json:"compressor"`
+
+	// Partitioner records the partitioning strategy (e.g., "hive-dt", "noop").
+	Partitioner string `json:"partitioner"`
 }
 
 // FileRef describes a single data file within a snapshot.
