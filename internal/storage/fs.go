@@ -159,6 +159,113 @@ func (f *FS) Root() string {
 	return f.root
 }
 
+// Stat returns the size of the file at the given path.
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path would escape the storage root or is empty.
+func (f *FS) Stat(_ context.Context, path string) (int64, error) {
+	fullPath, err := f.safePathForFile(path)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, lode.ErrNotFound
+		}
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+// ReadRange reads a byte range from the file at the given path.
+// This is a true range read using seek, not a simulated full download.
+// Per CONTRACT_READ_API.md, range reads must be efficient.
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path would escape the storage root or is empty.
+func (f *FS) ReadRange(_ context.Context, path string, offset int64, length int64) ([]byte, error) {
+	fullPath, err := f.safePathForFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, lode.ErrNotFound
+		}
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+
+	// Seek to offset (true range read - no data read before offset)
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	// Read exactly length bytes
+	data := make([]byte, length)
+	n, err := io.ReadFull(file, data)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+
+	return data[:n], nil
+}
+
+// ReaderAt returns a random-access reader for the file at the given path.
+// The returned FSReaderAt supports efficient random access via io.ReaderAt.
+// The caller must close the reader when done.
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path would escape the storage root or is empty.
+func (f *FS) ReaderAt(_ context.Context, path string) (*FSReaderAt, error) {
+	fullPath, err := f.safePathForFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, lode.ErrNotFound
+		}
+		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+
+	return &FSReaderAt{
+		file: file,
+		size: info.Size(),
+	}, nil
+}
+
+// FSReaderAt provides random access to a file.
+// It implements io.ReaderAt and io.Closer.
+type FSReaderAt struct {
+	file *os.File
+	size int64
+}
+
+// ReadAt reads len(p) bytes starting at offset off.
+// Implements io.ReaderAt.
+func (r *FSReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
+	return r.file.ReadAt(p, off)
+}
+
+// Close closes the underlying file.
+func (r *FSReaderAt) Close() error {
+	return r.file.Close()
+}
+
+// Size returns the total size of the file in bytes.
+func (r *FSReaderAt) Size() int64 {
+	return r.size
+}
+
 // safePathForFile validates and resolves a file path, ensuring it stays within the root.
 // Rejects empty path and "." since those would target the root directory itself.
 // Returns ErrInvalidPath if the path is invalid or would escape the root.
@@ -356,6 +463,122 @@ func (m *Memory) Delete(_ context.Context, path string) error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+// Stat returns the size of the data at the given path.
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path is empty or contains traversal sequences.
+func (m *Memory) Stat(_ context.Context, path string) (int64, error) {
+	normalized, valid := normalizePathForFile(path)
+	if !valid {
+		return 0, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
+	if !exists {
+		return 0, lode.ErrNotFound
+	}
+
+	return int64(len(data)), nil
+}
+
+// ReadRange reads a byte range from the data at the given path.
+// This is a true range read - only the requested slice is copied.
+// Per CONTRACT_READ_API.md, range reads must be efficient.
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path is empty or contains traversal sequences.
+func (m *Memory) ReadRange(_ context.Context, path string, offset int64, length int64) ([]byte, error) {
+	normalized, valid := normalizePathForFile(path)
+	if !valid {
+		return nil, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, lode.ErrNotFound
+	}
+
+	// Handle offset beyond data
+	if offset >= int64(len(data)) {
+		return []byte{}, nil
+	}
+
+	// Calculate actual read length
+	end := offset + length
+	if end > int64(len(data)) {
+		end = int64(len(data))
+	}
+
+	// Return a copy of only the requested range (true range read)
+	result := make([]byte, end-offset)
+	copy(result, data[offset:end])
+	return result, nil
+}
+
+// ReaderAt returns a random-access reader for the data at the given path.
+// The returned MemoryReaderAt supports efficient random access.
+// The caller must close the reader when done (idempotent).
+// Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path is empty or contains traversal sequences.
+func (m *Memory) ReaderAt(_ context.Context, path string) (*MemoryReaderAt, error) {
+	normalized, valid := normalizePathForFile(path)
+	if !valid {
+		return nil, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, lode.ErrNotFound
+	}
+
+	// Make a copy to avoid races
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+
+	return &MemoryReaderAt{
+		data: dataCopy,
+	}, nil
+}
+
+// MemoryReaderAt provides random access to in-memory data.
+// It implements io.ReaderAt and io.Closer.
+type MemoryReaderAt struct {
+	data   []byte
+	closed bool
+}
+
+// ReadAt reads len(p) bytes starting at offset off.
+// Implements io.ReaderAt.
+func (r *MemoryReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
+	if off >= int64(len(r.data)) {
+		return 0, io.EOF
+	}
+
+	n = copy(p, r.data[off:])
+	if n < len(p) {
+		err = io.EOF
+	}
+	return n, err
+}
+
+// Close marks the reader as closed. Idempotent.
+func (r *MemoryReaderAt) Close() error {
+	r.closed = true
+	return nil
+}
+
+// Size returns the total size of the data in bytes.
+func (r *MemoryReaderAt) Size() int64 {
+	return int64(len(r.data))
 }
 
 // normalizePathForFile ensures consistent path formatting for file operations.

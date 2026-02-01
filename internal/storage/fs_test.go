@@ -343,3 +343,190 @@ func TestFS_List_EmptyPrefix_Allowed(t *testing.T) {
 		})
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Range read tests (FS)
+// -----------------------------------------------------------------------------
+
+func TestFS_Stat(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("hello world")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	size, err := store.Stat(ctx, "file.txt")
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if size != int64(len(data)) {
+		t.Errorf("Stat returned size %d, want %d", size, len(data))
+	}
+}
+
+func TestFS_Stat_NotFound(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+
+	_, err := store.Stat(ctx, "missing.txt")
+	if !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFS_ReadRange(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("0123456789abcdef")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	// Read middle portion
+	result, err := store.ReadRange(ctx, "file.txt", 4, 6)
+	if err != nil {
+		t.Fatalf("ReadRange failed: %v", err)
+	}
+	expected := []byte("456789")
+	if !bytes.Equal(result, expected) {
+		t.Errorf("ReadRange returned %q, want %q", result, expected)
+	}
+}
+
+func TestFS_ReadRange_Start(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("0123456789")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	result, err := store.ReadRange(ctx, "file.txt", 0, 5)
+	if err != nil {
+		t.Fatalf("ReadRange failed: %v", err)
+	}
+	if !bytes.Equal(result, []byte("01234")) {
+		t.Errorf("ReadRange returned %q, want %q", result, "01234")
+	}
+}
+
+func TestFS_ReadRange_End(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("0123456789")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	// Read past end - should return available bytes
+	result, err := store.ReadRange(ctx, "file.txt", 7, 10)
+	if err != nil {
+		t.Fatalf("ReadRange failed: %v", err)
+	}
+	if !bytes.Equal(result, []byte("789")) {
+		t.Errorf("ReadRange returned %q, want %q", result, "789")
+	}
+}
+
+func TestFS_ReadRange_NotFound(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+
+	_, err := store.ReadRange(ctx, "missing.txt", 0, 10)
+	if !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFS_ReaderAt(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("0123456789abcdef")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	ra, err := store.ReaderAt(ctx, "file.txt")
+	if err != nil {
+		t.Fatalf("ReaderAt failed: %v", err)
+	}
+	defer ra.Close()
+
+	// Verify size
+	if ra.Size() != int64(len(data)) {
+		t.Errorf("Size() = %d, want %d", ra.Size(), len(data))
+	}
+
+	// Read at various offsets
+	buf := make([]byte, 4)
+
+	n, err := ra.ReadAt(buf, 0)
+	if err != nil {
+		t.Fatalf("ReadAt(0) failed: %v", err)
+	}
+	if n != 4 || !bytes.Equal(buf, []byte("0123")) {
+		t.Errorf("ReadAt(0) = %d, %q; want 4, %q", n, buf, "0123")
+	}
+
+	n, err = ra.ReadAt(buf, 8)
+	if err != nil {
+		t.Fatalf("ReadAt(8) failed: %v", err)
+	}
+	if n != 4 || !bytes.Equal(buf, []byte("89ab")) {
+		t.Errorf("ReadAt(8) = %d, %q; want 4, %q", n, buf, "89ab")
+	}
+}
+
+func TestFS_ReaderAt_RepeatedAccess(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+	data := []byte("0123456789")
+	_ = store.Put(ctx, "file.txt", bytes.NewReader(data))
+
+	ra, err := store.ReaderAt(ctx, "file.txt")
+	if err != nil {
+		t.Fatalf("ReaderAt failed: %v", err)
+	}
+	defer ra.Close()
+
+	buf := make([]byte, 2)
+
+	// Read same offset multiple times - should work without re-reading full object
+	for i := 0; i < 3; i++ {
+		n, err := ra.ReadAt(buf, 4)
+		if err != nil {
+			t.Fatalf("ReadAt iteration %d failed: %v", i, err)
+		}
+		if n != 2 || !bytes.Equal(buf, []byte("45")) {
+			t.Errorf("ReadAt iteration %d = %d, %q; want 2, %q", i, n, buf, "45")
+		}
+	}
+
+	// Read at different offset
+	n, err := ra.ReadAt(buf, 0)
+	if err != nil {
+		t.Fatalf("ReadAt(0) failed: %v", err)
+	}
+	if n != 2 || !bytes.Equal(buf, []byte("01")) {
+		t.Errorf("ReadAt(0) = %d, %q; want 2, %q", n, buf, "01")
+	}
+}
+
+func TestFS_ReaderAt_NotFound(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, _ := storage.NewFS(root)
+
+	_, err := store.ReaderAt(ctx, "missing.txt")
+	if !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}

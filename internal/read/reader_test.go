@@ -253,17 +253,99 @@ func TestOpenObject_Success(t *testing.T) {
 	}
 }
 
-func TestObjectReaderAt_NotSupported(t *testing.T) {
+func TestObjectReaderAt_Success(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write a data file
+	content := []byte("0123456789abcdef")
+	err := store.Put(ctx, "datasets/mydata/snapshots/snap-1/data/file.bin", bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("failed to write test data: %v", err)
+	}
+
+	reader := NewReader(store)
+	ra, err := reader.ObjectReaderAt(ctx, ObjectRef{
+		Dataset: "mydata",
+		Segment: SegmentRef{ID: "snap-1"},
+		Path:    "data/file.bin",
+	})
+	if err != nil {
+		t.Fatalf("ObjectReaderAt failed: %v", err)
+	}
+	defer ra.Close()
+
+	// Verify size
+	if ra.Size() != int64(len(content)) {
+		t.Errorf("Size() = %d, want %d", ra.Size(), len(content))
+	}
+
+	// Read at offset
+	buf := make([]byte, 4)
+	n, err := ra.ReadAt(buf, 4)
+	if err != nil {
+		t.Fatalf("ReadAt failed: %v", err)
+	}
+	if n != 4 || !bytes.Equal(buf, []byte("4567")) {
+		t.Errorf("ReadAt = %d, %q; want 4, %q", n, buf, "4567")
+	}
+}
+
+func TestObjectReaderAt_RepeatedAccess(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	content := []byte("hello world test data")
+	err := store.Put(ctx, "datasets/mydata/snapshots/snap-1/data/file.bin", bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("failed to write test data: %v", err)
+	}
+
+	reader := NewReader(store)
+	ra, err := reader.ObjectReaderAt(ctx, ObjectRef{
+		Dataset: "mydata",
+		Segment: SegmentRef{ID: "snap-1"},
+		Path:    "data/file.bin",
+	})
+	if err != nil {
+		t.Fatalf("ObjectReaderAt failed: %v", err)
+	}
+	defer ra.Close()
+
+	buf := make([]byte, 5)
+
+	// Read same position multiple times
+	for i := 0; i < 3; i++ {
+		n, err := ra.ReadAt(buf, 0)
+		if err != nil {
+			t.Fatalf("ReadAt iteration %d failed: %v", i, err)
+		}
+		if n != 5 || !bytes.Equal(buf, []byte("hello")) {
+			t.Errorf("ReadAt iteration %d = %d, %q; want 5, %q", i, n, buf, "hello")
+		}
+	}
+
+	// Read different position
+	n, err := ra.ReadAt(buf, 6)
+	if err != nil {
+		t.Fatalf("ReadAt(6) failed: %v", err)
+	}
+	if n != 5 || !bytes.Equal(buf, []byte("world")) {
+		t.Errorf("ReadAt(6) = %d, %q; want 5, %q", n, buf, "world")
+	}
+}
+
+func TestObjectReaderAt_NotFound(t *testing.T) {
 	store := storage.NewMemory()
 	reader := NewReader(store)
 
 	_, err := reader.ObjectReaderAt(context.Background(), ObjectRef{
 		Dataset: "mydata",
 		Segment: SegmentRef{ID: "snap-1"},
-		Path:    "data/file.json",
+		Path:    "data/missing.bin",
 	})
-	if !errors.Is(err, ErrRangeReadNotSupported) {
-		t.Errorf("expected ErrRangeReadNotSupported, got %v", err)
+	if !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 

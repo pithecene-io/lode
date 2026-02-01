@@ -29,15 +29,21 @@ var ErrRangeReadNotSupported = errors.New("range read not supported by this stor
 // Reader is a façade that maps API calls to storage operations.
 // It performs no interpretation or planning.
 type Reader struct {
-	store lode.Store
+	store   lode.Store
+	adapter *StoreAdapter
 }
 
 // NewReader creates a Reader backed by the given store.
+// If the store supports range reads (e.g., storage.FS or storage.Memory),
+// those capabilities will be automatically detected and enabled.
 func NewReader(store lode.Store) *Reader {
 	if store == nil {
 		panic("read: store is required")
 	}
-	return &Reader{store: store}
+	return &Reader{
+		store:   store,
+		adapter: NewStoreAdapter(store),
+	}
 }
 
 // ListDatasets returns all dataset IDs found in storage.
@@ -244,10 +250,11 @@ func (r *Reader) OpenObject(ctx context.Context, obj ObjectRef) (io.ReadCloser, 
 }
 
 // ObjectReaderAt returns a random-access reader for a data object.
-// Currently returns ErrRangeReadNotSupported as the basic Store interface
-// does not support range reads. This will be implemented in Task 4.
+// Returns ErrRangeReadNotSupported if the underlying store does not support range reads.
+// Per CONTRACT_READ_API.md, range reads must be true range reads, not simulated.
 func (r *Reader) ObjectReaderAt(ctx context.Context, obj ObjectRef) (ReaderAt, error) {
-	return nil, ErrRangeReadNotSupported
+	objPath := path.Join(datasetsDir, string(obj.Dataset), snapshotsDir, string(obj.Segment.ID), obj.Path)
+	return r.adapter.ReaderAt(ctx, ObjectKey(objPath))
 }
 
 // Ensure Reader implements API
