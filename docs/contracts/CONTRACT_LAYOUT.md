@@ -39,16 +39,18 @@ partitioning, compression, and codec roles.
 
 ## Codec
 
-- Defines record serialization format.
-- MUST be recorded in manifests by name.
+- Defines data serialization format when data is structured.
+- Codec configuration is optional.
+- When a codec is configured, it MUST be recorded in manifests by name.
 
 ---
 
 ## NoOp Components
 
 - Canonical NoOp implementations MUST exist.
-- Dataset configuration MUST never use nil components.
+- Dataset configuration MUST never use nil partitioner or compressor components.
 - Manifests MUST record `partitioner = "noop"` and `compression = "noop"` when applicable.
+- When a codec is not configured, codec fields MUST be omitted from manifests.
 
 ---
 

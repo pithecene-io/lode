@@ -94,9 +94,12 @@ Manifests are immutable and authoritative.
 
 - schema name + version
 - list of files with sizes and checksums
-- row/event counts
-- min/max timestamp (when records are timestamped; omit if not applicable)
+- row/event counts (total data units in snapshot)
+- min/max timestamp (when data units are timestamped; omit if not applicable)
 - references to sidecar indexes (optional)
+
+When no codec is configured, reads MUST return raw bytes for the object
+referenced by the manifest.
 
 Manifests must be readable in a single small object fetch.
 
