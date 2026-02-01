@@ -203,3 +203,62 @@ func TestMemory_List_PathTraversal_Rejected(t *testing.T) {
 		})
 	}
 }
+
+func TestMemory_EmptyPath_Rejected(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Empty path and "." should be rejected for file operations
+	testCases := []string{"", "."}
+
+	for _, path := range testCases {
+		t.Run("Put_"+path, func(t *testing.T) {
+			err := store.Put(ctx, path, bytes.NewReader([]byte("data")))
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Put(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+
+		t.Run("Get_"+path, func(t *testing.T) {
+			_, err := store.Get(ctx, path)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Get(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+
+		t.Run("Exists_"+path, func(t *testing.T) {
+			_, err := store.Exists(ctx, path)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Exists(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+
+		t.Run("Delete_"+path, func(t *testing.T) {
+			err := store.Delete(ctx, path)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Delete(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+	}
+}
+
+func TestMemory_List_EmptyPrefix_Allowed(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Create a file
+	_ = store.Put(ctx, "test.txt", bytes.NewReader([]byte("data")))
+
+	// Empty prefix and "." should work for List (list all)
+	for _, prefix := range []string{"", "."} {
+		t.Run(prefix, func(t *testing.T) {
+			paths, err := store.List(ctx, prefix)
+			if err != nil {
+				t.Errorf("List(%q) failed: %v", prefix, err)
+			}
+			if len(paths) != 1 {
+				t.Errorf("List(%q) returned %d paths, want 1", prefix, len(paths))
+			}
+		})
+	}
+}
