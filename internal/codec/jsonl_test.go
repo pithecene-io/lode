@@ -62,3 +62,39 @@ func TestJSONL_EmptyRecords(t *testing.T) {
 		t.Errorf("decoded %d records, want 0", len(decoded))
 	}
 }
+
+func TestJSONL_LargeRecord(t *testing.T) {
+	c := codec.NewJSONL()
+
+	// Create a record with data larger than default 64KB scanner limit
+	largeData := make([]byte, 100*1024) // 100KB
+	for i := range largeData {
+		largeData[i] = 'x'
+	}
+
+	records := []any{
+		map[string]any{"data": string(largeData)},
+	}
+
+	var buf bytes.Buffer
+	err := c.Encode(&buf, records)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	decoded, err := c.Decode(&buf)
+	if err != nil {
+		t.Fatalf("Decode failed (should handle >64KB records): %v", err)
+	}
+
+	if len(decoded) != 1 {
+		t.Fatalf("decoded %d records, want 1", len(decoded))
+	}
+
+	// Verify content
+	rec := decoded[0].(map[string]any)
+	decodedData := rec["data"].(string)
+	if len(decodedData) != len(largeData) {
+		t.Errorf("decoded data length = %d, want %d", len(decodedData), len(largeData))
+	}
+}

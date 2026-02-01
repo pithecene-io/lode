@@ -3,13 +3,18 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/justapithecus/lode/lode"
 )
+
+// ErrInvalidPath indicates a path that would escape the storage root.
+var ErrInvalidPath = errors.New("invalid path: escapes storage root")
 
 // FS implements lode.Store using the local filesystem.
 //
@@ -34,8 +39,12 @@ func NewFS(root string) (*FS, error) {
 
 // Put writes data to the given path.
 // Returns ErrPathExists if the path already exists.
+// Returns ErrInvalidPath if the path would escape the storage root.
 func (f *FS) Put(_ context.Context, path string, r io.Reader) error {
-	fullPath := filepath.Join(f.root, path)
+	fullPath, err := f.safePath(path)
+	if err != nil {
+		return err
+	}
 
 	// Check for existing file first
 	if _, err := os.Stat(fullPath); err == nil {
@@ -64,8 +73,12 @@ func (f *FS) Put(_ context.Context, path string, r io.Reader) error {
 
 // Get retrieves data from the given path.
 // Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path would escape the storage root.
 func (f *FS) Get(_ context.Context, path string) (io.ReadCloser, error) {
-	fullPath := filepath.Join(f.root, path)
+	fullPath, err := f.safePath(path)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Open(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -77,9 +90,13 @@ func (f *FS) Get(_ context.Context, path string) (io.ReadCloser, error) {
 }
 
 // Exists checks whether a path exists.
+// Returns ErrInvalidPath if the path would escape the storage root.
 func (f *FS) Exists(_ context.Context, path string) (bool, error) {
-	fullPath := filepath.Join(f.root, path)
-	_, err := os.Stat(fullPath)
+	fullPath, err := f.safePath(path)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(fullPath)
 	if err == nil {
 		return true, nil
 	}
@@ -91,11 +108,15 @@ func (f *FS) Exists(_ context.Context, path string) (bool, error) {
 
 // List returns all paths under the given prefix.
 // Paths are returned relative to the store root.
+// Returns ErrInvalidPath if the prefix would escape the storage root.
 func (f *FS) List(_ context.Context, prefix string) ([]string, error) {
-	searchPath := filepath.Join(f.root, prefix)
+	searchPath, err := f.safePath(prefix)
+	if err != nil {
+		return nil, err
+	}
 	var paths []string
 
-	err := filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil // prefix doesn't exist, return empty list
@@ -120,9 +141,13 @@ func (f *FS) List(_ context.Context, prefix string) ([]string, error) {
 
 // Delete removes the path if it exists.
 // Safe to call on a missing path (idempotent).
+// Returns ErrInvalidPath if the path would escape the storage root.
 func (f *FS) Delete(_ context.Context, path string) error {
-	fullPath := filepath.Join(f.root, path)
-	err := os.Remove(fullPath)
+	fullPath, err := f.safePath(path)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(fullPath)
 	if err != nil && os.IsNotExist(err) {
 		return nil // idempotent
 	}
@@ -132,6 +157,44 @@ func (f *FS) Delete(_ context.Context, path string) error {
 // Root returns the root directory of this store.
 func (f *FS) Root() string {
 	return f.root
+}
+
+// safePath validates and resolves a path, ensuring it stays within the root.
+// Returns ErrInvalidPath if the path would escape the root directory.
+func (f *FS) safePath(path string) (string, error) {
+	// Normalize the path: clean it and ensure no leading slash
+	cleaned := filepath.Clean(path)
+
+	// Reject absolute paths
+	if filepath.IsAbs(cleaned) {
+		return "", ErrInvalidPath
+	}
+
+	// Reject paths that start with ..
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", ErrInvalidPath
+	}
+
+	// Join with root and verify the result is still under root
+	fullPath := filepath.Join(f.root, cleaned)
+
+	// Double-check: resolved path must have root as prefix
+	// This catches edge cases like symlinks
+	absRoot, err := filepath.Abs(f.root)
+	if err != nil {
+		return "", err
+	}
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Ensure the path is under root (with separator to avoid prefix false positives)
+	if !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) && absPath != absRoot {
+		return "", ErrInvalidPath
+	}
+
+	return fullPath, nil
 }
 
 // Ensure FS implements lode.Store
@@ -144,6 +207,7 @@ var _ lode.Store = (*FS)(nil)
 //
 // Memory is safe for concurrent use.
 type Memory struct {
+	mu   sync.RWMutex
 	data map[string][]byte
 }
 
@@ -156,50 +220,84 @@ func NewMemory() *Memory {
 
 // Put writes data to the given path.
 // Returns ErrPathExists if the path already exists.
+// Returns ErrInvalidPath if the path contains traversal sequences.
 func (m *Memory) Put(_ context.Context, path string, r io.Reader) error {
-	// Normalize path
-	path = normalizePath(path)
-
-	if _, exists := m.data[path]; exists {
-		return lode.ErrPathExists
+	// Normalize and validate path
+	normalized, valid := normalizePath(path)
+	if !valid || normalized == "" {
+		return ErrInvalidPath
 	}
 
+	// Read data before acquiring lock to minimize lock duration
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
 
-	m.data[path] = data
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.data[normalized]; exists {
+		return lode.ErrPathExists
+	}
+
+	m.data[normalized] = data
 	return nil
 }
 
 // Get retrieves data from the given path.
 // Returns ErrNotFound if the path does not exist.
+// Returns ErrInvalidPath if the path contains traversal sequences.
 func (m *Memory) Get(_ context.Context, path string) (io.ReadCloser, error) {
-	path = normalizePath(path)
+	normalized, valid := normalizePath(path)
+	if !valid || normalized == "" {
+		return nil, ErrInvalidPath
+	}
 
-	data, exists := m.data[path]
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
 	if !exists {
 		return nil, lode.ErrNotFound
 	}
 
-	return io.NopCloser(strings.NewReader(string(data))), nil
+	// Return a copy to avoid races if caller reads while another goroutine writes
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	return io.NopCloser(strings.NewReader(string(dataCopy))), nil
 }
 
 // Exists checks whether a path exists.
+// Returns ErrInvalidPath if the path contains traversal sequences.
 func (m *Memory) Exists(_ context.Context, path string) (bool, error) {
-	path = normalizePath(path)
-	_, exists := m.data[path]
+	normalized, valid := normalizePath(path)
+	if !valid || normalized == "" {
+		return false, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	_, exists := m.data[normalized]
+	m.mu.RUnlock()
+
 	return exists, nil
 }
 
 // List returns all paths under the given prefix.
+// Returns ErrInvalidPath if the prefix contains traversal sequences.
 func (m *Memory) List(_ context.Context, prefix string) ([]string, error) {
-	prefix = normalizePath(prefix)
-	var paths []string
+	normalized, valid := normalizePath(prefix)
+	if !valid {
+		return nil, ErrInvalidPath
+	}
+	// Empty prefix is valid for listing all files
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var paths []string
 	for path := range m.data {
-		if strings.HasPrefix(path, prefix) {
+		if strings.HasPrefix(path, normalized) {
 			paths = append(paths, path)
 		}
 	}
@@ -209,16 +307,43 @@ func (m *Memory) List(_ context.Context, prefix string) ([]string, error) {
 
 // Delete removes the path if it exists.
 // Safe to call on a missing path (idempotent).
+// Returns ErrInvalidPath if the path contains traversal sequences.
 func (m *Memory) Delete(_ context.Context, path string) error {
-	path = normalizePath(path)
-	delete(m.data, path)
+	normalized, valid := normalizePath(path)
+	if !valid || normalized == "" {
+		return ErrInvalidPath
+	}
+
+	m.mu.Lock()
+	delete(m.data, normalized)
+	m.mu.Unlock()
+
 	return nil
 }
 
-// normalizePath ensures consistent path formatting.
-func normalizePath(path string) string {
+// normalizePath ensures consistent path formatting and validates safety.
+// Returns the normalized path and whether it's valid.
+func normalizePath(path string) (string, bool) {
+	// Empty path is valid (for listing all)
+	if path == "" {
+		return "", true
+	}
+
+	// Clean the path to resolve . and .. components
+	cleaned := filepath.Clean(path)
+
+	// Convert to forward slashes for consistency
+	cleaned = filepath.ToSlash(cleaned)
+
 	// Remove leading slash for consistency
-	return strings.TrimPrefix(path, "/")
+	cleaned = strings.TrimPrefix(cleaned, "/")
+
+	// Reject paths that escape via ..
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || cleaned == "." {
+		return "", false
+	}
+
+	return cleaned, true
 }
 
 // Ensure Memory implements lode.Store

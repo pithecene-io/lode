@@ -145,3 +145,61 @@ func TestMemory_Delete_Idempotent(t *testing.T) {
 		t.Error("file should be deleted")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Path traversal security tests (Memory should match FS behavior)
+// -----------------------------------------------------------------------------
+
+func TestMemory_Put_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	testCases := []struct {
+		name string
+		path string
+	}{
+		{"parent dir", "../escape.txt"},
+		{"nested parent", "foo/../../escape.txt"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := store.Put(ctx, tc.path, bytes.NewReader([]byte("data")))
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Put(%q) = %v, want ErrInvalidPath", tc.path, err)
+			}
+		})
+	}
+}
+
+func TestMemory_Get_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	testCases := []string{"../escape.txt", "foo/../../escape.txt"}
+
+	for _, path := range testCases {
+		t.Run(path, func(t *testing.T) {
+			_, err := store.Get(ctx, path)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Get(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+	}
+}
+
+func TestMemory_List_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	testCases := []string{"../", "foo/../.."}
+
+	for _, prefix := range testCases {
+		t.Run(prefix, func(t *testing.T) {
+			_, err := store.List(ctx, prefix)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("List(%q) = %v, want ErrInvalidPath", prefix, err)
+			}
+		})
+	}
+}

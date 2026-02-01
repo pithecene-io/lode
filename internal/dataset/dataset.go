@@ -229,9 +229,17 @@ func (d *Dataset) Snapshots(ctx context.Context) ([]*lode.Snapshot, error) {
 }
 
 // Read retrieves all records from a specific snapshot.
+// Returns an error if the snapshot was written with different codec/compressor
+// than the dataset is currently configured with.
 func (d *Dataset) Read(ctx context.Context, id lode.SnapshotID) ([]any, error) {
 	snapshot, err := d.Snapshot(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+
+	// Validate that manifest components match dataset config
+	// This ensures we use the correct codec/compressor for decoding
+	if err := d.validateComponentsMatch(snapshot.Manifest); err != nil {
 		return nil, err
 	}
 
@@ -245,6 +253,22 @@ func (d *Dataset) Read(ctx context.Context, id lode.SnapshotID) ([]any, error) {
 	}
 
 	return allRecords, nil
+}
+
+// validateComponentsMatch checks that the manifest's recorded components
+// match the dataset's current configuration. This prevents silent data
+// corruption when reading snapshots written with different components.
+func (d *Dataset) validateComponentsMatch(m *lode.Manifest) error {
+	if m.Codec != d.codec.Name() {
+		return fmt.Errorf("dataset: codec mismatch: snapshot uses %q but dataset configured with %q",
+			m.Codec, d.codec.Name())
+	}
+	if m.Compressor != d.compressor.Name() {
+		return fmt.Errorf("dataset: compressor mismatch: snapshot uses %q but dataset configured with %q",
+			m.Compressor, d.compressor.Name())
+	}
+	// Partitioner doesn't affect reading, only organization, so we don't validate it
+	return nil
 }
 
 // Latest returns the most recently committed snapshot.

@@ -200,3 +200,77 @@ func TestFS_Delete_Idempotent(t *testing.T) {
 		t.Error("file should be deleted")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Path traversal security tests
+// -----------------------------------------------------------------------------
+
+func TestFS_Put_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, err := storage.NewFS(root)
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	testCases := []struct {
+		name string
+		path string
+	}{
+		{"parent dir", "../escape.txt"},
+		{"nested parent", "foo/../../escape.txt"},
+		{"absolute path", "/etc/passwd"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := store.Put(ctx, tc.path, bytes.NewReader([]byte("data")))
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Put(%q) = %v, want ErrInvalidPath", tc.path, err)
+			}
+		})
+	}
+}
+
+func TestFS_Get_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, err := storage.NewFS(root)
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	testCases := []string{"../escape.txt", "foo/../../escape.txt", "/etc/passwd"}
+
+	for _, path := range testCases {
+		t.Run(path, func(t *testing.T) {
+			_, err := store.Get(ctx, path)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("Get(%q) = %v, want ErrInvalidPath", path, err)
+			}
+		})
+	}
+}
+
+func TestFS_List_PathTraversal_Rejected(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+
+	store, err := storage.NewFS(root)
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	testCases := []string{"../", "foo/../..", "/etc"}
+
+	for _, prefix := range testCases {
+		t.Run(prefix, func(t *testing.T) {
+			_, err := store.List(ctx, prefix)
+			if !errors.Is(err, storage.ErrInvalidPath) {
+				t.Errorf("List(%q) = %v, want ErrInvalidPath", prefix, err)
+			}
+		})
+	}
+}

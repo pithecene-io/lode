@@ -13,6 +13,10 @@ import (
 // json is a drop-in replacement for encoding/json with better performance.
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
+// maxScanTokenSize is the maximum size of a single JSONL record line.
+// Default bufio.Scanner limit is 64KB which is too small for many use cases.
+const maxScanTokenSize = 10 * 1024 * 1024 // 10MB
+
 // JSONL implements lode.Codec using JSON Lines format.
 // Each record is serialized as a single line of JSON.
 type JSONL struct{}
@@ -42,6 +46,7 @@ func (j *JSONL) Encode(w io.Writer, records []any) error {
 func (j *JSONL) Decode(r io.Reader) ([]any, error) {
 	var records []any
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanTokenSize)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
