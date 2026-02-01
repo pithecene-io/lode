@@ -79,6 +79,7 @@ Defines:
 - Logical key layout ownership
 - Partitioner / compressor / codec roles
 - NoOp components and explicit recording
+- Optional codec semantics for raw-byte data
 - Canonical object key persistence
 
 #### 0.5.5 Iterator Contract (`docs/contracts/CONTRACT_ITERATION.md`)
