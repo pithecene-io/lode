@@ -241,6 +241,42 @@ func TestManifest_RequiredFields(t *testing.T) {
 	if m.Partitioner == "" {
 		t.Error("manifest missing Partitioner")
 	}
+
+	// Row count (CONTRACT_CORE)
+	if m.RowCount != 1 {
+		t.Errorf("manifest RowCount = %d, want 1", m.RowCount)
+	}
+}
+
+func TestManifest_RowCount(t *testing.T) {
+	ctx := context.Background()
+	ds := newTestDataset(t)
+
+	// Write with multiple records
+	records := []any{
+		map[string]any{"id": 1},
+		map[string]any{"id": 2},
+		map[string]any{"id": 3},
+	}
+
+	snapshot, err := ds.Write(ctx, records, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	if snapshot.Manifest.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", snapshot.Manifest.RowCount)
+	}
+
+	// Write with zero records
+	snapshot2, err := ds.Write(ctx, []any{}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	if snapshot2.Manifest.RowCount != 0 {
+		t.Errorf("RowCount = %d, want 0", snapshot2.Manifest.RowCount)
+	}
 }
 
 // -----------------------------------------------------------------------------

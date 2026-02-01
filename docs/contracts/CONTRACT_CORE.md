@@ -51,6 +51,8 @@ Minimum required fields:
 - explicit metadata object (see below)
 - list of files with sizes and checksums (if available)
 - parent snapshot ID (when applicable)
+- row/event count (total records in snapshot)
+- min/max timestamp (when records are timestamped; omit if not applicable)
 
 Manifests are immutable once written.
 

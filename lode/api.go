@@ -58,6 +58,17 @@ type Manifest struct {
 	// ParentSnapshotID optionally references the previous snapshot.
 	ParentSnapshotID SnapshotID `json:"parent_snapshot_id,omitempty"`
 
+	// RowCount is the total number of records in this snapshot.
+	RowCount int64 `json:"row_count"`
+
+	// MinTimestamp is the earliest timestamp in the snapshot (if records are timestamped).
+	// Omitted when not applicable.
+	MinTimestamp *time.Time `json:"min_timestamp,omitempty"`
+
+	// MaxTimestamp is the latest timestamp in the snapshot (if records are timestamped).
+	// Omitted when not applicable.
+	MaxTimestamp *time.Time `json:"max_timestamp,omitempty"`
+
 	// Codec records the codec used to serialize records (e.g., "jsonl").
 	Codec string `json:"codec"`
 

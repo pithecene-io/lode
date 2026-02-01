@@ -140,9 +140,11 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 		Metadata:         metadata,
 		Files:            files,
 		ParentSnapshotID: parentID,
-		Codec:            d.codec.Name(),
-		Compressor:       d.compressor.Name(),
-		Partitioner:      d.partitioner.Name(),
+		RowCount:         int64(len(records)),
+		// MinTimestamp/MaxTimestamp: omitted when not applicable
+		Codec:       d.codec.Name(),
+		Compressor:  d.compressor.Name(),
+		Partitioner: d.partitioner.Name(),
 	}
 
 	// Write manifest (commit signal per CONTRACT_STORAGE.md)

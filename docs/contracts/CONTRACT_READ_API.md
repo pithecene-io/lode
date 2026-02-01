@@ -131,7 +131,10 @@ Manifests must be readable in a single small object fetch.
 
 ---
 
-## Recommended Layout
+## Layout
+
+Directory topology is **not strictly enforced** by the library. Users may configure
+layout strategies via an abstraction layer. The following is a reference layout:
 
 ```
 /datasets/<dataset>/
@@ -143,7 +146,12 @@ Manifests must be readable in a single small object fetch.
       /artifacts/
 ```
 
-This enables efficient prefix listing and pruning.
+Alternative layouts (e.g., partitions nested inside segments) are valid provided:
+- Manifests remain discoverable via listing
+- Object paths recorded in manifests are accurate and resolvable
+- Commit semantics (manifest presence = visibility) are preserved
+
+Layout abstraction enables efficient prefix listing and pruning for specific backends.
 
 ---
 
