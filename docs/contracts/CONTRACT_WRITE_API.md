@@ -31,6 +31,8 @@ It is authoritative for any `Dataset` implementation.
 - Empty metadata is valid and MUST be persisted explicitly.
 - The new snapshot MUST reference the previous snapshot as its parent (if any).
 - Writes MUST NOT mutate existing snapshots or manifests.
+- The manifest MUST include all required fields defined in `CONTRACT_CORE.md`
+  (including row/event count and min/max timestamp when applicable).
 
 ### Empty dataset behavior
 

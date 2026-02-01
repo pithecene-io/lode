@@ -95,7 +95,7 @@ Manifests are immutable and authoritative.
 - schema name + version
 - list of files with sizes and checksums
 - row/event counts
-- min/max timestamp
+- min/max timestamp (when records are timestamped; omit if not applicable)
 - references to sidecar indexes (optional)
 
 Manifests must be readable in a single small object fetch.
