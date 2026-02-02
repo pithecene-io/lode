@@ -122,6 +122,34 @@ func TestDefaultLayout_ParseSegmentID(t *testing.T) {
 	}
 }
 
+func TestDefaultLayout_DataFilePath(t *testing.T) {
+	layout := DefaultLayout{}
+	tests := []struct {
+		dataset   lode.DatasetID
+		segment   lode.SnapshotID
+		partition string
+		filename  string
+		want      string
+	}{
+		// Without partition
+		{"ds", "snap", "", "data.jsonl", "datasets/ds/snapshots/snap/data/data.jsonl"},
+		{"mydata", "s1", "", "data.gz", "datasets/mydata/snapshots/s1/data/data.gz"},
+		// With partition
+		{"ds", "snap", "day=2024-01-01", "data.jsonl", "datasets/ds/snapshots/snap/data/day=2024-01-01/data.jsonl"},
+		{"ds", "snap", "day=2024-01-01/hour=12", "data.gz", "datasets/ds/snapshots/snap/data/day=2024-01-01/hour=12/data.gz"},
+	}
+
+	for _, tt := range tests {
+		name := tt.want
+		t.Run(name, func(t *testing.T) {
+			got := layout.DataFilePath(tt.dataset, tt.segment, tt.partition, tt.filename)
+			if got != tt.want {
+				t.Errorf("DataFilePath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDefaultLayout_ExtractPartitionPath(t *testing.T) {
 	layout := DefaultLayout{}
 	tests := []struct {
@@ -168,6 +196,236 @@ func (m *mockStore) Get(_ context.Context, _ string) (io.ReadCloser, error) { re
 func (m *mockStore) Exists(_ context.Context, _ string) (bool, error)       { return false, nil }
 func (m *mockStore) List(_ context.Context, _ string) ([]string, error)     { return nil, nil }
 func (m *mockStore) Delete(_ context.Context, _ string) error               { return nil }
+
+// -----------------------------------------------------------------------------
+// HiveLayout Tests
+// -----------------------------------------------------------------------------
+
+func TestHiveLayout_DatasetsPrefix(t *testing.T) {
+	layout := HiveLayout{}
+	got := layout.DatasetsPrefix()
+	want := "datasets/"
+	if got != want {
+		t.Errorf("DatasetsPrefix() = %q, want %q", got, want)
+	}
+}
+
+func TestHiveLayout_SegmentsPrefix(t *testing.T) {
+	layout := HiveLayout{}
+	got := layout.SegmentsPrefix("mydata")
+	want := "datasets/mydata/"
+	if got != want {
+		t.Errorf("SegmentsPrefix() = %q, want %q", got, want)
+	}
+}
+
+func TestHiveLayout_ManifestPath(t *testing.T) {
+	layout := HiveLayout{}
+	got := layout.ManifestPath("mydata", "snap-1")
+	want := "datasets/mydata/segments/snap-1/manifest.json"
+	if got != want {
+		t.Errorf("ManifestPath() = %q, want %q", got, want)
+	}
+}
+
+func TestHiveLayout_IsManifest(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Valid unpartitioned
+		{"datasets/ds/segments/seg/manifest.json", true},
+		// Valid partitioned
+		{"datasets/ds/partitions/day=2024/segments/seg/manifest.json", true},
+		{"datasets/ds/partitions/day=2024/hour=12/segments/seg/manifest.json", true},
+		// Invalid
+		{"datasets/ds/snapshots/seg/manifest.json", false}, // wrong dir name
+		{"datasets/ds/segments/manifest.json", false},      // missing segment ID
+		{"ds/segments/seg/manifest.json", false},           // missing datasets/
+		{"manifest.json", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.IsManifest(tt.path)
+			if got != tt.want {
+				t.Errorf("IsManifest(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHiveLayout_ParseDatasetID(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		path string
+		want lode.DatasetID
+	}{
+		{"datasets/ds/segments/seg/manifest.json", "ds"},
+		{"datasets/mydata/partitions/day=2024/segments/s1/manifest.json", "mydata"},
+		{"invalid/path", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.ParseDatasetID(tt.path)
+			if got != tt.want {
+				t.Errorf("ParseDatasetID(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHiveLayout_ParseSegmentID(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		path string
+		want lode.SnapshotID
+	}{
+		{"datasets/ds/segments/seg/manifest.json", "seg"},
+		{"datasets/ds/partitions/day=2024/segments/s1/manifest.json", "s1"},
+		{"invalid/path", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.ParseSegmentID(tt.path)
+			if got != tt.want {
+				t.Errorf("ParseSegmentID(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHiveLayout_ExtractPartitionPath(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		path string
+		want string
+	}{
+		// With partition
+		{"datasets/ds/partitions/day=2024/segments/seg/data/f.json", "day=2024"},
+		{"datasets/ds/partitions/day=2024/hour=12/segments/seg/data/f.json", "day=2024/hour=12"},
+		// Without partition
+		{"datasets/ds/segments/seg/data/f.json", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.ExtractPartitionPath(tt.path)
+			if got != tt.want {
+				t.Errorf("ExtractPartitionPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHiveLayout_DataFilePath(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		partition string
+		want      string
+	}{
+		{"", "datasets/ds/segments/seg/data/file.json"},
+		{"day=2024", "datasets/ds/partitions/day=2024/segments/seg/data/file.json"},
+		{"day=2024/hour=12", "datasets/ds/partitions/day=2024/hour=12/segments/seg/data/file.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := layout.DataFilePath("ds", "seg", tt.partition, "file.json")
+			if got != tt.want {
+				t.Errorf("DataFilePath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// FlatLayout Tests
+// -----------------------------------------------------------------------------
+
+func TestFlatLayout_DatasetsPrefix(t *testing.T) {
+	layout := FlatLayout{}
+	got := layout.DatasetsPrefix()
+	if got != "" {
+		t.Errorf("DatasetsPrefix() = %q, want empty", got)
+	}
+}
+
+func TestFlatLayout_SegmentsPrefix(t *testing.T) {
+	layout := FlatLayout{}
+	got := layout.SegmentsPrefix("mydata")
+	want := "mydata/"
+	if got != want {
+		t.Errorf("SegmentsPrefix() = %q, want %q", got, want)
+	}
+}
+
+func TestFlatLayout_ManifestPath(t *testing.T) {
+	layout := FlatLayout{}
+	got := layout.ManifestPath("mydata", "snap-1")
+	want := "mydata/snap-1/manifest.json"
+	if got != want {
+		t.Errorf("ManifestPath() = %q, want %q", got, want)
+	}
+}
+
+func TestFlatLayout_IsManifest(t *testing.T) {
+	layout := FlatLayout{}
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"ds/seg/manifest.json", true},
+		{"mydata/snap-1/manifest.json", true},
+		// Invalid
+		{"datasets/ds/seg/manifest.json", false}, // too many parts
+		{"ds/manifest.json", false},               // missing segment
+		{"manifest.json", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.IsManifest(tt.path)
+			if got != tt.want {
+				t.Errorf("IsManifest(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFlatLayout_ParseDatasetID(t *testing.T) {
+	layout := FlatLayout{}
+	tests := []struct {
+		path string
+		want lode.DatasetID
+	}{
+		{"ds/seg/manifest.json", "ds"},
+		{"mydata/s1/manifest.json", "mydata"},
+		{"invalid", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := layout.ParseDatasetID(tt.path)
+			if got != tt.want {
+				t.Errorf("ParseDatasetID(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFlatLayout_DataFilePath(t *testing.T) {
+	layout := FlatLayout{}
+	// Partition is ignored in FlatLayout
+	got := layout.DataFilePath("ds", "seg", "ignored", "file.json")
+	want := "ds/seg/data/file.json"
+	if got != want {
+		t.Errorf("DataFilePath() = %q, want %q", got, want)
+	}
+}
 
 // -----------------------------------------------------------------------------
 // Custom Layout Tests - Prove Reader honors custom layouts
@@ -224,6 +482,15 @@ func (c *customLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
 
 func (c *customLayout) ExtractPartitionPath(_ string) string {
 	return "" // Custom layout doesn't support partitions
+}
+
+func (c *customLayout) DataFilePath(dataset lode.DatasetID, segment lode.SnapshotID, partition, filename string) string {
+	// custom/<dataset>/segs/<segment>/files/[partition/]filename
+	base := "custom/" + string(dataset) + "/segs/" + string(segment) + "/files/"
+	if partition == "" {
+		return base + filename
+	}
+	return base + partition + "/" + filename
 }
 
 func splitPath(p string) []string {
