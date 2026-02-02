@@ -7,9 +7,13 @@ import (
 	"github.com/justapithecus/lode/lode"
 )
 
-// Layout abstracts storage path construction.
+// Layout abstracts storage path construction for both reads and writes.
 //
-// Per CONTRACT_READ_API.md, layouts are pluggable but must ensure:
+// Per CONTRACT_LAYOUT.md, Layout is the unified abstraction that governs:
+//   - Path topology for datasets, segments, manifests, and objects
+//   - Whether and how partition semantics are encoded into paths
+//
+// Per CONTRACT_READ_API.md, layouts must ensure:
 //   - Manifests remain discoverable via listing
 //   - Object paths in manifests are accurate and resolvable
 //   - Commit semantics (manifest presence = visibility) are preserved
@@ -17,16 +21,17 @@ import (
 // Alternative layouts (e.g., partitions nested inside segments) are valid
 // provided these invariants hold.
 type Layout interface {
+	// -------------------------------------------------------------------------
+	// Discovery methods (read-side)
+	// -------------------------------------------------------------------------
+
 	// DatasetsPrefix returns the storage prefix for listing all datasets.
 	DatasetsPrefix() string
 
 	// SegmentsPrefix returns the storage prefix for listing segments in a dataset.
 	SegmentsPrefix(dataset lode.DatasetID) string
 
-	// ManifestPath returns the storage path for a segment's manifest.
-	ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string
-
-	// IsManifest returns true if the path is a manifest file.
+	// IsManifest returns true if the path is a valid manifest location.
 	IsManifest(p string) bool
 
 	// ParseDatasetID extracts the dataset ID from a manifest path.
@@ -40,6 +45,18 @@ type Layout interface {
 	// ExtractPartitionPath extracts the partition path from a file path.
 	// Returns empty string if no partition.
 	ExtractPartitionPath(filePath string) string
+
+	// -------------------------------------------------------------------------
+	// Path construction methods (write-side)
+	// -------------------------------------------------------------------------
+
+	// ManifestPath returns the storage path for a segment's manifest.
+	ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string
+
+	// DataFilePath returns the storage path for a data file within a segment.
+	// partition may be empty for unpartitioned data.
+	// filename is the base name of the data file (e.g., "data.jsonl.gz").
+	DataFilePath(dataset lode.DatasetID, segment lode.SnapshotID, partition, filename string) string
 }
 
 // DefaultLayout implements the reference layout from CONTRACT_READ_API.md:
@@ -154,5 +171,234 @@ func (l DefaultLayout) ExtractPartitionPath(filePath string) string {
 	return strings.Join(partParts, "/")
 }
 
+// DataFilePath returns "datasets/<dataset>/snapshots/<segment>/data/[partition/]filename".
+func (l DefaultLayout) DataFilePath(dataset lode.DatasetID, segment lode.SnapshotID, partition, filename string) string {
+	if partition == "" {
+		return path.Join(defaultDatasetsDir, string(dataset), defaultSnapshotsDir, string(segment), defaultDataDir, filename)
+	}
+	return path.Join(defaultDatasetsDir, string(dataset), defaultSnapshotsDir, string(segment), defaultDataDir, partition, filename)
+}
+
 // Ensure DefaultLayout implements Layout.
 var _ Layout = DefaultLayout{}
+
+// -----------------------------------------------------------------------------
+// HiveLayout
+// -----------------------------------------------------------------------------
+
+// HiveLayout implements a partition-first layout where partitions exist at the
+// dataset level and segments are nested within partitions:
+//
+//	/datasets/<dataset>/partitions/<k=v>/<k=v>/segments/<segment_id>/
+//	  manifest.json
+//	  /data/
+//	    filename
+//
+// This layout is optimized for partition pruning at the storage layer, as each
+// partition is a separate prefix. For unpartitioned data, files go directly in
+// a "segments" directory without partition nesting.
+//
+// Per CONTRACT_READ_API.md, this is an alternative layout valid provided:
+//   - Manifests remain discoverable via listing
+//   - Object paths in manifests are accurate and resolvable
+//   - Commit semantics (manifest presence = visibility) are preserved
+type HiveLayout struct{}
+
+// Hive layout constants.
+const (
+	hivePartitionsDir = "partitions"
+	hiveSegmentsDir   = "segments"
+)
+
+// DatasetsPrefix returns "datasets/".
+func (l HiveLayout) DatasetsPrefix() string {
+	return defaultDatasetsDir + "/"
+}
+
+// SegmentsPrefix returns "datasets/<dataset>/".
+// For HiveLayout, we must list the entire dataset to find all segments
+// across all partitions.
+func (l HiveLayout) SegmentsPrefix(dataset lode.DatasetID) string {
+	return path.Join(defaultDatasetsDir, string(dataset)) + "/"
+}
+
+// ManifestPath returns the path for a segment's manifest.
+// For HiveLayout, manifests are at: datasets/<dataset>/[partitions/.../]segments/<segment>/manifest.json
+// Since we don't know the partition at this point, this returns the unpartitioned path.
+// Callers needing partitioned paths should use DataFilePath with appropriate partition.
+func (l HiveLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
+	return path.Join(defaultDatasetsDir, string(dataset), hiveSegmentsDir, string(segment), defaultManifestFile)
+}
+
+// IsManifest returns true if the path is a valid HiveLayout manifest location.
+// Valid patterns:
+//   - datasets/<dataset>/segments/<segment>/manifest.json (unpartitioned)
+//   - datasets/<dataset>/partitions/.../segments/<segment>/manifest.json (partitioned)
+func (l HiveLayout) IsManifest(p string) bool {
+	parts := strings.Split(p, "/")
+	if len(parts) < 4 {
+		return false
+	}
+
+	// Must start with datasets/<dataset>
+	if parts[0] != defaultDatasetsDir || parts[1] == "" {
+		return false
+	}
+
+	// Must end with segments/<segment>/manifest.json
+	if parts[len(parts)-1] != defaultManifestFile {
+		return false
+	}
+
+	// Find "segments" - it must be followed by exactly <segment>/manifest.json
+	for i := 2; i < len(parts)-2; i++ {
+		if parts[i] == hiveSegmentsDir && parts[i+2] == defaultManifestFile {
+			return parts[i+1] != "" // segment ID must be non-empty
+		}
+	}
+
+	return false
+}
+
+// ParseDatasetID extracts dataset ID from a HiveLayout manifest path.
+func (l HiveLayout) ParseDatasetID(manifestPath string) lode.DatasetID {
+	if !l.IsManifest(manifestPath) {
+		return ""
+	}
+	parts := strings.Split(manifestPath, "/")
+	return lode.DatasetID(parts[1])
+}
+
+// ParseSegmentID extracts segment ID from a HiveLayout manifest path.
+func (l HiveLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
+	if !l.IsManifest(manifestPath) {
+		return ""
+	}
+	parts := strings.Split(manifestPath, "/")
+
+	// Find "segments" and return the next part
+	for i := 2; i < len(parts)-2; i++ {
+		if parts[i] == hiveSegmentsDir {
+			return lode.SnapshotID(parts[i+1])
+		}
+	}
+	return ""
+}
+
+// ExtractPartitionPath extracts the partition path from a HiveLayout file path.
+// For HiveLayout, partitions are between datasets/<dataset>/partitions/ and /segments/
+func (l HiveLayout) ExtractPartitionPath(filePath string) string {
+	parts := strings.Split(filePath, "/")
+
+	// Find "partitions" start index
+	partitionsIdx := -1
+	for i := 2; i < len(parts); i++ {
+		if parts[i] == hivePartitionsDir {
+			partitionsIdx = i
+			break
+		}
+	}
+
+	if partitionsIdx < 0 {
+		return "" // no partitions
+	}
+
+	// Find "segments" end index
+	segmentsIdx := -1
+	for i := partitionsIdx + 1; i < len(parts); i++ {
+		if parts[i] == hiveSegmentsDir {
+			segmentsIdx = i
+			break
+		}
+	}
+
+	if segmentsIdx < 0 || segmentsIdx <= partitionsIdx+1 {
+		return "" // no partition values between partitions/ and segments/
+	}
+
+	// Partition path is everything between partitions/ and segments/
+	return strings.Join(parts[partitionsIdx+1:segmentsIdx], "/")
+}
+
+// DataFilePath returns the path for a data file in HiveLayout.
+// Structure: datasets/<dataset>/[partitions/<k=v>/...]segments/<segment>/data/filename
+func (l HiveLayout) DataFilePath(dataset lode.DatasetID, segment lode.SnapshotID, partition, filename string) string {
+	if partition == "" {
+		return path.Join(defaultDatasetsDir, string(dataset), hiveSegmentsDir, string(segment), defaultDataDir, filename)
+	}
+	return path.Join(defaultDatasetsDir, string(dataset), hivePartitionsDir, partition, hiveSegmentsDir, string(segment), defaultDataDir, filename)
+}
+
+// Ensure HiveLayout implements Layout.
+var _ Layout = HiveLayout{}
+
+// -----------------------------------------------------------------------------
+// FlatLayout
+// -----------------------------------------------------------------------------
+
+// FlatLayout implements a minimal flat layout for simple use cases:
+//
+//	/<dataset>/<segment>/
+//	  manifest.json
+//	  /data/
+//	    filename
+//
+// This layout has no partition support and no "datasets" prefix, making it
+// simpler for single-dataset scenarios or testing.
+type FlatLayout struct{}
+
+// DatasetsPrefix returns "" (empty prefix for flat layout).
+func (l FlatLayout) DatasetsPrefix() string {
+	return ""
+}
+
+// SegmentsPrefix returns "<dataset>/".
+func (l FlatLayout) SegmentsPrefix(dataset lode.DatasetID) string {
+	return string(dataset) + "/"
+}
+
+// ManifestPath returns "<dataset>/<segment>/manifest.json".
+func (l FlatLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
+	return path.Join(string(dataset), string(segment), defaultManifestFile)
+}
+
+// IsManifest returns true if path matches <dataset>/<segment>/manifest.json.
+func (l FlatLayout) IsManifest(p string) bool {
+	parts := strings.Split(p, "/")
+	return len(parts) == 3 &&
+		parts[0] != "" &&
+		parts[1] != "" &&
+		parts[2] == defaultManifestFile
+}
+
+// ParseDatasetID extracts dataset ID from flat layout path.
+func (l FlatLayout) ParseDatasetID(manifestPath string) lode.DatasetID {
+	if !l.IsManifest(manifestPath) {
+		return ""
+	}
+	parts := strings.Split(manifestPath, "/")
+	return lode.DatasetID(parts[0])
+}
+
+// ParseSegmentID extracts segment ID from flat layout path.
+func (l FlatLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
+	if !l.IsManifest(manifestPath) {
+		return ""
+	}
+	parts := strings.Split(manifestPath, "/")
+	return lode.SnapshotID(parts[1])
+}
+
+// ExtractPartitionPath returns "" (flat layout has no partition support).
+func (l FlatLayout) ExtractPartitionPath(_ string) string {
+	return ""
+}
+
+// DataFilePath returns "<dataset>/<segment>/data/filename".
+// Partition is ignored in FlatLayout.
+func (l FlatLayout) DataFilePath(dataset lode.DatasetID, segment lode.SnapshotID, _, filename string) string {
+	return path.Join(string(dataset), string(segment), defaultDataDir, filename)
+}
+
+// Ensure FlatLayout implements Layout.
+var _ Layout = FlatLayout{}

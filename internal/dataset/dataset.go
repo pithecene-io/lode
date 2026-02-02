@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"sort"
 	"time"
 
+	"github.com/justapithecus/lode/internal/read"
 	"github.com/justapithecus/lode/lode"
 )
 
@@ -20,12 +20,6 @@ const (
 
 	// ManifestFormatVersion is the current manifest format version.
 	ManifestFormatVersion = "1.0.0"
-
-	// manifestFileName is the name of manifest files.
-	manifestFileName = "manifest.json"
-
-	// dataDir is the subdirectory for data files.
-	dataDir = "data"
 )
 
 // Config holds the configuration for a Dataset.
@@ -35,6 +29,8 @@ type Config struct {
 	Codec       lode.Codec
 	Compressor  lode.Compressor
 	Partitioner lode.Partitioner
+	// Layout determines path topology. If nil, DefaultLayout is used.
+	Layout read.Layout
 }
 
 // Validate checks that all required components are set.
@@ -61,13 +57,20 @@ type Dataset struct {
 	codec       lode.Codec
 	compressor  lode.Compressor
 	partitioner lode.Partitioner
+	layout      read.Layout
 }
 
 // New creates a new Dataset with the given configuration.
-// Returns an error if any component is nil.
+// Returns an error if any required component is nil.
+// If Layout is nil, DefaultLayout is used.
 func New(id lode.DatasetID, cfg Config) (*Dataset, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+
+	layout := cfg.Layout
+	if layout == nil {
+		layout = read.DefaultLayout{}
 	}
 
 	return &Dataset{
@@ -76,6 +79,7 @@ func New(id lode.DatasetID, cfg Config) (*Dataset, error) {
 		codec:       cfg.Codec,
 		compressor:  cfg.Compressor,
 		partitioner: cfg.Partitioner,
+		layout:      layout,
 	}, nil
 }
 
@@ -107,7 +111,6 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 
 	// Generate snapshot ID
 	snapshotID := lode.SnapshotID(generateID())
-	snapshotPath := d.snapshotPath(snapshotID)
 
 	// Group records by partition
 	partitions, err := d.partitionRecords(records)
@@ -118,7 +121,7 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 	// Write data files (before manifest per CONTRACT_STORAGE.md)
 	var files []lode.FileRef
 	for partKey, partRecords := range partitions {
-		fileRef, err := d.writeDataFile(ctx, snapshotPath, partKey, partRecords)
+		fileRef, err := d.writeDataFile(ctx, snapshotID, partKey, partRecords)
 		if err != nil {
 			return nil, fmt.Errorf("dataset: failed to write data file: %w", err)
 		}
@@ -148,7 +151,7 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 	}
 
 	// Write manifest (commit signal per CONTRACT_STORAGE.md)
-	if err := d.writeManifest(ctx, snapshotPath, manifest); err != nil {
+	if err := d.writeManifest(ctx, snapshotID, manifest); err != nil {
 		return nil, fmt.Errorf("dataset: failed to write manifest: %w", err)
 	}
 
@@ -161,7 +164,7 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 // Snapshot retrieves a specific snapshot by ID.
 // Per CONTRACT_WRITE_API.md: returns ErrNotFound for missing snapshot.
 func (d *Dataset) Snapshot(ctx context.Context, id lode.SnapshotID) (*lode.Snapshot, error) {
-	manifestPath := path.Join(d.snapshotPath(id), manifestFileName)
+	manifestPath := d.layout.ManifestPath(d.id, id)
 
 	rc, err := d.store.Get(ctx, manifestPath)
 	if err != nil {
@@ -186,29 +189,26 @@ func (d *Dataset) Snapshot(ctx context.Context, id lode.SnapshotID) (*lode.Snaps
 // Snapshots lists all committed snapshots.
 // Per CONTRACT_WRITE_API.md: returns empty list (no error) for empty dataset.
 func (d *Dataset) Snapshots(ctx context.Context) ([]*lode.Snapshot, error) {
-	prefix := d.datasetPath() + "/"
+	prefix := d.layout.SegmentsPrefix(d.id)
 
 	paths, err := d.store.List(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("dataset: failed to list snapshots: %w", err)
 	}
 
-	// Find unique snapshot IDs from manifest paths
+	// Find unique snapshot IDs from manifest paths using layout
 	seen := make(map[lode.SnapshotID]bool)
 	var snapshots []*lode.Snapshot
 
 	for _, p := range paths {
-		// Look for manifest files
-		if path.Base(p) != manifestFileName {
+		// Use layout to check if this is a valid manifest path
+		if !d.layout.IsManifest(p) {
 			continue
 		}
 
-		// Extract snapshot ID from path
-		// Path format: datasets/<id>/snapshots/<snapshot_id>/manifest.json
-		dir := path.Dir(p)
-		snapshotID := lode.SnapshotID(path.Base(dir))
-
-		if seen[snapshotID] {
+		// Extract snapshot ID using layout
+		snapshotID := d.layout.ParseSegmentID(p)
+		if snapshotID == "" || seen[snapshotID] {
 			continue
 		}
 		seen[snapshotID] = true
@@ -287,16 +287,6 @@ func (d *Dataset) Latest(ctx context.Context) (*lode.Snapshot, error) {
 	return snapshots[len(snapshots)-1], nil
 }
 
-// datasetPath returns the base path for this dataset.
-func (d *Dataset) datasetPath() string {
-	return path.Join("datasets", string(d.id))
-}
-
-// snapshotPath returns the path for a specific snapshot.
-func (d *Dataset) snapshotPath(id lode.SnapshotID) string {
-	return path.Join(d.datasetPath(), "snapshots", string(id))
-}
-
 // partitionRecords groups records by partition key.
 func (d *Dataset) partitionRecords(records []any) (map[string][]any, error) {
 	partitions := make(map[string][]any)
@@ -313,15 +303,10 @@ func (d *Dataset) partitionRecords(records []any) (map[string][]any, error) {
 }
 
 // writeDataFile writes records to a data file and returns the FileRef.
-func (d *Dataset) writeDataFile(ctx context.Context, snapshotPath, partKey string, records []any) (lode.FileRef, error) {
-	// Build file path
+func (d *Dataset) writeDataFile(ctx context.Context, snapshotID lode.SnapshotID, partKey string, records []any) (lode.FileRef, error) {
+	// Build file path using layout
 	fileName := "data" + d.compressor.Extension()
-	var filePath string
-	if partKey == "" {
-		filePath = path.Join(snapshotPath, dataDir, fileName)
-	} else {
-		filePath = path.Join(snapshotPath, dataDir, partKey, fileName)
-	}
+	filePath := d.layout.DataFilePath(d.id, snapshotID, partKey, fileName)
 
 	// Encode and compress data
 	var buf bytes.Buffer
@@ -370,8 +355,8 @@ func (d *Dataset) readDataFile(ctx context.Context, filePath string) ([]any, err
 }
 
 // writeManifest writes the manifest to the store.
-func (d *Dataset) writeManifest(ctx context.Context, snapshotPath string, manifest *lode.Manifest) error {
-	manifestPath := path.Join(snapshotPath, manifestFileName)
+func (d *Dataset) writeManifest(ctx context.Context, snapshotID lode.SnapshotID, manifest *lode.Manifest) error {
+	manifestPath := d.layout.ManifestPath(d.id, snapshotID)
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
