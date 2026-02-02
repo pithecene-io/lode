@@ -346,6 +346,13 @@ func TestHiveLayout_DataFilePath(t *testing.T) {
 // FlatLayout Tests
 // -----------------------------------------------------------------------------
 
+func TestFlatLayout_SupportsDatasetEnumeration(t *testing.T) {
+	layout := FlatLayout{}
+	if layout.SupportsDatasetEnumeration() {
+		t.Error("FlatLayout.SupportsDatasetEnumeration() = true, want false")
+	}
+}
+
 func TestFlatLayout_DatasetsPrefix(t *testing.T) {
 	layout := FlatLayout{}
 	got := layout.DatasetsPrefix()
@@ -437,6 +444,10 @@ type customLayout struct {
 	datasetsPrefix string
 	listCalls      []string
 	getManifestReq []string
+}
+
+func (c *customLayout) SupportsDatasetEnumeration() bool {
+	return c.datasetsPrefix != ""
 }
 
 func (c *customLayout) DatasetsPrefix() string {

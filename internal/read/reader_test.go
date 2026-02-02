@@ -876,6 +876,231 @@ func stringsEqual(a, b []string) bool {
 	return true
 }
 
+// -----------------------------------------------------------------------------
+// Layout-specific error tests
+// -----------------------------------------------------------------------------
+
+func TestListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.T) {
+	store := storage.NewMemory()
+	reader := NewReaderWithLayout(store, FlatLayout{})
+
+	_, err := reader.ListDatasets(context.Background(), DatasetListOptions{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrDatasetsNotModeled) {
+		t.Errorf("expected ErrDatasetsNotModeled, got: %v", err)
+	}
+}
+
+func TestListDatasets_DefaultLayout_EmptyStorage_ReturnsEmptyList(t *testing.T) {
+	store := storage.NewMemory()
+	reader := NewReader(store)
+
+	datasets, err := reader.ListDatasets(context.Background(), DatasetListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Empty list for truly empty storage (not an error)
+	if len(datasets) != 0 {
+		t.Errorf("expected empty list, got %d datasets", len(datasets))
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Custom layout discovery tests - prove discovery behavior changes with layout
+// -----------------------------------------------------------------------------
+
+func TestListDatasets_HiveLayout_FindsDatasets(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write manifests using HiveLayout structure
+	// HiveLayout: datasets/<ds>/segments/<seg>/manifest.json
+	manifest := &lode.Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "hive-ds",
+		SnapshotID:    "seg-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      lode.Metadata{},
+		Files:         []lode.FileRef{},
+		RowCount:      0,
+		Codec:         "jsonl",
+		Compressor:    "noop",
+		Partitioner:   "noop",
+	}
+	data, _ := json.Marshal(manifest)
+	_ = store.Put(ctx, "datasets/hive-ds/segments/seg-1/manifest.json", bytes.NewReader(data))
+
+	// Create reader with HiveLayout
+	reader := NewReaderWithLayout(store, HiveLayout{})
+
+	datasets, err := reader.ListDatasets(ctx, DatasetListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(datasets) != 1 {
+		t.Errorf("expected 1 dataset, got %d", len(datasets))
+	}
+	if len(datasets) > 0 && datasets[0] != "hive-ds" {
+		t.Errorf("expected dataset %q, got %q", "hive-ds", datasets[0])
+	}
+}
+
+func TestListSegments_HiveLayout_FindsSegments(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write manifest using HiveLayout structure
+	manifest := &lode.Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "hive-ds",
+		SnapshotID:    "seg-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      lode.Metadata{},
+		Files:         []lode.FileRef{},
+		RowCount:      0,
+		Codec:         "jsonl",
+		Compressor:    "noop",
+		Partitioner:   "noop",
+	}
+	data, _ := json.Marshal(manifest)
+	_ = store.Put(ctx, "datasets/hive-ds/segments/seg-1/manifest.json", bytes.NewReader(data))
+
+	reader := NewReaderWithLayout(store, HiveLayout{})
+
+	segments, err := reader.ListSegments(ctx, "hive-ds", "", SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(segments) != 1 {
+		t.Errorf("expected 1 segment, got %d", len(segments))
+	}
+	if len(segments) > 0 && segments[0].ID != "seg-1" {
+		t.Errorf("expected segment %q, got %q", "seg-1", segments[0].ID)
+	}
+}
+
+func TestListSegments_FlatLayout_FindsSegments(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write manifest using FlatLayout structure: <dataset>/<segment>/manifest.json
+	manifest := &lode.Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "flat-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      lode.Metadata{},
+		Files:         []lode.FileRef{},
+		RowCount:      0,
+		Codec:         "jsonl",
+		Compressor:    "noop",
+		Partitioner:   "noop",
+	}
+	data, _ := json.Marshal(manifest)
+	_ = store.Put(ctx, "flat-ds/snap-1/manifest.json", bytes.NewReader(data))
+
+	reader := NewReaderWithLayout(store, FlatLayout{})
+
+	// FlatLayout doesn't support ListDatasets, but ListSegments should work
+	segments, err := reader.ListSegments(ctx, "flat-ds", "", SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(segments) != 1 {
+		t.Errorf("expected 1 segment, got %d", len(segments))
+	}
+	if len(segments) > 0 && segments[0].ID != "snap-1" {
+		t.Errorf("expected segment %q, got %q", "snap-1", segments[0].ID)
+	}
+}
+
+func TestDiscovery_LayoutMismatch_NoResults(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write manifest using DefaultLayout structure
+	writeTestManifest(t, ctx, store, "default-ds", "snap-1")
+
+	// Try to read with HiveLayout - should find nothing
+	// because the paths don't match HiveLayout's expected structure
+	reader := NewReaderWithLayout(store, HiveLayout{})
+
+	datasets, err := reader.ListDatasets(ctx, DatasetListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// HiveLayout won't recognize DefaultLayout paths
+	if len(datasets) != 0 {
+		t.Errorf("expected 0 datasets (layout mismatch), got %d", len(datasets))
+	}
+}
+
+func TestDiscovery_ManifestDriven_OnlyCommittedVisible(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write a data file without a manifest (uncommitted)
+	_ = store.Put(ctx, "datasets/uncommitted/snapshots/snap-1/data/file.json", bytes.NewReader([]byte(`{}`)))
+
+	// Write a committed dataset with manifest
+	writeTestManifest(t, ctx, store, "committed", "snap-1")
+
+	reader := NewReader(store)
+
+	datasets, err := reader.ListDatasets(ctx, DatasetListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only the committed dataset should be visible
+	if len(datasets) != 1 {
+		t.Errorf("expected 1 dataset, got %d", len(datasets))
+	}
+	if len(datasets) > 0 && datasets[0] != "committed" {
+		t.Errorf("expected dataset %q, got %q", "committed", datasets[0])
+	}
+}
+
+func TestDiscovery_ManifestPresence_CommitSignal(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write data file first (simulating incomplete write)
+	_ = store.Put(ctx, "datasets/mydata/snapshots/snap-1/data/file.json", bytes.NewReader([]byte(`{}`)))
+
+	reader := NewReader(store)
+
+	// Should not find the dataset (no manifest = not committed)
+	segments, err := reader.ListSegments(ctx, "mydata", "", SegmentListOptions{})
+	if err == nil || !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for uncommitted dataset, got: %v", err)
+	}
+
+	// Now write the manifest (commit signal)
+	writeTestManifest(t, ctx, store, "mydata", "snap-1")
+
+	// Now the segment should be visible
+	segments, err = reader.ListSegments(ctx, "mydata", "", SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error after commit: %v", err)
+	}
+
+	if len(segments) != 1 {
+		t.Errorf("expected 1 segment after commit, got %d", len(segments))
+	}
+}
+
 // writeTestManifest writes a minimal valid manifest to storage.
 func writeTestManifest(t *testing.T, ctx context.Context, store lode.Store, dataset, snapshot string) {
 	t.Helper()

@@ -52,7 +52,15 @@ func NewReaderWithLayout(store lode.Store, layout Layout) *Reader {
 }
 
 // ListDatasets returns all dataset IDs found in storage.
+//
+// Returns ErrDatasetsNotModeled if the layout doesn't support dataset enumeration
+// (e.g., FlatLayout). An empty list is returned only for truly empty storage.
 func (r *Reader) ListDatasets(ctx context.Context, opts DatasetListOptions) ([]lode.DatasetID, error) {
+	// Check if the layout supports dataset enumeration
+	if !r.layout.SupportsDatasetEnumeration() {
+		return nil, ErrDatasetsNotModeled
+	}
+
 	// List all paths under the datasets prefix
 	paths, err := r.store.List(ctx, r.layout.DatasetsPrefix())
 	if err != nil {
