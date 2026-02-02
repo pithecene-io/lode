@@ -30,6 +30,8 @@ Layout is the **unified abstraction** that governs:
 - **Hive-style layouts** MUST be partition-anchored and enable prefix pruning when a
   partition filter is supplied. Layouts that claim partition-first semantics but require
   full-manifest scans are invalid.
+- **Hive-style layouts** MUST place manifests under partition prefixes when partitioning
+  is in use, so partition-filtered listing cannot miss committed segments.
 
 ---
 
@@ -38,6 +40,9 @@ Layout is the **unified abstraction** that governs:
 - Defines logical partition semantics (keys, values, normalization).
 - Layout determines if/how partition semantics are encoded into paths.
 - MUST be recorded in manifests by name.
+- Layouts that do not support partitions MUST accept any **semantically noop**
+  partitioner (not just one named `"noop"`), and MUST reject partitioners that
+  emit non-empty partition keys.
 
 ---
 

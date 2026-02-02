@@ -49,6 +49,12 @@ type ObjectRef struct {
 type SegmentRef struct {
 	// ID is the segment/snapshot identifier.
 	ID lode.SnapshotID
+
+	// Partition is the partition path where this segment's manifest resides.
+	// For partition-first layouts (e.g., HiveLayout), this is populated during
+	// discovery and used to construct the correct manifest path.
+	// Empty for segment-first layouts (e.g., DefaultLayout).
+	Partition PartitionPath
 }
 
 // PartitionRef references a partition within a dataset.

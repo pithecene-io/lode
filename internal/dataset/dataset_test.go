@@ -333,6 +333,83 @@ func TestConfig_NilPartitioner_Error(t *testing.T) {
 	}
 }
 
+func TestConfig_FlatLayoutWithNonNoopPartitioner_Error(t *testing.T) {
+	// FlatLayout doesn't support partitions, so using a non-noop partitioner
+	// is a configuration error
+	_, err := dataset.New("test", dataset.Config{
+		Store:       storage.NewMemory(),
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: partition.NewHive("region"), // non-noop partitioner
+		Layout:      read.FlatLayout{},           // doesn't support partitions
+	})
+	if err == nil {
+		t.Fatal("expected error for FlatLayout with non-noop partitioner")
+	}
+	if !strings.Contains(err.Error(), "does not support partitions") {
+		t.Errorf("expected error about partition support, got: %v", err)
+	}
+}
+
+func TestConfig_FlatLayoutWithNoopPartitioner_OK(t *testing.T) {
+	// FlatLayout with noop partitioner should be valid
+	_, err := dataset.New("test", dataset.Config{
+		Store:       storage.NewMemory(),
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: partition.NewNoop(),
+		Layout:      read.FlatLayout{},
+	})
+	if err != nil {
+		t.Errorf("expected no error for FlatLayout with noop partitioner, got: %v", err)
+	}
+}
+
+// customNoopPartitioner is a custom noop partitioner for testing
+type customNoopPartitioner struct{}
+
+func (p *customNoopPartitioner) Name() string                        { return "custom-noop" }
+func (p *customNoopPartitioner) PartitionKey(_ any) (string, error)  { return "", nil }
+func (p *customNoopPartitioner) IsNoop() bool                        { return true }
+
+func TestConfig_FlatLayoutWithCustomNoopPartitioner_OK(t *testing.T) {
+	// FlatLayout with custom noop partitioner (implements IsNoop) should be valid
+	_, err := dataset.New("test", dataset.Config{
+		Store:       storage.NewMemory(),
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: &customNoopPartitioner{},
+		Layout:      read.FlatLayout{},
+	})
+	if err != nil {
+		t.Errorf("expected no error for FlatLayout with custom noop partitioner, got: %v", err)
+	}
+}
+
+// nonNoopPartitioner is a partitioner that emits non-empty keys but doesn't implement IsNoop
+type nonNoopPartitioner struct{}
+
+func (p *nonNoopPartitioner) Name() string                        { return "non-noop" }
+func (p *nonNoopPartitioner) PartitionKey(_ any) (string, error)  { return "some-partition", nil }
+
+func TestConfig_FlatLayoutWithCustomNonNoopPartitioner_Error(t *testing.T) {
+	// FlatLayout with partitioner that emits non-empty keys should fail
+	// even if it doesn't implement IsNoop (falls back to name check)
+	_, err := dataset.New("test", dataset.Config{
+		Store:       storage.NewMemory(),
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: &nonNoopPartitioner{},
+		Layout:      read.FlatLayout{},
+	})
+	if err == nil {
+		t.Fatal("expected error for FlatLayout with custom non-noop partitioner")
+	}
+	if !strings.Contains(err.Error(), "does not support partitions") {
+		t.Errorf("expected error about partition support, got: %v", err)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Integration tests: End-to-end write → manifest → visible
 // -----------------------------------------------------------------------------
@@ -784,5 +861,138 @@ func TestLayout_CustomLayoutUsedForPaths(t *testing.T) {
 
 	if reloaded.ID != snapshot.ID {
 		t.Errorf("Snapshot ID mismatch")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// HiveLayout manifest placement and partition pruning tests
+// -----------------------------------------------------------------------------
+
+func TestHiveLayout_ManifestPlacement_UnderPartitionPrefix(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Create dataset with HiveLayout and Hive partitioner
+	ds, err := dataset.New("events", dataset.Config{
+		Store:       store,
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: partition.NewHive("day"),
+		Layout:      read.HiveLayout{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create dataset: %v", err)
+	}
+
+	// Write records with different days (creates 2 partitions)
+	records := []any{
+		map[string]any{"day": "2024-01-01", "id": 1},
+		map[string]any{"day": "2024-01-02", "id": 2},
+	}
+
+	snapshot, err := ds.Write(ctx, records, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Verify manifests are placed under partition prefixes
+	paths, _ := store.List(ctx, "")
+	manifestCount := 0
+	var manifestPaths []string
+	for _, p := range paths {
+		if strings.HasSuffix(p, "manifest.json") {
+			manifestCount++
+			manifestPaths = append(manifestPaths, p)
+		}
+	}
+
+	// Should have 2 manifests (one under each partition)
+	if manifestCount != 2 {
+		t.Errorf("expected 2 manifests under partition prefixes, got %d: %v", manifestCount, manifestPaths)
+	}
+
+	// Verify manifests are under partition paths
+	for _, p := range manifestPaths {
+		if !strings.Contains(p, "/partitions/day=") {
+			t.Errorf("manifest not under partition prefix: %s", p)
+		}
+		if !strings.Contains(p, "/segments/") {
+			t.Errorf("manifest path missing /segments/: %s", p)
+		}
+	}
+
+	// Verify snapshot is still discoverable
+	snapshots, err := ds.Snapshots(ctx)
+	if err != nil {
+		t.Fatalf("Snapshots() failed: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Errorf("expected 1 snapshot (deduplicated), got %d", len(snapshots))
+	}
+	if len(snapshots) > 0 && snapshots[0].ID != snapshot.ID {
+		t.Errorf("snapshot ID mismatch")
+	}
+}
+
+func TestHiveLayout_PartitionPruning_Integration(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Create dataset with HiveLayout
+	ds, err := dataset.New("events", dataset.Config{
+		Store:       store,
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: partition.NewHive("region"),
+		Layout:      read.HiveLayout{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create dataset: %v", err)
+	}
+
+	// Write first snapshot with region=us
+	_, err = ds.Write(ctx, []any{
+		map[string]any{"region": "us", "id": 1},
+	}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write 1 failed: %v", err)
+	}
+
+	// Write second snapshot with region=eu
+	_, err = ds.Write(ctx, []any{
+		map[string]any{"region": "eu", "id": 2},
+	}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write 2 failed: %v", err)
+	}
+
+	// Use Reader with HiveLayout to test partition filtering
+	reader := read.NewReaderWithLayout(store, read.HiveLayout{})
+
+	// List segments with region=us filter - should find 1 segment
+	usSegments, err := reader.ListSegments(ctx, "events", "region=us", read.SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("ListSegments(region=us) failed: %v", err)
+	}
+	if len(usSegments) != 1 {
+		t.Errorf("expected 1 segment in region=us, got %d", len(usSegments))
+	}
+
+	// List segments with region=eu filter - should find 1 segment
+	euSegments, err := reader.ListSegments(ctx, "events", "region=eu", read.SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("ListSegments(region=eu) failed: %v", err)
+	}
+	if len(euSegments) != 1 {
+		t.Errorf("expected 1 segment in region=eu, got %d", len(euSegments))
+	}
+
+	// List all segments (no filter) - should find 2 segments
+	allSegments, err := reader.ListSegments(ctx, "events", "", read.SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("ListSegments() failed: %v", err)
+	}
+	if len(allSegments) != 2 {
+		t.Errorf("expected 2 total segments, got %d", len(allSegments))
 	}
 }

@@ -138,9 +138,12 @@ func (r *Reader) ListPartitions(ctx context.Context, dataset lode.DatasetID, opt
 
 // ListSegments returns committed segments (snapshots) within a dataset.
 // Returns ErrNotFound if the dataset does not exist (has no committed segments).
+// When partition is non-empty and the layout supports partition-first access
+// (e.g., HiveLayout), uses prefix pruning to list only segments in that partition.
 func (r *Reader) ListSegments(ctx context.Context, dataset lode.DatasetID, partition PartitionPath, opts SegmentListOptions) ([]SegmentRef, error) {
-	// List all paths under the dataset's segments directory
-	paths, err := r.store.List(ctx, r.layout.SegmentsPrefix(dataset))
+	// Use partition-aware prefix for layouts that support it (enables true prefix pruning)
+	prefix := r.layout.SegmentsPrefixForPartition(dataset, partition)
+	paths, err := r.store.List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +165,13 @@ func (r *Reader) ListSegments(ctx context.Context, dataset lode.DatasetID, parti
 			continue
 		}
 
-		// If partition filter is specified, check if segment contains it
-		if partition != "" {
+		// Extract partition from manifest path (for partition-first layouts)
+		manifestPartition := r.layout.ParsePartitionFromManifest(p)
+
+		// If partition filter is specified and layout doesn't do prefix-based pruning,
+		// verify the segment contains data in that partition
+		if partition != "" && manifestPartition == "" {
+			// Segment-first layout: need to check manifest contents
 			manifest, err := r.loadManifest(ctx, p)
 			if err != nil {
 				// Per CONTRACT_READ_API.md: manifests are authoritative.
@@ -174,9 +182,14 @@ func (r *Reader) ListSegments(ctx context.Context, dataset lode.DatasetID, parti
 				continue
 			}
 		}
+		// For partition-first layouts (manifestPartition != ""), the prefix pruning
+		// already ensured we're only listing manifests in the target partition
 
 		seen[segmentID] = true
-		segments = append(segments, SegmentRef{ID: segmentID})
+		segments = append(segments, SegmentRef{
+			ID:        segmentID,
+			Partition: manifestPartition,
+		})
 
 		if opts.Limit > 0 && len(segments) >= opts.Limit {
 			break
@@ -204,8 +217,10 @@ func (r *Reader) segmentContainsPartition(m *lode.Manifest, partition string) bo
 }
 
 // GetManifest loads the manifest for a specific segment.
+// If seg.Partition is set (for partition-first layouts like HiveLayout),
+// the manifest is loaded from the partition-specific path.
 func (r *Reader) GetManifest(ctx context.Context, dataset lode.DatasetID, seg SegmentRef) (*lode.Manifest, error) {
-	manifestPath := r.layout.ManifestPath(dataset, seg.ID)
+	manifestPath := r.layout.ManifestPathInPartition(dataset, seg.ID, seg.Partition)
 	return r.loadManifest(ctx, manifestPath)
 }
 

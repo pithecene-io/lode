@@ -85,5 +85,11 @@ func (n *Noop) PartitionKey(_ any) (string, error) {
 	return "", nil
 }
 
+// IsNoop returns true, indicating this partitioner produces no partitions.
+// This implements the dataset.NoopPartitioner marker interface.
+func (n *Noop) IsNoop() bool {
+	return true
+}
+
 // Ensure Noop implements lode.Partitioner
 var _ lode.Partitioner = (*Noop)(nil)

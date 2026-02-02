@@ -33,6 +33,11 @@ type Layout interface {
 	// attempting enumeration.
 	SupportsDatasetEnumeration() bool
 
+	// SupportsPartitions returns true if this layout supports partitioned data.
+	// Layouts that return false (e.g., FlatLayout) should only be used with
+	// noop partitioners. Using a non-noop partitioner with such layouts is an error.
+	SupportsPartitions() bool
+
 	// -------------------------------------------------------------------------
 	// Discovery methods (read-side)
 	// -------------------------------------------------------------------------
@@ -43,6 +48,14 @@ type Layout interface {
 
 	// SegmentsPrefix returns the storage prefix for listing segments in a dataset.
 	SegmentsPrefix(dataset lode.DatasetID) string
+
+	// SegmentsPrefixForPartition returns the storage prefix for listing segments
+	// within a specific partition. For partition-first layouts (e.g., HiveLayout),
+	// this enables true prefix pruning without scanning all manifests.
+	// For segment-first layouts (e.g., DefaultLayout), this returns the same as
+	// SegmentsPrefix since partition filtering must happen post-listing.
+	// partition may be empty, in which case this behaves like SegmentsPrefix.
+	SegmentsPrefixForPartition(dataset lode.DatasetID, partition PartitionPath) string
 
 	// IsManifest returns true if the path is a valid manifest location.
 	IsManifest(p string) bool
@@ -55,6 +68,11 @@ type Layout interface {
 	// Returns empty string if the path is not a valid manifest path.
 	ParseSegmentID(manifestPath string) lode.SnapshotID
 
+	// ParsePartitionFromManifest extracts the partition path from a manifest path.
+	// For partition-first layouts (e.g., HiveLayout), returns the partition portion.
+	// For segment-first layouts (e.g., DefaultLayout), returns empty string.
+	ParsePartitionFromManifest(manifestPath string) PartitionPath
+
 	// ExtractPartitionPath extracts the partition path from a file path.
 	// Returns empty string if no partition.
 	ExtractPartitionPath(filePath string) string
@@ -64,7 +82,16 @@ type Layout interface {
 	// -------------------------------------------------------------------------
 
 	// ManifestPath returns the storage path for a segment's manifest.
+	// For segment-first layouts, this is the canonical location.
+	// For partition-first layouts, this returns the unpartitioned fallback.
 	ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string
+
+	// ManifestPathInPartition returns the manifest path for a segment within a partition.
+	// For partition-first layouts (e.g., HiveLayout), manifests are placed under
+	// partition prefixes to enable true prefix pruning.
+	// For segment-first layouts (e.g., DefaultLayout), this returns the same as
+	// ManifestPath (partition is ignored).
+	ManifestPathInPartition(dataset lode.DatasetID, segment lode.SnapshotID, partition PartitionPath) string
 
 	// DataFilePath returns the storage path for a data file within a segment.
 	// partition may be empty for unpartitioned data.
@@ -95,6 +122,11 @@ func (l DefaultLayout) SupportsDatasetEnumeration() bool {
 	return true
 }
 
+// SupportsPartitions returns true - DefaultLayout supports partitions nested in data/.
+func (l DefaultLayout) SupportsPartitions() bool {
+	return true
+}
+
 // DatasetsPrefix returns "datasets/".
 func (l DefaultLayout) DatasetsPrefix() string {
 	return defaultDatasetsDir + "/"
@@ -105,9 +137,21 @@ func (l DefaultLayout) SegmentsPrefix(dataset lode.DatasetID) string {
 	return path.Join(defaultDatasetsDir, string(dataset), defaultSnapshotsDir) + "/"
 }
 
+// SegmentsPrefixForPartition returns "datasets/<dataset>/snapshots/".
+// DefaultLayout is segment-first, so partition filtering happens post-listing.
+func (l DefaultLayout) SegmentsPrefixForPartition(dataset lode.DatasetID, _ PartitionPath) string {
+	return l.SegmentsPrefix(dataset)
+}
+
 // ManifestPath returns "datasets/<dataset>/snapshots/<segment>/manifest.json".
 func (l DefaultLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
 	return path.Join(defaultDatasetsDir, string(dataset), defaultSnapshotsDir, string(segment), defaultManifestFile)
+}
+
+// ManifestPathInPartition returns the same as ManifestPath.
+// DefaultLayout is segment-first, so partition does not affect manifest placement.
+func (l DefaultLayout) ManifestPathInPartition(dataset lode.DatasetID, segment lode.SnapshotID, _ PartitionPath) string {
+	return l.ManifestPath(dataset, segment)
 }
 
 // IsManifest returns true if the path matches the canonical manifest location:
@@ -144,6 +188,12 @@ func (l DefaultLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
 	}
 	parts := strings.Split(manifestPath, "/")
 	return lode.SnapshotID(parts[3])
+}
+
+// ParsePartitionFromManifest returns empty string.
+// DefaultLayout is segment-first; manifests are not under partition prefixes.
+func (l DefaultLayout) ParsePartitionFromManifest(_ string) PartitionPath {
+	return ""
 }
 
 // isValidManifestPath checks if path matches:
@@ -233,6 +283,11 @@ func (l HiveLayout) SupportsDatasetEnumeration() bool {
 	return true
 }
 
+// SupportsPartitions returns true - HiveLayout is optimized for partitioned data.
+func (l HiveLayout) SupportsPartitions() bool {
+	return true
+}
+
 // DatasetsPrefix returns "datasets/".
 func (l HiveLayout) DatasetsPrefix() string {
 	return defaultDatasetsDir + "/"
@@ -245,12 +300,34 @@ func (l HiveLayout) SegmentsPrefix(dataset lode.DatasetID) string {
 	return path.Join(defaultDatasetsDir, string(dataset)) + "/"
 }
 
-// ManifestPath returns the path for a segment's manifest.
-// For HiveLayout, manifests are at: datasets/<dataset>/[partitions/.../]segments/<segment>/manifest.json
-// Since we don't know the partition at this point, this returns the unpartitioned path.
-// Callers needing partitioned paths should use DataFilePath with appropriate partition.
+// SegmentsPrefixForPartition returns a partition-specific prefix for true prefix pruning.
+// When partition is non-empty: "datasets/<dataset>/partitions/<partition>/segments/"
+// When partition is empty: "datasets/<dataset>/" (list all segments)
+// This enables partition-first layouts to avoid scanning all manifests.
+func (l HiveLayout) SegmentsPrefixForPartition(dataset lode.DatasetID, partition PartitionPath) string {
+	if partition == "" {
+		return l.SegmentsPrefix(dataset)
+	}
+	// True prefix pruning: list only segments within the specified partition
+	return path.Join(defaultDatasetsDir, string(dataset), hivePartitionsDir, string(partition), hiveSegmentsDir) + "/"
+}
+
+// ManifestPath returns the path for a segment's manifest (unpartitioned case).
+// For HiveLayout, this returns: datasets/<dataset>/segments/<segment>/manifest.json
+// For partitioned manifests, use ManifestPathInPartition.
 func (l HiveLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
 	return path.Join(defaultDatasetsDir, string(dataset), hiveSegmentsDir, string(segment), defaultManifestFile)
+}
+
+// ManifestPathInPartition returns the manifest path within a partition.
+// When partition is non-empty: datasets/<dataset>/partitions/<partition>/segments/<segment>/manifest.json
+// When partition is empty: datasets/<dataset>/segments/<segment>/manifest.json
+// This enables true prefix pruning for HiveLayout.
+func (l HiveLayout) ManifestPathInPartition(dataset lode.DatasetID, segment lode.SnapshotID, partition PartitionPath) string {
+	if partition == "" {
+		return l.ManifestPath(dataset, segment)
+	}
+	return path.Join(defaultDatasetsDir, string(dataset), hivePartitionsDir, string(partition), hiveSegmentsDir, string(segment), defaultManifestFile)
 }
 
 // IsManifest returns true if the path is a valid HiveLayout manifest location.
@@ -306,6 +383,46 @@ func (l HiveLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
 		}
 	}
 	return ""
+}
+
+// ParsePartitionFromManifest extracts partition from a HiveLayout manifest path.
+// For paths like: datasets/<ds>/partitions/<partition>/segments/<seg>/manifest.json
+// Returns the partition portion between "partitions/" and "segments/".
+// Returns empty string for unpartitioned paths.
+func (l HiveLayout) ParsePartitionFromManifest(manifestPath string) PartitionPath {
+	if !l.IsManifest(manifestPath) {
+		return ""
+	}
+	parts := strings.Split(manifestPath, "/")
+
+	// Find "partitions" start index
+	partitionsIdx := -1
+	for i := 2; i < len(parts); i++ {
+		if parts[i] == hivePartitionsDir {
+			partitionsIdx = i
+			break
+		}
+	}
+
+	if partitionsIdx < 0 {
+		return "" // no partitions in path
+	}
+
+	// Find "segments" end index
+	segmentsIdx := -1
+	for i := partitionsIdx + 1; i < len(parts); i++ {
+		if parts[i] == hiveSegmentsDir {
+			segmentsIdx = i
+			break
+		}
+	}
+
+	if segmentsIdx < 0 || segmentsIdx <= partitionsIdx+1 {
+		return "" // no partition values between partitions/ and segments/
+	}
+
+	// Partition path is everything between partitions/ and segments/
+	return PartitionPath(strings.Join(parts[partitionsIdx+1:segmentsIdx], "/"))
 }
 
 // ExtractPartitionPath extracts the partition path from a HiveLayout file path.
@@ -377,6 +494,12 @@ func (l FlatLayout) SupportsDatasetEnumeration() bool {
 	return false
 }
 
+// SupportsPartitions returns false - FlatLayout does not support partitioned data.
+// Using a non-noop partitioner with FlatLayout is a configuration error.
+func (l FlatLayout) SupportsPartitions() bool {
+	return false
+}
+
 // DatasetsPrefix returns "" (not meaningful for FlatLayout).
 // Check SupportsDatasetEnumeration before using this.
 func (l FlatLayout) DatasetsPrefix() string {
@@ -388,9 +511,21 @@ func (l FlatLayout) SegmentsPrefix(dataset lode.DatasetID) string {
 	return string(dataset) + "/"
 }
 
+// SegmentsPrefixForPartition returns "<dataset>/".
+// FlatLayout doesn't support partitions, so partition parameter is ignored.
+func (l FlatLayout) SegmentsPrefixForPartition(dataset lode.DatasetID, _ PartitionPath) string {
+	return l.SegmentsPrefix(dataset)
+}
+
 // ManifestPath returns "<dataset>/<segment>/manifest.json".
 func (l FlatLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
 	return path.Join(string(dataset), string(segment), defaultManifestFile)
+}
+
+// ManifestPathInPartition returns the same as ManifestPath.
+// FlatLayout doesn't support partitions.
+func (l FlatLayout) ManifestPathInPartition(dataset lode.DatasetID, segment lode.SnapshotID, _ PartitionPath) string {
+	return l.ManifestPath(dataset, segment)
 }
 
 // IsManifest returns true if path matches <dataset>/<segment>/manifest.json.
@@ -418,6 +553,12 @@ func (l FlatLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
 	}
 	parts := strings.Split(manifestPath, "/")
 	return lode.SnapshotID(parts[1])
+}
+
+// ParsePartitionFromManifest returns empty string.
+// FlatLayout doesn't support partitions.
+func (l FlatLayout) ParsePartitionFromManifest(_ string) PartitionPath {
+	return ""
 }
 
 // ExtractPartitionPath returns "" (flat layout has no partition support).

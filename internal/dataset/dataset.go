@@ -22,6 +22,14 @@ const (
 	ManifestFormatVersion = "1.0.0"
 )
 
+// NoopPartitioner is an optional interface that partitioners can implement
+// to indicate they produce no partitions. This enables layouts that don't
+// support partitions (e.g., FlatLayout) to accept custom noop implementations.
+type NoopPartitioner interface {
+	// IsNoop returns true if this partitioner produces no partitions.
+	IsNoop() bool
+}
+
 // Config holds the configuration for a Dataset.
 // Per CONTRACT_LAYOUT.md, all components must be non-nil.
 type Config struct {
@@ -63,6 +71,7 @@ type Dataset struct {
 // New creates a new Dataset with the given configuration.
 // Returns an error if any required component is nil.
 // If Layout is nil, DefaultLayout is used.
+// Returns an error if Layout doesn't support partitions but Partitioner is non-noop.
 func New(id lode.DatasetID, cfg Config) (*Dataset, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -71,6 +80,15 @@ func New(id lode.DatasetID, cfg Config) (*Dataset, error) {
 	layout := cfg.Layout
 	if layout == nil {
 		layout = read.DefaultLayout{}
+	}
+
+	// Validate layout + partitioner compatibility
+	// Layouts that don't support partitions must use a noop partitioner
+	if !layout.SupportsPartitions() {
+		if !isNoopPartitioner(cfg.Partitioner) {
+			return nil, fmt.Errorf("dataset: layout %T does not support partitions, but partitioner %q was configured (use noop partitioner or a partition-capable layout)",
+				layout, cfg.Partitioner.Name())
+		}
 	}
 
 	return &Dataset{
@@ -151,7 +169,13 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 	}
 
 	// Write manifest (commit signal per CONTRACT_STORAGE.md)
-	if err := d.writeManifest(ctx, snapshotID, manifest); err != nil {
+	// For partition-first layouts, write manifest under each partition prefix
+	// to enable true prefix pruning during discovery
+	partitionKeys := make([]string, 0, len(partitions))
+	for partKey := range partitions {
+		partitionKeys = append(partitionKeys, partKey)
+	}
+	if err := d.writeManifests(ctx, snapshotID, manifest, partitionKeys); err != nil {
 		return nil, fmt.Errorf("dataset: failed to write manifest: %w", err)
 	}
 
@@ -163,13 +187,17 @@ func (d *Dataset) Write(ctx context.Context, records []any, metadata lode.Metada
 
 // Snapshot retrieves a specific snapshot by ID.
 // Per CONTRACT_WRITE_API.md: returns ErrNotFound for missing snapshot.
+// For partition-first layouts, this searches for the manifest if not found
+// at the canonical location.
 func (d *Dataset) Snapshot(ctx context.Context, id lode.SnapshotID) (*lode.Snapshot, error) {
+	// Try canonical (unpartitioned) path first
 	manifestPath := d.layout.ManifestPath(d.id, id)
 
 	rc, err := d.store.Get(ctx, manifestPath)
 	if err != nil {
 		if errors.Is(err, lode.ErrNotFound) {
-			return nil, lode.ErrNotFound
+			// For partition-first layouts, search for the manifest
+			return d.findSnapshotByID(ctx, id)
 		}
 		return nil, fmt.Errorf("dataset: failed to get manifest: %w", err)
 	}
@@ -184,6 +212,47 @@ func (d *Dataset) Snapshot(ctx context.Context, id lode.SnapshotID) (*lode.Snaps
 		ID:       id,
 		Manifest: &manifest,
 	}, nil
+}
+
+// loadSnapshotFromPath loads a snapshot from a specific manifest path.
+func (d *Dataset) loadSnapshotFromPath(ctx context.Context, id lode.SnapshotID, manifestPath string) (*lode.Snapshot, error) {
+	rc, err := d.store.Get(ctx, manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+
+	var manifest lode.Manifest
+	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("failed to decode manifest: %w", err)
+	}
+
+	return &lode.Snapshot{
+		ID:       id,
+		Manifest: &manifest,
+	}, nil
+}
+
+// findSnapshotByID searches for a snapshot by listing manifests.
+// Used when the manifest is not at the canonical location (e.g., HiveLayout with partitions).
+func (d *Dataset) findSnapshotByID(ctx context.Context, id lode.SnapshotID) (*lode.Snapshot, error) {
+	prefix := d.layout.SegmentsPrefix(d.id)
+	paths, err := d.store.List(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list for snapshot search: %w", err)
+	}
+
+	for _, p := range paths {
+		if !d.layout.IsManifest(p) {
+			continue
+		}
+		foundID := d.layout.ParseSegmentID(p)
+		if foundID == id {
+			return d.loadSnapshotFromPath(ctx, id, p)
+		}
+	}
+
+	return nil, lode.ErrNotFound
 }
 
 // Snapshots lists all committed snapshots.
@@ -213,7 +282,9 @@ func (d *Dataset) Snapshots(ctx context.Context) ([]*lode.Snapshot, error) {
 		}
 		seen[snapshotID] = true
 
-		snapshot, err := d.Snapshot(ctx, snapshotID)
+		// Load manifest directly from the discovered path
+		// (don't use Snapshot(id) which may not find partition-specific paths)
+		snapshot, err := d.loadSnapshotFromPath(ctx, snapshotID, p)
 		if err != nil {
 			return nil, fmt.Errorf("dataset: failed to load snapshot %s: %w", snapshotID, err)
 		}
@@ -354,22 +425,93 @@ func (d *Dataset) readDataFile(ctx context.Context, filePath string) ([]any, err
 	return d.codec.Decode(decompReader)
 }
 
-// writeManifest writes the manifest to the store.
-func (d *Dataset) writeManifest(ctx context.Context, snapshotID lode.SnapshotID, manifest *lode.Manifest) error {
-	manifestPath := d.layout.ManifestPath(d.id, snapshotID)
-
+// writeManifests writes the manifest to storage.
+// For partition-first layouts (e.g., HiveLayout), writes under each partition prefix
+// to enable true prefix pruning during discovery.
+// For segment-first layouts (e.g., DefaultLayout), writes to the canonical location.
+func (d *Dataset) writeManifests(ctx context.Context, snapshotID lode.SnapshotID, manifest *lode.Manifest, partitionKeys []string) error {
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return d.store.Put(ctx, manifestPath, bytes.NewReader(data))
+	// Collect unique manifest paths
+	pathSet := make(map[string]bool)
+	var manifestPaths []string
+
+	// Check if we have actual partitions (non-empty partition keys)
+	hasPartitions := false
+	for _, pk := range partitionKeys {
+		if pk != "" {
+			hasPartitions = true
+			break
+		}
+	}
+
+	if hasPartitions && d.layout.SupportsPartitions() {
+		// Check if this is a partition-first layout (manifest paths differ by partition)
+		// by comparing canonical path vs partition-specific path
+		canonicalPath := d.layout.ManifestPath(d.id, snapshotID)
+
+		// Find first non-empty partition to test if layout is partition-first
+		var firstNonEmptyPart string
+		for _, pk := range partitionKeys {
+			if pk != "" {
+				firstNonEmptyPart = pk
+				break
+			}
+		}
+
+		if firstNonEmptyPart != "" {
+			firstPartPath := d.layout.ManifestPathInPartition(d.id, snapshotID, read.PartitionPath(firstNonEmptyPart))
+
+			if firstPartPath != canonicalPath {
+				// Partition-first layout: write manifest under each partition prefix
+				for _, pk := range partitionKeys {
+					if pk != "" {
+						partPath := d.layout.ManifestPathInPartition(d.id, snapshotID, read.PartitionPath(pk))
+						if !pathSet[partPath] {
+							pathSet[partPath] = true
+							manifestPaths = append(manifestPaths, partPath)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// If no partition-specific paths (segment-first layout or no partitions),
+	// use the canonical path
+	if len(manifestPaths) == 0 {
+		manifestPaths = []string{d.layout.ManifestPath(d.id, snapshotID)}
+	}
+
+	// Write manifest to each path
+	for _, path := range manifestPaths {
+		if err := d.store.Put(ctx, path, bytes.NewReader(data)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // generateID creates a unique snapshot ID.
 // Uses timestamp + random suffix for uniqueness.
 func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+// isNoopPartitioner checks if a partitioner is a noop (produces no partitions).
+// Checks for the NoopPartitioner marker interface first, then falls back to
+// name-based check for backwards compatibility.
+func isNoopPartitioner(p lode.Partitioner) bool {
+	// Check marker interface first
+	if noop, ok := p.(NoopPartitioner); ok {
+		return noop.IsNoop()
+	}
+	// Fall back to name check for backwards compatibility
+	return p.Name() == "noop"
 }
 
 // Ensure Dataset implements lode.Dataset

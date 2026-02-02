@@ -343,6 +343,72 @@ func TestHiveLayout_DataFilePath(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// HiveLayout Prefix Pruning Tests
+// Verify true prefix pruning without scanning all manifests
+// -----------------------------------------------------------------------------
+
+func TestHiveLayout_SegmentsPrefixForPartition_TruePrefixPruning(t *testing.T) {
+	layout := HiveLayout{}
+	tests := []struct {
+		dataset   lode.DatasetID
+		partition PartitionPath
+		want      string
+		desc      string
+	}{
+		// Without partition - list entire dataset
+		{"mydata", "", "datasets/mydata/", "empty partition lists all"},
+		// With single partition - true prefix pruning
+		{"mydata", "day=2024-01-01", "datasets/mydata/partitions/day=2024-01-01/segments/", "single partition"},
+		// With nested partitions - true prefix pruning
+		{"mydata", "day=2024-01-01/hour=12", "datasets/mydata/partitions/day=2024-01-01/hour=12/segments/", "nested partitions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := layout.SegmentsPrefixForPartition(tt.dataset, tt.partition)
+			if got != tt.want {
+				t.Errorf("SegmentsPrefixForPartition(%q, %q) = %q, want %q",
+					tt.dataset, tt.partition, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultLayout_SegmentsPrefixForPartition_NoChange(t *testing.T) {
+	layout := DefaultLayout{}
+
+	// DefaultLayout should return same prefix regardless of partition
+	// (partition filtering happens post-listing)
+	withPartition := layout.SegmentsPrefixForPartition("mydata", "day=2024-01-01")
+	withoutPartition := layout.SegmentsPrefixForPartition("mydata", "")
+	expected := "datasets/mydata/snapshots/"
+
+	if withPartition != expected {
+		t.Errorf("SegmentsPrefixForPartition with partition = %q, want %q", withPartition, expected)
+	}
+	if withoutPartition != expected {
+		t.Errorf("SegmentsPrefixForPartition without partition = %q, want %q", withoutPartition, expected)
+	}
+}
+
+func TestFlatLayout_SegmentsPrefixForPartition_NoChange(t *testing.T) {
+	layout := FlatLayout{}
+
+	// FlatLayout should return same prefix regardless of partition
+	// (FlatLayout doesn't support partitions)
+	withPartition := layout.SegmentsPrefixForPartition("mydata", "day=2024-01-01")
+	withoutPartition := layout.SegmentsPrefixForPartition("mydata", "")
+	expected := "mydata/"
+
+	if withPartition != expected {
+		t.Errorf("SegmentsPrefixForPartition with partition = %q, want %q", withPartition, expected)
+	}
+	if withoutPartition != expected {
+		t.Errorf("SegmentsPrefixForPartition without partition = %q, want %q", withoutPartition, expected)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // FlatLayout Tests
 // -----------------------------------------------------------------------------
 
@@ -450,6 +516,10 @@ func (c *customLayout) SupportsDatasetEnumeration() bool {
 	return c.datasetsPrefix != ""
 }
 
+func (c *customLayout) SupportsPartitions() bool {
+	return true // Custom layout supports partitions for testing
+}
+
 func (c *customLayout) DatasetsPrefix() string {
 	return c.datasetsPrefix
 }
@@ -460,10 +530,18 @@ func (c *customLayout) SegmentsPrefix(dataset lode.DatasetID) string {
 	return prefix
 }
 
+func (c *customLayout) SegmentsPrefixForPartition(dataset lode.DatasetID, _ PartitionPath) string {
+	return c.SegmentsPrefix(dataset)
+}
+
 func (c *customLayout) ManifestPath(dataset lode.DatasetID, segment lode.SnapshotID) string {
 	path := "custom/" + string(dataset) + "/segs/" + string(segment) + "/meta.json"
 	c.getManifestReq = append(c.getManifestReq, path)
 	return path
+}
+
+func (c *customLayout) ManifestPathInPartition(dataset lode.DatasetID, segment lode.SnapshotID, _ PartitionPath) string {
+	return c.ManifestPath(dataset, segment)
 }
 
 func (c *customLayout) IsManifest(p string) bool {
@@ -489,6 +567,10 @@ func (c *customLayout) ParseSegmentID(manifestPath string) lode.SnapshotID {
 		return ""
 	}
 	return lode.SnapshotID(parts[3])
+}
+
+func (c *customLayout) ParsePartitionFromManifest(_ string) PartitionPath {
+	return "" // Custom layout doesn't support partitions
 }
 
 func (c *customLayout) ExtractPartitionPath(_ string) string {
@@ -634,6 +716,119 @@ func TestReader_UsesCustomLayout_RejectsStrayManifests(t *testing.T) {
 	}
 	if len(datasets) > 0 && datasets[0] != "ds1" {
 		t.Errorf("Expected dataset %q, got %q", "ds1", datasets[0])
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Strict DefaultLayout Parsing Tests
+// Ensure parsing remains strict and doesn't become permissive
+// -----------------------------------------------------------------------------
+
+func TestDefaultLayout_IsManifest_StrictParsing(t *testing.T) {
+	layout := DefaultLayout{}
+	tests := []struct {
+		path string
+		want bool
+		desc string
+	}{
+		// Valid paths
+		{"datasets/foo/snapshots/bar/manifest.json", true, "canonical path"},
+		{"datasets/a/snapshots/b/manifest.json", true, "single char IDs"},
+
+		// Invalid: trailing slashes
+		{"datasets/foo/snapshots/bar/manifest.json/", false, "trailing slash"},
+
+		// Invalid: empty segments
+		{"datasets//snapshots/bar/manifest.json", false, "empty dataset"},
+		{"datasets/foo/snapshots//manifest.json", false, "empty segment"},
+		{"datasets/foo//bar/manifest.json", false, "missing snapshots"},
+
+		// Invalid: wrong depth
+		{"datasets/foo/snapshots/bar/baz/manifest.json", false, "too deep"},
+		{"datasets/foo/manifest.json", false, "too shallow"},
+
+		// Invalid: wrong structure words
+		{"datasets/foo/snapshot/bar/manifest.json", false, "singular 'snapshot'"},
+		{"dataset/foo/snapshots/bar/manifest.json", false, "singular 'dataset'"},
+		{"datasets/foo/segments/bar/manifest.json", false, "wrong dir 'segments'"},
+
+		// Invalid: wrong filename
+		{"datasets/foo/snapshots/bar/Manifest.json", false, "capitalized"},
+		{"datasets/foo/snapshots/bar/manifest.JSON", false, "uppercase ext"},
+		{"datasets/foo/snapshots/bar/manifest", false, "no extension"},
+
+		// Edge cases: special characters in IDs
+		{"datasets/foo-bar/snapshots/snap_1/manifest.json", true, "hyphen and underscore in IDs"},
+		{"datasets/foo.bar/snapshots/snap.1/manifest.json", true, "dots in IDs"},
+
+		// Edge cases that should be rejected
+		{"datasets/foo/snapshots/bar/data/manifest.json", false, "manifest in data/"},
+		{"/datasets/foo/snapshots/bar/manifest.json", false, "leading slash"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := layout.IsManifest(tt.path)
+			if got != tt.want {
+				t.Errorf("IsManifest(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultLayout_ParseDatasetID_StrictParsing(t *testing.T) {
+	layout := DefaultLayout{}
+	tests := []struct {
+		path string
+		want lode.DatasetID
+		desc string
+	}{
+		// Valid
+		{"datasets/my-dataset/snapshots/snap-1/manifest.json", "my-dataset", "canonical"},
+		{"datasets/a/snapshots/b/manifest.json", "a", "single char"},
+
+		// Invalid paths should return empty
+		{"datasets/foo/snapshots/bar/manifest.json/extra", "", "extra path component"},
+		{"datasets//snapshots/bar/manifest.json", "", "empty dataset ID"},
+		{"datasets/foo/segments/bar/manifest.json", "", "wrong structure"},
+		{"foo/snapshots/bar/manifest.json", "", "missing datasets prefix"},
+		{"datasets/foo/snapshots/bar/data.json", "", "wrong filename"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := layout.ParseDatasetID(tt.path)
+			if got != tt.want {
+				t.Errorf("ParseDatasetID(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultLayout_ParseSegmentID_StrictParsing(t *testing.T) {
+	layout := DefaultLayout{}
+	tests := []struct {
+		path string
+		want lode.SnapshotID
+		desc string
+	}{
+		// Valid
+		{"datasets/ds/snapshots/seg-123/manifest.json", "seg-123", "canonical"},
+		{"datasets/a/snapshots/b/manifest.json", "b", "single char"},
+
+		// Invalid paths should return empty
+		{"datasets/ds/snapshots//manifest.json", "", "empty segment ID"},
+		{"datasets/ds/snapshots/seg/extra/manifest.json", "", "extra path component"},
+		{"datasets/ds/segments/seg/manifest.json", "", "wrong structure"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := layout.ParseSegmentID(tt.path)
+			if got != tt.want {
+				t.Errorf("ParseSegmentID(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 

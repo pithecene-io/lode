@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -1044,6 +1045,108 @@ func TestDiscovery_LayoutMismatch_NoResults(t *testing.T) {
 	if len(datasets) != 0 {
 		t.Errorf("expected 0 datasets (layout mismatch), got %d", len(datasets))
 	}
+}
+
+// -----------------------------------------------------------------------------
+// HiveLayout Prefix Pruning Integration Tests
+// Verify true prefix pruning without scanning all manifests
+// -----------------------------------------------------------------------------
+
+func TestHiveLayout_PartitionPruning_OnlyListsTargetPartition(t *testing.T) {
+	ctx := context.Background()
+
+	// trackingStore that records list prefixes
+	store := &prefixTrackingStore{
+		memory: storage.NewMemory(),
+	}
+
+	// Write manifests in two different partitions using HiveLayout structure
+	// Partition day=2024-01-01 contains seg-1
+	manifest1 := &lode.Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "mydata",
+		SnapshotID:    "seg-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      lode.Metadata{},
+		Files: []lode.FileRef{
+			{Path: "datasets/mydata/partitions/day=2024-01-01/segments/seg-1/data/file.json", SizeBytes: 100},
+		},
+		RowCount:    10,
+		Codec:       "jsonl",
+		Compressor:  "noop",
+		Partitioner: "hive",
+	}
+	data1, _ := json.Marshal(manifest1)
+	_ = store.memory.Put(ctx, "datasets/mydata/partitions/day=2024-01-01/segments/seg-1/manifest.json", bytes.NewReader(data1))
+
+	// Partition day=2024-01-02 contains seg-2
+	manifest2 := &lode.Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "mydata",
+		SnapshotID:    "seg-2",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      lode.Metadata{},
+		Files: []lode.FileRef{
+			{Path: "datasets/mydata/partitions/day=2024-01-02/segments/seg-2/data/file.json", SizeBytes: 100},
+		},
+		RowCount:    10,
+		Codec:       "jsonl",
+		Compressor:  "noop",
+		Partitioner: "hive",
+	}
+	data2, _ := json.Marshal(manifest2)
+	_ = store.memory.Put(ctx, "datasets/mydata/partitions/day=2024-01-02/segments/seg-2/manifest.json", bytes.NewReader(data2))
+
+	reader := NewReaderWithLayout(store, HiveLayout{})
+
+	// List segments with partition filter - should use prefix pruning
+	store.listPrefixes = nil // clear
+	segments, err := reader.ListSegments(ctx, "mydata", "day=2024-01-01", SegmentListOptions{})
+	if err != nil {
+		t.Fatalf("ListSegments failed: %v", err)
+	}
+
+	// Verify prefix used was partition-specific (true prefix pruning)
+	if len(store.listPrefixes) != 1 {
+		t.Errorf("expected 1 list call, got %d", len(store.listPrefixes))
+	}
+	expectedPrefix := "datasets/mydata/partitions/day=2024-01-01/segments/"
+	if len(store.listPrefixes) > 0 && store.listPrefixes[0] != expectedPrefix {
+		t.Errorf("expected list prefix %q, got %q", expectedPrefix, store.listPrefixes[0])
+	}
+
+	// Should only find seg-1 (in the requested partition)
+	if len(segments) != 1 {
+		t.Errorf("expected 1 segment, got %d", len(segments))
+	}
+	if len(segments) > 0 && segments[0].ID != "seg-1" {
+		t.Errorf("expected segment seg-1, got %s", segments[0].ID)
+	}
+}
+
+// prefixTrackingStore wraps a store to track list prefixes
+type prefixTrackingStore struct {
+	memory       *storage.Memory
+	listPrefixes []string
+}
+
+func (p *prefixTrackingStore) Put(ctx context.Context, path string, r io.Reader) error {
+	return p.memory.Put(ctx, path, r)
+}
+func (p *prefixTrackingStore) Get(ctx context.Context, path string) (io.ReadCloser, error) {
+	return p.memory.Get(ctx, path)
+}
+func (p *prefixTrackingStore) Exists(ctx context.Context, path string) (bool, error) {
+	return p.memory.Exists(ctx, path)
+}
+func (p *prefixTrackingStore) List(ctx context.Context, prefix string) ([]string, error) {
+	p.listPrefixes = append(p.listPrefixes, prefix)
+	return p.memory.List(ctx, prefix)
+}
+func (p *prefixTrackingStore) Delete(ctx context.Context, path string) error {
+	return p.memory.Delete(ctx, path)
 }
 
 func TestDiscovery_ManifestDriven_OnlyCommittedVisible(t *testing.T) {
