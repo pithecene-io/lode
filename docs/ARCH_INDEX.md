@@ -4,6 +4,7 @@ This file is a **navigation map** of Lode’s subsystems.
 It summarizes *what exists and where*, not how things are implemented.
 
 Normative behavior is defined in `docs/contracts/CONTRACT_*.md`.
+Public API shape and defaults are defined in `PUBLIC_API.md`.
 
 Maintenance rule:
 Update this file only when a new subsystem boundary becomes real.
@@ -17,6 +18,7 @@ Do not update for internal refactors.
 - `Taskfile.yaml` — task orchestration and developer workflows
 - `go.mod` — Go module definition
 - `mise.toml` — toolchain and task runner configuration
+- `PUBLIC_API.md` — developer-facing public API spec (product contract)
 - `README.md` — project overview and goals
 - `CONTRIBUTING.md` — contribution guidelines
 
