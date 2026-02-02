@@ -10,6 +10,7 @@ import (
 	"github.com/justapithecus/lode/internal/compress"
 	"github.com/justapithecus/lode/internal/dataset"
 	"github.com/justapithecus/lode/internal/partition"
+	"github.com/justapithecus/lode/internal/read"
 	"github.com/justapithecus/lode/internal/storage"
 	"github.com/justapithecus/lode/lode"
 )
@@ -591,5 +592,197 @@ func TestRead_CompressorMismatch_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "compressor mismatch") {
 		t.Errorf("expected compressor mismatch error, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Hardening tests: Immutability invariants
+// Per CONTRACT_CORE.md: Data files and snapshots are immutable
+// -----------------------------------------------------------------------------
+
+func TestImmutability_ManifestPathsAreStable(t *testing.T) {
+	ctx := context.Background()
+	ds := newTestDataset(t)
+
+	// Write first snapshot
+	snap1, err := ds.Write(ctx, []any{map[string]any{"id": 1}}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Write second snapshot
+	snap2, err := ds.Write(ctx, []any{map[string]any{"id": 2}}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// First snapshot must still be readable with same ID
+	reloaded, err := ds.Snapshot(ctx, snap1.ID)
+	if err != nil {
+		t.Fatalf("Snapshot %s not found after second write: %v", snap1.ID, err)
+	}
+
+	if reloaded.ID != snap1.ID {
+		t.Errorf("Snapshot ID changed: got %s, want %s", reloaded.ID, snap1.ID)
+	}
+
+	// Verify both snapshots exist independently
+	snapshots, err := ds.Snapshots(ctx)
+	if err != nil {
+		t.Fatalf("Snapshots() failed: %v", err)
+	}
+
+	if len(snapshots) != 2 {
+		t.Errorf("Expected 2 snapshots, got %d", len(snapshots))
+	}
+
+	// Verify snapshots are distinct
+	if snap1.ID == snap2.ID {
+		t.Error("Snapshots should have distinct IDs")
+	}
+}
+
+func TestImmutability_SnapshotContentsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	ds := newTestDataset(t)
+
+	originalRecords := []any{
+		map[string]any{"id": 1, "value": "original"},
+	}
+
+	snapshot, err := ds.Write(ctx, originalRecords, lode.Metadata{"version": "1"})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Write more data (should not affect first snapshot)
+	_, err = ds.Write(ctx, []any{map[string]any{"id": 2, "value": "new"}}, lode.Metadata{"version": "2"})
+	if err != nil {
+		t.Fatalf("Second write failed: %v", err)
+	}
+
+	// Read original snapshot - contents must be unchanged
+	readRecords, err := ds.Read(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if len(readRecords) != 1 {
+		t.Fatalf("Expected 1 record, got %d", len(readRecords))
+	}
+
+	rec := readRecords[0].(map[string]any)
+	if rec["value"] != "original" {
+		t.Errorf("Snapshot contents changed: got %v, want 'original'", rec["value"])
+	}
+}
+
+func TestImmutability_ManifestMetadataPreserved(t *testing.T) {
+	ctx := context.Background()
+	ds := newTestDataset(t)
+
+	metadata := lode.Metadata{
+		"author":  "test",
+		"version": "1.0",
+		"tags":    []string{"a", "b"},
+	}
+
+	snapshot, err := ds.Write(ctx, []any{map[string]any{"id": 1}}, metadata)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Reload and verify metadata
+	reloaded, err := ds.Snapshot(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("Snapshot not found: %v", err)
+	}
+
+	if reloaded.Manifest.Metadata["author"] != "test" {
+		t.Errorf("Metadata 'author' not preserved")
+	}
+	if reloaded.Manifest.Metadata["version"] != "1.0" {
+		t.Errorf("Metadata 'version' not preserved")
+	}
+}
+
+func TestImmutability_RowCountAccurate(t *testing.T) {
+	ctx := context.Background()
+	ds := newTestDataset(t)
+
+	records := []any{
+		map[string]any{"id": 1},
+		map[string]any{"id": 2},
+		map[string]any{"id": 3},
+	}
+
+	snapshot, err := ds.Write(ctx, records, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	if snapshot.Manifest.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", snapshot.Manifest.RowCount)
+	}
+
+	// Reload and verify
+	reloaded, err := ds.Snapshot(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("Snapshot not found: %v", err)
+	}
+
+	if reloaded.Manifest.RowCount != 3 {
+		t.Errorf("Reloaded RowCount = %d, want 3", reloaded.Manifest.RowCount)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Hardening tests: Layout integration
+// -----------------------------------------------------------------------------
+
+func TestLayout_CustomLayoutUsedForPaths(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Use HiveLayout instead of default
+	ds, err := dataset.New("test-ds", dataset.Config{
+		Store:       store,
+		Codec:       codec.NewJSONL(),
+		Compressor:  compress.NewNoop(),
+		Partitioner: partition.NewNoop(),
+		Layout:      read.HiveLayout{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create dataset: %v", err)
+	}
+
+	snapshot, err := ds.Write(ctx, []any{map[string]any{"id": 1}}, lode.Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Verify manifest path uses HiveLayout structure
+	// HiveLayout: datasets/<ds>/segments/<seg>/manifest.json
+	paths, _ := store.List(ctx, "")
+	hasHiveManifest := false
+	for _, p := range paths {
+		if strings.Contains(p, "/segments/") && strings.HasSuffix(p, "manifest.json") {
+			hasHiveManifest = true
+			break
+		}
+	}
+
+	if !hasHiveManifest {
+		t.Errorf("Expected HiveLayout manifest path, got paths: %v", paths)
+	}
+
+	// Verify snapshot is still readable
+	reloaded, err := ds.Snapshot(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("Snapshot not readable: %v", err)
+	}
+
+	if reloaded.ID != snapshot.ID {
+		t.Errorf("Snapshot ID mismatch")
 	}
 }
