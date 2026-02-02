@@ -22,10 +22,23 @@ import (
 // provided these invariants hold.
 type Layout interface {
 	// -------------------------------------------------------------------------
+	// Capability methods
+	// -------------------------------------------------------------------------
+
+	// SupportsDatasetEnumeration returns true if this layout supports listing
+	// all datasets via a common prefix. Layouts that don't model datasets as
+	// a first-class concept (e.g., FlatLayout) return false.
+	//
+	// When false, ListDatasets returns ErrDatasetsNotModeled instead of
+	// attempting enumeration.
+	SupportsDatasetEnumeration() bool
+
+	// -------------------------------------------------------------------------
 	// Discovery methods (read-side)
 	// -------------------------------------------------------------------------
 
 	// DatasetsPrefix returns the storage prefix for listing all datasets.
+	// Only meaningful when SupportsDatasetEnumeration returns true.
 	DatasetsPrefix() string
 
 	// SegmentsPrefix returns the storage prefix for listing segments in a dataset.
@@ -76,6 +89,11 @@ const (
 	defaultManifestFile = "manifest.json"
 	defaultDataDir      = "data"
 )
+
+// SupportsDatasetEnumeration returns true - DefaultLayout has a datasets prefix.
+func (l DefaultLayout) SupportsDatasetEnumeration() bool {
+	return true
+}
 
 // DatasetsPrefix returns "datasets/".
 func (l DefaultLayout) DatasetsPrefix() string {
@@ -209,6 +227,11 @@ const (
 	hivePartitionsDir = "partitions"
 	hiveSegmentsDir   = "segments"
 )
+
+// SupportsDatasetEnumeration returns true - HiveLayout has a datasets prefix.
+func (l HiveLayout) SupportsDatasetEnumeration() bool {
+	return true
+}
 
 // DatasetsPrefix returns "datasets/".
 func (l HiveLayout) DatasetsPrefix() string {
@@ -347,7 +370,15 @@ var _ Layout = HiveLayout{}
 // simpler for single-dataset scenarios or testing.
 type FlatLayout struct{}
 
-// DatasetsPrefix returns "" (empty prefix for flat layout).
+// SupportsDatasetEnumeration returns false - FlatLayout has no common datasets prefix.
+// Datasets in FlatLayout are at the root level and cannot be enumerated without
+// listing the entire storage.
+func (l FlatLayout) SupportsDatasetEnumeration() bool {
+	return false
+}
+
+// DatasetsPrefix returns "" (not meaningful for FlatLayout).
+// Check SupportsDatasetEnumeration before using this.
 func (l FlatLayout) DatasetsPrefix() string {
 	return ""
 }

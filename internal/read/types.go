@@ -4,7 +4,19 @@
 // The read API exposes stored facts, not interpretations.
 package read
 
-import "github.com/justapithecus/lode/lode"
+import (
+	"errors"
+
+	"github.com/justapithecus/lode/lode"
+)
+
+// ErrDatasetsNotModeled indicates that the current layout does not support
+// dataset enumeration. Some layouts (e.g., FlatLayout) don't have a common
+// prefix for datasets, making enumeration impossible without listing entire storage.
+//
+// This error is returned by ListDatasets when the layout's
+// SupportsDatasetEnumeration returns false.
+var ErrDatasetsNotModeled = errors.New("datasets not modeled by this layout")
 
 // ObjectKey identifies an object in storage.
 type ObjectKey string
