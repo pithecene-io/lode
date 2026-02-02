@@ -34,6 +34,7 @@ Plans, contracts, and research notes. Contracts define **system behavior**.
 - `contracts/CONTRACT_ITERATION.md` — object iterator lifecycle semantics
 - `contracts/CONTRACT_COMPOSITION.md` — store composition determinism
 - `contracts/CONTRACT_READ_API.md` — read API contract and adapter obligations
+- `contracts/CONTRACT_ERRORS.md` — error taxonomy and handling guidelines
 - `01_phase0_architecture_public_api_plan.md` — Phase 0 architecture and API plan
 - `ROADMAP.md` — phased goals and non-goals
 - `Lode Phase 4+ Exploratory Architecture.pdf` — exploratory research notes
@@ -58,7 +59,11 @@ Internal implementations (currently empty).
 
 ## examples/
 
-Example usage and integration references (currently empty).
+Example usage and integration references.
+
+- `default_layout/` — write → list → read with DefaultLayout
+- `hive_layout/` — partition-first layout with Hive partitioner
+- `manifest_driven/` — manifest-driven discovery demonstration
 
 ---
 

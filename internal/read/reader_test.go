@@ -1101,6 +1101,92 @@ func TestDiscovery_ManifestPresence_CommitSignal(t *testing.T) {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Manifest validation error propagation tests (CONTRACT_ERRORS.md)
+// "ListSegments returns error (not skip) when manifest validation fails"
+// "ListPartitions returns error (not skip) when manifest validation fails"
+// -----------------------------------------------------------------------------
+
+func TestListSegments_ManifestValidationError_PropagatesError(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write an invalid manifest (missing required fields)
+	// Include files with a partition to trigger manifest loading during partition filter
+	invalidManifest := map[string]any{
+		// Missing schema_name, format_version, codec, compressor, partitioner
+		"dataset_id":  "mydata",
+		"snapshot_id": "snap-1",
+		"created_at":  time.Now().UTC(),
+		"metadata":    map[string]any{},
+		"files": []any{
+			map[string]any{"path": "datasets/mydata/snapshots/snap-1/data/region=us/file.json", "size_bytes": 100},
+		},
+		"row_count": 10,
+	}
+
+	data, _ := json.Marshal(invalidManifest)
+	err := store.Put(ctx, "datasets/mydata/snapshots/snap-1/manifest.json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("failed to write invalid manifest: %v", err)
+	}
+
+	reader := NewReader(store)
+
+	// ListSegments with a partition filter triggers manifest loading and validation
+	// Per CONTRACT_ERRORS.md: "ListSegments returns error (not skip) when manifest validation fails"
+	_, err = reader.ListSegments(ctx, "mydata", "region=us", SegmentListOptions{})
+	if err == nil {
+		t.Fatal("expected error for invalid manifest, got nil")
+	}
+
+	// Error should be related to manifest validation
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestListPartitions_ManifestValidationError_PropagatesError(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+
+	// Write an invalid manifest (missing required fields)
+	invalidManifest := map[string]any{
+		// Missing schema_name, format_version, codec, compressor, partitioner
+		"dataset_id":  "mydata",
+		"snapshot_id": "snap-1",
+		"created_at":  time.Now().UTC(),
+		"metadata":    map[string]any{},
+		"files": []any{
+			map[string]any{"path": "datasets/mydata/snapshots/snap-1/data/region=us/file.json", "size_bytes": 100},
+		},
+		"row_count": 10,
+	}
+
+	data, _ := json.Marshal(invalidManifest)
+	err := store.Put(ctx, "datasets/mydata/snapshots/snap-1/manifest.json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("failed to write invalid manifest: %v", err)
+	}
+
+	reader := NewReader(store)
+
+	// ListPartitions should return error, not skip the invalid manifest
+	_, err = reader.ListPartitions(ctx, "mydata", PartitionListOptions{})
+	if err == nil {
+		t.Fatal("expected error for invalid manifest, got nil")
+	}
+
+	// Error should be related to manifest validation
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Helper for writing test manifests
+// -----------------------------------------------------------------------------
+
 // writeTestManifest writes a minimal valid manifest to storage.
 func writeTestManifest(t *testing.T, ctx context.Context, store lode.Store, dataset, snapshot string) {
 	t.Helper()
