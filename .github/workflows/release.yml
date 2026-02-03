@@ -8,10 +8,24 @@ permissions:
   contents: write
 
 jobs:
+  tag_check:
+    name: "🔎 Tag Check"
+    runs-on: ubuntu-latest
+    outputs:
+      semver_match: ${{ steps.regex-match.outputs.match }}
+    steps:
+      - name: "🔎 Match SemVer Tag"
+        uses: actions-ecosystem/action-regex-match@v2
+        id: regex-match
+        with:
+          text: ${{ github.ref_name }}
+          regex: '^v[0-9]+\\.[0-9]+\\.[0-9]+$'
+
   package:
     name: "📦 Package"
     runs-on: ubuntu-latest
-    if: ${{ github.ref_name =~ '^v[0-9]+\\.[0-9]+\\.[0-9]+$' }}
+    needs: [tag_check]
+    if: ${{ needs.tag_check.outputs.semver_match != '' }}
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
