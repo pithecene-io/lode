@@ -142,6 +142,16 @@ type Store interface {
 
 	// Delete removes the path if it exists.
 	Delete(ctx context.Context, path string) error
+
+	// ReadRange reads a byte range from the given path.
+	// Returns ErrNotFound if the path does not exist.
+	// Returns ErrRangeReadNotSupported if the store does not support range reads.
+	ReadRange(ctx context.Context, path string, offset, length int64) ([]byte, error)
+
+	// ReaderAt returns an io.ReaderAt for random access reads.
+	// Returns ErrNotFound if the path does not exist.
+	// Returns ErrRangeReadNotSupported if the store does not support range reads.
+	ReaderAt(ctx context.Context, path string) (io.ReaderAt, error)
 }
 
 // StoreFactory creates a Store. Used for deferred store construction.
@@ -231,6 +241,9 @@ var (
 
 	// ErrNoManifests indicates storage contains objects but no valid manifests.
 	ErrNoManifests = errNoManifests{}
+
+	// ErrRangeReadNotSupported indicates the store does not support range reads.
+	ErrRangeReadNotSupported = errRangeReadNotSupported{}
 )
 
 type errNotFound struct{}
@@ -248,6 +261,10 @@ func (errPathExists) Error() string { return "path exists" }
 type errNoManifests struct{}
 
 func (errNoManifests) Error() string { return "no manifests found (storage contains objects)" }
+
+type errRangeReadNotSupported struct{}
+
+func (errRangeReadNotSupported) Error() string { return "range read not supported" }
 
 // -----------------------------------------------------------------------------
 // Reader interface
@@ -328,6 +345,10 @@ type Reader interface {
 	// OpenObject returns a reader for a data object.
 	// The caller must close the reader when done.
 	OpenObject(ctx context.Context, obj ObjectRef) (io.ReadCloser, error)
+
+	// ReaderAt returns an io.ReaderAt for random access reads on a data object.
+	// Returns ErrRangeReadNotSupported if the underlying store does not support range reads.
+	ReaderAt(ctx context.Context, obj ObjectRef) (io.ReaderAt, error)
 }
 
 // ErrDatasetsNotModeled indicates that the current layout does not support

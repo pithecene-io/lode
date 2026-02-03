@@ -203,6 +203,10 @@ func (r *reader) OpenObject(ctx context.Context, obj ObjectRef) (io.ReadCloser, 
 	return r.store.Get(ctx, obj.Path)
 }
 
+func (r *reader) ReaderAt(ctx context.Context, obj ObjectRef) (io.ReaderAt, error) {
+	return r.store.ReaderAt(ctx, obj.Path)
+}
+
 func (r *reader) loadManifest(ctx context.Context, manifestPath string) (*Manifest, error) {
 	rc, err := r.store.Get(ctx, manifestPath)
 	if err != nil {

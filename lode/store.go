@@ -1,9 +1,11 @@
 package lode
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,10 @@ import (
 
 // ErrInvalidPath indicates a path that would escape the storage root.
 var ErrInvalidPath = errors.New("invalid path: escapes storage root")
+
+// maxReadRangeLength is the maximum length for ReadRange to prevent overflow
+// when converting int64 to int on 32-bit platforms.
+const maxReadRangeLength = int64(math.MaxInt)
 
 // -----------------------------------------------------------------------------
 // Filesystem Store
@@ -142,6 +148,57 @@ func (f *fsStore) Delete(_ context.Context, path string) error {
 		return nil
 	}
 	return err
+}
+
+func (f *fsStore) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 || length > maxReadRangeLength {
+		return nil, ErrInvalidPath
+	}
+	// Check for offset+length overflow
+	if offset > math.MaxInt64-length {
+		return nil, ErrInvalidPath
+	}
+
+	fullPath, err := f.safePathForFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+
+	data := make([]byte, int(length))
+	n, err := file.ReadAt(data, offset)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	return data[:n], nil
+}
+
+func (f *fsStore) ReaderAt(_ context.Context, path string) (io.ReaderAt, error) {
+	fullPath, err := f.safePathForFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	// Note: The caller is responsible for closing via type assertion if needed.
+	// *os.File implements io.ReaderAt.
+	return file, nil
 }
 
 func (f *fsStore) safePathForFile(path string) (string, error) {
@@ -304,6 +361,63 @@ func (m *memoryStore) Delete(_ context.Context, path string) error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+func (m *memoryStore) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 || length > maxReadRangeLength {
+		return nil, ErrInvalidPath
+	}
+	// Check for offset+length overflow
+	if offset > math.MaxInt64-length {
+		return nil, ErrInvalidPath
+	}
+
+	normalized, valid := normalizePathForFile(path)
+	if !valid {
+		return nil, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	// Bounds checking
+	if offset >= int64(len(data)) {
+		return []byte{}, nil
+	}
+
+	end := offset + length
+	if end > int64(len(data)) {
+		end = int64(len(data))
+	}
+
+	result := make([]byte, int(end-offset))
+	copy(result, data[offset:end])
+	return result, nil
+}
+
+func (m *memoryStore) ReaderAt(_ context.Context, path string) (io.ReaderAt, error) {
+	normalized, valid := normalizePathForFile(path)
+	if !valid {
+		return nil, ErrInvalidPath
+	}
+
+	m.mu.RLock()
+	data, exists := m.data[normalized]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	// Return a bytes.Reader which implements io.ReaderAt
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	return bytes.NewReader(dataCopy), nil
 }
 
 func normalizePathForFile(path string) (string, bool) {

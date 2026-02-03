@@ -37,6 +37,22 @@ It is authoritative for any implementation of the `Store` interface.
 - MUST remove the path if it exists.
 - MUST be safe to call on a missing path (idempotent or `ErrNotFound`).
 
+### ReadRange
+- MUST return bytes from `[offset, offset+length)` for the given path.
+- If the path does not exist, MUST return `ErrNotFound`.
+- If offset or length is negative, MUST return `ErrInvalidPath`.
+- If length exceeds platform `int` capacity, MUST return `ErrInvalidPath`.
+- If offset+length would overflow, MUST return `ErrInvalidPath`.
+- If the range extends beyond EOF, MUST return available bytes (not an error).
+- If offset is beyond EOF, MUST return an empty slice.
+- MUST use true range reads (not whole-file read) where the backend supports it.
+
+### ReaderAt
+- MUST return an `io.ReaderAt` for random access reads.
+- If the path does not exist, MUST return `ErrNotFound`.
+- The returned `ReaderAt` MUST support concurrent reads at different offsets.
+- Callers are responsible for closing the underlying resource if it implements `io.Closer`.
+
 ---
 
 ## Commit Semantics
