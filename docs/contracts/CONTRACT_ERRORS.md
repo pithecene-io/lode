@@ -60,7 +60,7 @@ These indicate a manifest fails structural or semantic validation.
 
 | Error | Source | Meaning |
 |-------|--------|---------|
-| `read.ManifestValidationError` | Manifest loader | Manifest missing required fields or has invalid values |
+| `lode.ErrManifestInvalid` | Manifest loader | Manifest missing required fields or has invalid values |
 
 **Required Manifest Fields** (per CONTRACT_CORE.md):
 - `SchemaName`: Non-empty string identifying schema
