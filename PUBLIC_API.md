@@ -53,11 +53,10 @@ Example:
 reader, _ := lode.NewReader(
     lode.NewFSFactory("/data"),
 )
-// Or with custom layout:
-hiveLayout, _ := lode.NewHiveLayout("day")
+// Or with Hive layout (preferred for partitioned data):
 reader, _ := lode.NewReader(
     lode.NewFSFactory("/data"),
-    lode.WithLayout(hiveLayout),
+    lode.WithHiveLayout("day"),
 )
 ```
 
@@ -71,9 +70,17 @@ provided.
 Options are validated at construction time. Passing an option that does
 not apply to the target (dataset vs reader) returns an error.
 
+**Layout-specific option:**
+- `WithHiveLayout(keys...)` - Preferred for Hive layout (validates on apply)
+
+**General options:**
+- `WithLayout(layout)` - For any layout (DefaultLayout, FlatLayout, or advanced use)
+- `WithCompressor(c)` - Dataset-only
+- `WithCodec(c)` - Dataset-only
+
 Dataset construction uses:
 - StoreFactory
-- Layout
+- Layout (via WithHiveLayout or WithLayout)
 - Partitioning (via layout)
 - Compressor
 - Optional codec
@@ -90,8 +97,8 @@ includes a curated set of components:
 - `NewMemoryFactory()` - In-memory storage
 
 **Layouts:**
-- `NewDefaultLayout()` - Default novice-friendly layout
-- `NewHiveLayout(keys...) (layout, error)` - Partition-first layout for pruning
+- `NewDefaultLayout()` - Default novice-friendly layout (used automatically)
+- `NewHiveLayout(keys...) (layout, error)` - Partition-first layout (prefer `WithHiveLayout` for fluent API)
 - `NewFlatLayout()` - Minimal flat layout
 
 **Compressors:**
@@ -168,7 +175,7 @@ valid; nil metadata is not.
 - `metadata` must be non-nil on every write (use `{}` for empty metadata).
 - Raw blob mode (no codec) requires exactly one `[]byte` element in `Write`.
 - Raw blob mode cannot use partitioning (no record fields to extract keys).
-- `NewHiveLayout` returns `(layout, error)` — at least one partition key is required.
+- `WithHiveLayout` requires at least one partition key (validated on apply).
 - `ListDatasets` returns `ErrNoManifests` when storage has objects but no manifests.
 - Layouts that do not model datasets (e.g., flat) return `ErrDatasetsNotModeled`.
 - `ReaderAt` may return an `io.ReaderAt` that also implements `io.Closer`; close it when done.

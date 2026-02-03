@@ -65,6 +65,39 @@ func TestNewHiveLayout_WithKeys_Success(t *testing.T) {
 	}
 }
 
+func TestWithHiveLayout_ZeroKeys_ReturnsError(t *testing.T) {
+	// WithHiveLayout validates on apply, so error comes from NewDataset
+	_, err := NewDataset("test-ds", NewMemoryFactory(), WithHiveLayout(), WithCodec(NewJSONLCodec()))
+	if err == nil {
+		t.Fatal("expected error for zero keys, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one partition key") {
+		t.Errorf("expected 'at least one partition key' in error, got: %v", err)
+	}
+}
+
+func TestWithHiveLayout_WithKeys_Success(t *testing.T) {
+	// Fluent API - single error check
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithHiveLayout("day"), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatalf("NewDataset with WithHiveLayout failed: %v", err)
+	}
+	if ds == nil {
+		t.Fatal("expected non-nil dataset")
+	}
+}
+
+func TestWithHiveLayout_WithReader_Success(t *testing.T) {
+	// Fluent API - single error check
+	reader, err := NewReader(NewMemoryFactory(), WithHiveLayout("day"))
+	if err != nil {
+		t.Fatalf("NewReader with WithHiveLayout failed: %v", err)
+	}
+	if reader == nil {
+		t.Fatal("expected non-nil reader")
+	}
+}
+
 func TestNewDataset_NilFactory_ReturnsError(t *testing.T) {
 	_, err := NewDataset("test-ds", nil)
 	if err == nil {
