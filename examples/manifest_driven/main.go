@@ -20,6 +20,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/justapithecus/lode/internal/testutil"
 	"github.com/justapithecus/lode/lode"
 )
 
@@ -37,7 +38,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 
@@ -72,11 +73,12 @@ func run() error {
 
 	// Try to discover datasets - should get ErrNoManifests (objects exist but no manifests)
 	datasets, err := reader.ListDatasets(ctx, lode.DatasetListOptions{})
-	if errors.Is(err, lode.ErrNoManifests) {
+	switch {
+	case errors.Is(err, lode.ErrNoManifests):
 		fmt.Printf("ListDatasets returned ErrNoManifests (expected: objects exist but no manifests)\n\n")
-	} else if err != nil {
+	case err != nil:
 		return fmt.Errorf("failed to list datasets: %w", err)
-	} else {
+	default:
 		fmt.Printf("Datasets discovered: %d (unexpected: should have returned ErrNoManifests)\n\n", len(datasets))
 	}
 

@@ -29,10 +29,10 @@ type layout interface {
 
 // Layout constants
 const (
-	datasetsDir  = "datasets"
-	snapshotsDir = "snapshots"
-	manifestFile = "manifest.json"
-	dataDir      = "data"
+	datasetsDir   = "datasets"
+	snapshotsDir  = "snapshots"
+	manifestFile  = "manifest.json"
+	dataDir       = "data"
 	partitionsDir = "partitions"
 	segmentsDir   = "segments"
 )
