@@ -197,9 +197,48 @@ Explore new adapters or codecs without expanding the public API.
 - Manifest stats (optional, additive)
 
 ### Mini-milestones
-- [ ] No API surface growth
-- [ ] No backend-specific conditionals
-- [ ] Explicitly marked experimental
+- [x] No API surface growth
+- [x] No backend-specific conditionals
+- [x] Explicitly marked experimental
+
+### S3 Adapter (Experimental)
+
+**Status**: Implemented (internal/s3)
+
+The S3 adapter is available as an **experimental** internal implementation.
+It supports AWS S3, MinIO, LocalStack, and other S3-compatible object stores.
+
+**Location**: `internal/s3/`
+
+**Consistency notes**:
+- S3 provides strong read-after-write consistency (since December 2020)
+- List operations are also strongly consistent
+- Commit semantics rely on manifest presence: write data objects before manifest
+
+**Integration testing**:
+- Gated behind `LODE_S3_TESTS=1` environment variable
+- Requires Docker Compose for LocalStack/MinIO services
+- Run: `task s3:up && task s3:test && task s3:down`
+
+**Usage**:
+```go
+import (
+    "github.com/justapithecus/lode/internal/s3"
+)
+
+// For LocalStack
+client, _ := s3.NewLocalStackClient(ctx)
+store, _ := s3.New(client, s3.Config{Bucket: "my-bucket"})
+
+// For MinIO
+client, _ := s3.NewMinIOClient(ctx)
+store, _ := s3.New(client, s3.Config{Bucket: "my-bucket"})
+
+// For AWS S3 (use standard AWS SDK config)
+cfg, _ := config.LoadDefaultConfig(ctx)
+client := awss3.NewFromConfig(cfg)
+store, _ := s3.New(client, s3.Config{Bucket: "my-bucket", Prefix: "datasets/"})
+```
 
 ---
 
