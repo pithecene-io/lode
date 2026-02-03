@@ -67,7 +67,7 @@ Example usage and integration references.
 - `hive_layout/` — partition-first layout with Hive partitioner
 - `manifest_driven/` — manifest-driven discovery demonstration
 - `blob_upload/` — raw blob write/read with default bundle
-- `s3_experimental/` — S3 adapter example
+- `s3_experimental/` — S3 adapter example (name retained for continuity)
 
 ---
 
