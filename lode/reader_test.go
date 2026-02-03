@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -43,7 +44,7 @@ func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
 }
 
 func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -72,7 +73,7 @@ func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
 }
 
 func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -101,7 +102,7 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 }
 
 func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write an invalid manifest (missing required fields)
@@ -124,7 +125,7 @@ func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t 
 }
 
 func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write an invalid manifest (missing required fields)
@@ -153,7 +154,7 @@ func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError
 // -----------------------------------------------------------------------------
 
 func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write data files but no manifest
@@ -174,7 +175,7 @@ func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
 }
 
 func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
@@ -192,7 +193,7 @@ func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
 }
 
 func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -220,6 +221,48 @@ func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
 	}
 	if len(datasets) != 1 || datasets[0] != "test-ds" {
 		t.Errorf("expected [test-ds], got: %v", datasets)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// G4: Layout-specific tests
+// -----------------------------------------------------------------------------
+
+func TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store), WithLayout(NewFlatLayout()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.ListDatasets(ctx, DatasetListOptions{})
+	if !errors.Is(err, ErrDatasetsNotModeled) {
+		t.Errorf("expected ErrDatasetsNotModeled, got: %v", err)
+	}
+}
+
+func TestReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *testing.T) {
+	ctx := t.Context()
+
+	tmpDir, err := os.MkdirTemp("", "lode-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	reader, err := NewReader(NewFSFactory(tmpDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	datasets, err := reader.ListDatasets(ctx, DatasetListOptions{})
+	if err != nil {
+		t.Fatalf("expected no error for empty FS storage, got: %v", err)
+	}
+	if len(datasets) != 0 {
+		t.Errorf("expected empty list, got: %v", datasets)
 	}
 }
 

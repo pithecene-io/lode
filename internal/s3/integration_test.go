@@ -4,7 +4,6 @@ package s3
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +38,7 @@ func skipIfNoS3(t *testing.T) {
 func TestLocalStack_Integration(t *testing.T) {
 	skipIfNoS3(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	client, err := NewLocalStackClient(ctx)
 	if err != nil {
 		t.Fatalf("failed to create LocalStack client: %v", err)
@@ -81,7 +80,7 @@ func TestLocalStack_Integration(t *testing.T) {
 func TestMinIO_Integration(t *testing.T) {
 	skipIfNoS3(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	client, err := NewMinIOClient(ctx)
 	if err != nil {
 		t.Fatalf("failed to create MinIO client: %v", err)
@@ -121,7 +120,7 @@ func TestMinIO_Integration(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func runStoreIntegrationTests(t *testing.T, store *Store) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("write_list_read", func(t *testing.T) {
 		content := []byte("hello world")

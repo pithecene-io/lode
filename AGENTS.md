@@ -108,6 +108,13 @@ Assume it is invalid and stop.
 
 ---
 
+## Testing conventions
+
+- Use `t.Context()` instead of `context.Background()` in tests
+- Use `errors.Is()` for error comparisons, not `==`
+
+---
+
 ## Priority order
 
 1. Correctness

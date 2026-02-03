@@ -91,4 +91,6 @@ If you are evaluating Lode, focus on:
 - metadata visibility
 - API clarity
 
-See [`docs/ROADMAP.md`](./docs/ROADMAP.md) for what's planned.
+Usage overview: `PUBLIC_API.md`  
+Concrete usage: `examples/`  
+Implementation milestones: `docs/IMPLEMENTATION_PLAN.md`

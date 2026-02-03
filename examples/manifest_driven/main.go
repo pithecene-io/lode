@@ -1,6 +1,10 @@
 // Example: Manifest-Driven Discovery
 //
-// This example demonstrates that discovery is driven entirely by manifests:
+// This example demonstrates that discovery is driven entirely by manifests.
+//
+// Note: This uses direct Store access for demonstration (writing data without a
+// manifest). It is technically valid but not typical usage; NewDataset always
+// writes manifests on success.
 //   - Manifests are the commit signal (presence = visibility)
 //   - Data files without manifests are not discovered
 //   - All metadata comes from manifests, not file inspection

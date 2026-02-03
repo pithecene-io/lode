@@ -64,6 +64,44 @@ func (o *layoutOption) applyReader(cfg *readerConfig) error {
 	return nil
 }
 
+// hiveLayoutOption implements Option for WithHiveLayout.
+type hiveLayoutOption struct {
+	keys []string
+}
+
+// WithHiveLayout creates a Hive (partition-first) layout option with the specified partition keys.
+//
+// This is the preferred way to configure Hive layout for fluent callsites.
+// At least one partition key is required; validation occurs when the option is applied.
+//
+// Example:
+//
+//	ds, err := lode.NewDataset("events", factory,
+//	    lode.WithHiveLayout("day", "region"),
+//	    lode.WithCodec(lode.NewJSONLCodec()),
+//	)
+func WithHiveLayout(keys ...string) Option {
+	return &hiveLayoutOption{keys: keys}
+}
+
+func (o *hiveLayoutOption) applyDataset(cfg *datasetConfig) error {
+	l, err := NewHiveLayout(o.keys...)
+	if err != nil {
+		return err
+	}
+	cfg.layout = l
+	return nil
+}
+
+func (o *hiveLayoutOption) applyReader(cfg *readerConfig) error {
+	l, err := NewHiveLayout(o.keys...)
+	if err != nil {
+		return err
+	}
+	cfg.layout = l
+	return nil
+}
+
 // compressorOption implements Option for WithCompressor (dataset-only).
 type compressorOption struct {
 	compressor Compressor

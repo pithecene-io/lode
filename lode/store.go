@@ -114,6 +114,12 @@ func (f *fsStore) List(_ context.Context, prefix string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Return empty list if prefix directory doesn't exist (empty dataset/prefix semantics)
+	if _, err := os.Stat(searchPath); os.IsNotExist(err) {
+		return nil, nil
+	}
+
 	var paths []string
 
 	err = filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {

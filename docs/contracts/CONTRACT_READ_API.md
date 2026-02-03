@@ -40,21 +40,27 @@ that consumes data written by Lode.
 
 Adapters are the critical contract. Range reads must be *real*, not simulated.
 
+The authoritative adapter shape is `Store` (see `lode/api.go` and
+`docs/contracts/CONTRACT_STORAGE.md`):
+
 ```go
-type Storage interface {
-    Stat(ctx context.Context, key ObjectKey) (ObjectInfo, error)
-    Open(ctx context.Context, key ObjectKey) (io.ReadCloser, error)
-    ReadRange(ctx context.Context, key ObjectKey, offset int64, length int64) ([]byte, error)
-    ReaderAt(ctx context.Context, key ObjectKey) (ReaderAt, error)
-    List(ctx context.Context, prefix ObjectKey, opts ListOptions) (ListPage, error)
+type Store interface {
+    Put(ctx context.Context, path string, r io.Reader) error
+    Get(ctx context.Context, path string) (io.ReadCloser, error)
+    Exists(ctx context.Context, path string) (bool, error)
+    List(ctx context.Context, prefix string) ([]string, error)
+    Delete(ctx context.Context, path string) error
+    ReadRange(ctx context.Context, path string, offset, length int64) ([]byte, error)
+    ReaderAt(ctx context.Context, path string) (io.ReaderAt, error)
 }
 ```
 
-### Adapter obligations
+### Adapter obligations (read-facing emphasis)
 
 - `ReadRange` must map to true range requests (e.g. HTTP Range on S3).
-- `ReaderAt` should implement page-aligned caching and request coalescing.
-- Adapters must document consistency guarantees and mitigations.
+- `ReaderAt` must provide random-access reads and be safe for concurrent offsets.
+- Adapters must document consistency guarantees and mitigations (see
+  `CONTRACT_STORAGE.md` for full obligations).
 
 ### Range read access paths
 
@@ -206,7 +212,11 @@ are known-good combinations, to reduce user friction and avoid illogical pairing
 Examples include:
 - Default (novice-friendly) layout.
 - Hive-style (path-encoded key/value partitions).
-- Manifest-driven layout (minimal topology; discovery via manifests).
+- Flat layout (minimal topology; no dataset enumeration).
+
+Manifest-driven discovery is a **pattern**, not a distinct layout: discovery is
+always manifest-driven, but layouts still define how manifests are found and
+how dataset/segment IDs are parsed from paths.
 
 Additional layouts (spatial tiling, temporal hierarchies, range partitioning) are
 valid future extensions, but MUST follow the same invariants.

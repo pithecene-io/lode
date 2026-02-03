@@ -138,7 +138,7 @@ Make storage and format choices pluggable without changing semantics.
 - NoOp components for partitioning/compression
 - **Unified Layout abstraction** (publicly single, internally composable)
 - **Default layout** (dataset-modeled, segment-anchored, flat)
-- Curated layout implementations (default + hive-style + manifest-driven)
+- Curated layout implementations (default + hive-style + flat)
 
 ### Mini-milestones
 - [ ] Manifests record component names
@@ -175,6 +175,7 @@ Stabilize behavior and validate invariants with tests and examples.
 - Error taxonomy and test coverage
 - Example: write → list → read
 - Example: single-object blob upload (public API only)
+- Example: manifest-driven discovery (pattern, not a layout)
 - Explicit metadata visibility on disk
 - Examples for default layout and hive-style layout
 

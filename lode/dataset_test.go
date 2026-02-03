@@ -1,7 +1,7 @@
 package lode
 
 import (
-	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -19,9 +19,12 @@ func TestNewDataset_RawBlobWithPartitioner_ReturnsError(t *testing.T) {
 	// NewHiveLayout creates a layout with a non-noop partitioner (hive partitioning).
 	// Using it without a codec should return an error.
 
-	hiveLayout := NewHiveLayout("day") // Non-noop partitioner
+	hiveLayout, err := NewHiveLayout("day") // Non-noop partitioner
+	if err != nil {
+		t.Fatalf("NewHiveLayout failed: %v", err)
+	}
 
-	_, err := NewDataset("test-ds", NewMemoryFactory(), WithLayout(hiveLayout))
+	_, err = NewDataset("test-ds", NewMemoryFactory(), WithLayout(hiveLayout))
 	if err == nil {
 		t.Fatal("expected error for raw blob mode with partitioner, got nil")
 	}
@@ -38,6 +41,60 @@ func TestNewDataset_RawBlobWithDefaultLayout_Success(t *testing.T) {
 	}
 	if ds == nil {
 		t.Fatal("expected non-nil dataset")
+	}
+}
+
+func TestNewHiveLayout_ZeroKeys_ReturnsError(t *testing.T) {
+	// NewHiveLayout requires at least one partition key
+	_, err := NewHiveLayout()
+	if err == nil {
+		t.Fatal("expected error for zero keys, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one partition key") {
+		t.Errorf("expected 'at least one partition key' in error, got: %v", err)
+	}
+}
+
+func TestNewHiveLayout_WithKeys_Success(t *testing.T) {
+	layout, err := NewHiveLayout("day")
+	if err != nil {
+		t.Fatalf("NewHiveLayout failed: %v", err)
+	}
+	if layout == nil {
+		t.Fatal("expected non-nil layout")
+	}
+}
+
+func TestWithHiveLayout_ZeroKeys_ReturnsError(t *testing.T) {
+	// WithHiveLayout validates on apply, so error comes from NewDataset
+	_, err := NewDataset("test-ds", NewMemoryFactory(), WithHiveLayout(), WithCodec(NewJSONLCodec()))
+	if err == nil {
+		t.Fatal("expected error for zero keys, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one partition key") {
+		t.Errorf("expected 'at least one partition key' in error, got: %v", err)
+	}
+}
+
+func TestWithHiveLayout_WithKeys_Success(t *testing.T) {
+	// Fluent API - single error check
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithHiveLayout("day"), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatalf("NewDataset with WithHiveLayout failed: %v", err)
+	}
+	if ds == nil {
+		t.Fatal("expected non-nil dataset")
+	}
+}
+
+func TestWithHiveLayout_WithReader_Success(t *testing.T) {
+	// Fluent API - single error check
+	reader, err := NewReader(NewMemoryFactory(), WithHiveLayout("day"))
+	if err != nil {
+		t.Fatalf("NewReader with WithHiveLayout failed: %v", err)
+	}
+	if reader == nil {
+		t.Fatal("expected non-nil reader")
 	}
 }
 
@@ -86,6 +143,49 @@ func TestReader_WithCodec_ReturnsError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// Empty dataset behavior tests
+// -----------------------------------------------------------------------------
+
+func TestDataset_Latest_EmptyDataset_ReturnsErrNoSnapshots(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots, got: %v", err)
+	}
+}
+
+func TestDataset_Snapshots_EmptyDataset_ReturnsEmptyList(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshots, err := ds.Snapshots(t.Context())
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(snapshots) != 0 {
+		t.Errorf("expected empty list, got %d snapshots", len(snapshots))
+	}
+}
+
+func TestDataset_Snapshot_EmptyDataset_ReturnsErrNotFound(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ds.Snapshot(t.Context(), "nonexistent-id")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Write validation tests
 // -----------------------------------------------------------------------------
 
@@ -95,7 +195,7 @@ func TestDataset_Write_NilMetadata_ReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ds.Write(context.Background(), []any{[]byte("data")}, nil)
+	_, err = ds.Write(t.Context(), []any{[]byte("data")}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil metadata, got nil")
 	}
@@ -111,7 +211,7 @@ func TestDataset_RawBlobWrite_MultipleElements_ReturnsError(t *testing.T) {
 	}
 
 	// Raw blob mode requires exactly one []byte element
-	_, err = ds.Write(context.Background(), []any{[]byte("one"), []byte("two")}, Metadata{})
+	_, err = ds.Write(t.Context(), []any{[]byte("one"), []byte("two")}, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for multiple elements in raw blob mode, got nil")
 	}
@@ -127,7 +227,7 @@ func TestDataset_RawBlobWrite_WrongType_ReturnsError(t *testing.T) {
 	}
 
 	// Raw blob mode requires []byte, not string
-	_, err = ds.Write(context.Background(), []any{"not a byte slice"}, Metadata{})
+	_, err = ds.Write(t.Context(), []any{"not a byte slice"}, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for wrong type in raw blob mode, got nil")
 	}
@@ -156,7 +256,7 @@ func TestDataset_Write_TimestampedRecords_ComputesMinMax(t *testing.T) {
 		&timestampedRecord{ID: "c", Time: ts3},
 	}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +288,7 @@ func TestDataset_Write_NonTimestampedRecords_OmitsMinMax(t *testing.T) {
 		D{"id": "b", "value": 2},
 	}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +307,7 @@ func TestDataset_Write_RawBlob_OmitsTimestamps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := ds.Write(context.Background(), []any{[]byte("blob data")}, Metadata{})
+	snap, err := ds.Write(t.Context(), []any{[]byte("blob data")}, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +329,7 @@ func TestDataset_Write_SingleTimestampedRecord_SameMinMax(t *testing.T) {
 	ts := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 	records := []any{&timestampedRecord{ID: "only", Time: ts}}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}

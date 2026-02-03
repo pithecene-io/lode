@@ -2,7 +2,6 @@ package lode
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"math"
 	"os"
@@ -16,7 +15,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func TestFSStore_Put_ErrPathExists(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +41,7 @@ func TestFSStore_Put_ErrPathExists(t *testing.T) {
 }
 
 func TestMemoryStore_Put_ErrPathExists(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// First write should succeed
@@ -63,7 +62,7 @@ func TestMemoryStore_Put_ErrPathExists(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestFSStore_ReadRange_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +91,7 @@ func TestFSStore_ReadRange_Basic(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_BeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +120,7 @@ func TestFSStore_ReadRange_BeyondEOF(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +149,7 @@ func TestFSStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +168,7 @@ func TestFSStore_ReadRange_NotFound(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_NegativeOffset(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +187,7 @@ func TestFSStore_ReadRange_NegativeOffset(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_NegativeLength(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +213,7 @@ func TestFSStore_ReadRange_LengthOverflow(t *testing.T) {
 		t.Skip("length overflow check only applies to 32-bit platforms")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +233,7 @@ func TestFSStore_ReadRange_LengthOverflow(t *testing.T) {
 }
 
 func TestFSStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +253,7 @@ func TestFSStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
 }
 
 func TestFSStore_ReaderAt_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +291,7 @@ func TestFSStore_ReaderAt_Basic(t *testing.T) {
 }
 
 func TestFSStore_ReaderAt_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +312,7 @@ func TestFSStore_ReaderAt_NotFound(t *testing.T) {
 // Memory store tests
 
 func TestMemoryStore_ReadRange_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	content := []byte("hello world")
@@ -332,7 +331,7 @@ func TestMemoryStore_ReadRange_Basic(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_BeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	content := []byte("hello")
@@ -351,7 +350,7 @@ func TestMemoryStore_ReadRange_BeyondEOF(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	content := []byte("hello")
@@ -370,7 +369,7 @@ func TestMemoryStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReadRange(ctx, "nonexistent.txt", 0, 10)
@@ -380,7 +379,7 @@ func TestMemoryStore_ReadRange_NotFound(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_NegativeOffset(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReadRange(ctx, "test.txt", -1, 10)
@@ -390,7 +389,7 @@ func TestMemoryStore_ReadRange_NegativeOffset(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_NegativeLength(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReadRange(ctx, "test.txt", 0, -1)
@@ -407,7 +406,7 @@ func TestMemoryStore_ReadRange_LengthOverflow(t *testing.T) {
 		t.Skip("length overflow check only applies to 32-bit platforms")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReadRange(ctx, "test.txt", 0, math.MaxInt64)
@@ -417,7 +416,7 @@ func TestMemoryStore_ReadRange_LengthOverflow(t *testing.T) {
 }
 
 func TestMemoryStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReadRange(ctx, "test.txt", math.MaxInt64-10, 20)
@@ -427,7 +426,7 @@ func TestMemoryStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
 }
 
 func TestMemoryStore_ReaderAt_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	content := []byte("hello world")
@@ -456,11 +455,75 @@ func TestMemoryStore_ReaderAt_Basic(t *testing.T) {
 }
 
 func TestMemoryStore_ReaderAt_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	_, err := store.ReaderAt(ctx, "nonexistent.txt")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// List empty prefix tests (empty dataset/storage semantics)
+// -----------------------------------------------------------------------------
+
+func TestFSStore_List_NonExistentPrefix_ReturnsEmpty(t *testing.T) {
+	ctx := t.Context()
+	tmpDir, err := os.MkdirTemp("", "lode-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testutil.RemoveAll(tmpDir)
+
+	store, err := NewFS(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// List a prefix that doesn't exist - should return empty list, not error
+	paths, err := store.List(ctx, "nonexistent/prefix")
+	if err != nil {
+		t.Fatalf("expected no error for non-existent prefix, got: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("expected empty list, got: %v", paths)
+	}
+}
+
+func TestFSStore_List_EmptyPrefix_ReturnsEmpty(t *testing.T) {
+	ctx := t.Context()
+	tmpDir, err := os.MkdirTemp("", "lode-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testutil.RemoveAll(tmpDir)
+
+	store, err := NewFS(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// List empty prefix on empty storage - should return empty list
+	paths, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("expected no error for empty prefix, got: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("expected empty list, got: %v", paths)
+	}
+}
+
+func TestMemoryStore_List_NonExistentPrefix_ReturnsEmpty(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	// List a prefix that doesn't exist - should return empty list, not error
+	paths, err := store.List(ctx, "nonexistent/prefix")
+	if err != nil {
+		t.Fatalf("expected no error for non-existent prefix, got: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("expected empty list, got: %v", paths)
 	}
 }

@@ -1,6 +1,7 @@
 package lode
 
 import (
+	"errors"
 	"path"
 	"strings"
 )
@@ -153,13 +154,13 @@ type hiveLayout struct {
 //
 // Example:
 //
-//	layout := NewHiveLayout("day", "region")
+//	layout, err := NewHiveLayout("day", "region")
 //	// Records will be partitioned by day=<value>/region=<value>
-func NewHiveLayout(keys ...string) layout {
+func NewHiveLayout(keys ...string) (layout, error) {
 	if len(keys) == 0 {
-		panic("lode: NewHiveLayout requires at least one partition key; use NewDefaultLayout for unpartitioned data")
+		return nil, errors.New("NewHiveLayout requires at least one partition key; use NewDefaultLayout for unpartitioned data")
 	}
-	return &hiveLayout{part: newHivePartitioner(keys...)}
+	return &hiveLayout{part: newHivePartitioner(keys...)}, nil
 }
 
 func (l *hiveLayout) supportsDatasetEnumeration() bool { return true }
