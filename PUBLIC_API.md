@@ -107,6 +107,14 @@ construction.
 - `D` - Shorthand alias for `map[string]any` in callsites and examples
 - `R(...)` - Convenience helper to build `[]any` from record literals
 
+**Range read support:**
+- `Store.ReadRange(ctx, path, offset, length)` - Read byte range from object
+- `Store.ReaderAt(ctx, path)` - Get `io.ReaderAt` for random access
+- `Reader.ReaderAt(ctx, obj)` - Get `io.ReaderAt` for data object
+
+Range reads enable efficient access to columnar formats (Parquet footers),
+block-indexed logs, and partial artifact previews.
+
 ---
 
 ## Metadata

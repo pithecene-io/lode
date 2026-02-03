@@ -105,7 +105,11 @@ These indicate storage-level failures.
 - `Put` returns `ErrPathExists` if path already exists (enforces immutability).
 - `Put` returns `ErrInvalidPath` for paths that escape root or are empty.
 - `Get` returns `ErrInvalidPath` for invalid paths.
-- `ObjectReaderAt` returns `ErrRangeReadNotSupported` for stores without range capability.
+- `ReadRange` returns `ErrInvalidPath` for:
+  - negative offset or length
+  - length exceeding platform `int` capacity
+  - offset+length overflow
+- `ReaderAt` returns `ErrRangeReadNotSupported` for stores without range capability.
 
 ---
 
