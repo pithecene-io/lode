@@ -239,15 +239,22 @@ func (s *Store) ReadRange(ctx context.Context, key string, offset, length int64)
 		return nil, lode.ErrInvalidPath
 	}
 
-	// Zero-length read returns empty slice (no request needed).
-	// This also avoids invalid range header (offset to offset-1).
-	if length == 0 {
-		return []byte{}, nil
-	}
-
 	fullKey, err := s.validateKey(key)
 	if err != nil {
 		return nil, err
+	}
+
+	// Zero-length read: verify existence then return empty slice.
+	// Contract requires ErrNotFound for missing paths regardless of length.
+	if length == 0 {
+		exists, err := s.exists(ctx, fullKey)
+		if err != nil {
+			return nil, fmt.Errorf("s3: checking existence: %w", err)
+		}
+		if !exists {
+			return nil, lode.ErrNotFound
+		}
+		return []byte{}, nil
 	}
 
 	// S3 Range header format: "bytes=start-end" (inclusive)

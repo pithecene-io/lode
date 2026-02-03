@@ -435,18 +435,14 @@ func TestStore_ReadRange_ZeroLength(t *testing.T) {
 	}
 }
 
-func TestStore_ReadRange_ZeroLength_NoExistenceCheck(t *testing.T) {
+func TestStore_ReadRange_ZeroLength_NotFound(t *testing.T) {
 	ctx := context.Background()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
-	// Zero-length read on non-existent file should still return empty slice
-	// (no request is made, so existence is not checked)
-	data, err := store.ReadRange(ctx, "nonexistent.txt", 0, 0)
-	if err != nil {
-		t.Fatalf("ReadRange with length=0 on nonexistent file failed: %v", err)
-	}
-	if len(data) != 0 {
-		t.Errorf("expected empty slice for length=0, got %d bytes", len(data))
+	// Zero-length read on non-existent file must return ErrNotFound per contract
+	_, err := store.ReadRange(ctx, "nonexistent.txt", 0, 0)
+	if !errors.Is(err, lode.ErrNotFound) {
+		t.Errorf("expected ErrNotFound for zero-length read on missing file, got: %v", err)
 	}
 }
 
