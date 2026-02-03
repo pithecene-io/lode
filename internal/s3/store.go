@@ -91,34 +91,39 @@ func New(client API, cfg Config) (*Store, error) {
 // Put writes data to the given path.
 // Returns ErrPathExists if the path already exists.
 // Returns ErrInvalidPath for empty or escaping paths.
+//
+// Note: The current implementation buffers the entire object in memory before
+// upload. For large files, callers should be aware of memory implications.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 	fullKey, err := s.validateKey(key)
 	if err != nil {
 		return err
 	}
 
-	// Check if object exists (immutability enforcement)
-	exists, err := s.exists(ctx, fullKey)
-	if err != nil {
-		return fmt.Errorf("s3: checking existence: %w", err)
-	}
-	if exists {
-		return lode.ErrPathExists
-	}
-
-	// Read all data into memory for PutObject
-	// Note: For large files, a streaming approach with known Content-Length would be better
+	// Read all data into memory for PutObject.
+	// Note: For large files, a streaming approach with known Content-Length would be better.
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return fmt.Errorf("s3: reading data: %w", err)
 	}
 
+	// Use conditional write with If-None-Match to enforce immutability atomically.
+	// This avoids the race condition of check-then-write.
 	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(fullKey),
-		Body:   bytes.NewReader(data),
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(fullKey),
+		Body:        bytes.NewReader(data),
+		IfNoneMatch: aws.String("*"),
 	})
 	if err != nil {
+		// Check for PreconditionFailed (object already exists)
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			code := apiErr.ErrorCode()
+			if code == "PreconditionFailed" || code == "412" {
+				return lode.ErrPathExists
+			}
+		}
 		return fmt.Errorf("s3: put object: %w", err)
 	}
 
@@ -224,6 +229,7 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 // Returns ErrInvalidPath for negative offset/length, overflow, or invalid paths.
 // If offset is beyond EOF, returns empty slice.
 // If range extends beyond EOF, returns available bytes.
+// If length is 0, returns empty slice without making a request.
 func (s *Store) ReadRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
 	// Validate offset and length per CONTRACT_STORAGE.md
 	if offset < 0 || length < 0 || length > maxReadRangeLength {
@@ -231,6 +237,12 @@ func (s *Store) ReadRange(ctx context.Context, key string, offset, length int64)
 	}
 	if offset > math.MaxInt64-length {
 		return nil, lode.ErrInvalidPath
+	}
+
+	// Zero-length read returns empty slice (no request needed).
+	// This also avoids invalid range header (offset to offset-1).
+	if length == 0 {
+		return []byte{}, nil
 	}
 
 	fullKey, err := s.validateKey(key)
@@ -442,8 +454,15 @@ func (m *MockS3Client) PutObject(_ context.Context, params *s3.PutObjectInput, _
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.objects[key] = data
 
+	// Handle If-None-Match: "*" (conditional write for immutability)
+	if aws.ToString(params.IfNoneMatch) == "*" {
+		if _, exists := m.objects[key]; exists {
+			return nil, &smithyAPIError{code: "PreconditionFailed", message: "object already exists"}
+		}
+	}
+
+	m.objects[key] = data
 	return &s3.PutObjectOutput{}, nil
 }
 

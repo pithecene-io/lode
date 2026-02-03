@@ -418,6 +418,38 @@ func TestStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
 	}
 }
 
+func TestStore_ReadRange_ZeroLength(t *testing.T) {
+	ctx := context.Background()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	content := []byte("hello world")
+	_ = store.Put(ctx, "test.txt", bytes.NewReader(content))
+
+	// Zero-length read should return empty slice without error
+	data, err := store.ReadRange(ctx, "test.txt", 5, 0)
+	if err != nil {
+		t.Fatalf("ReadRange with length=0 failed: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("expected empty slice for length=0, got %d bytes", len(data))
+	}
+}
+
+func TestStore_ReadRange_ZeroLength_NoExistenceCheck(t *testing.T) {
+	ctx := context.Background()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Zero-length read on non-existent file should still return empty slice
+	// (no request is made, so existence is not checked)
+	data, err := store.ReadRange(ctx, "nonexistent.txt", 0, 0)
+	if err != nil {
+		t.Fatalf("ReadRange with length=0 on nonexistent file failed: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("expected empty slice for length=0, got %d bytes", len(data))
+	}
+}
+
 // -----------------------------------------------------------------------------
 // ReaderAt tests
 // -----------------------------------------------------------------------------
