@@ -94,3 +94,8 @@ If you are evaluating Lode, focus on:
 Usage overview: `PUBLIC_API.md`  
 Concrete usage: `examples/`  
 Implementation milestones: `docs/IMPLEMENTATION_PLAN.md`
+
+---
+
+## License
+Apache License 2.0. Copyright © 2026 Andrew Hu <me@andrewhu.nyc>.
