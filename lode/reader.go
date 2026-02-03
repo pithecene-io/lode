@@ -53,7 +53,9 @@ func NewReader(factory StoreFactory, opts ...Option) (Reader, error) {
 	}
 
 	for _, opt := range opts {
-		opt(cfg)
+		if err := opt.applyReader(cfg); err != nil {
+			return nil, fmt.Errorf("lode: %w", err)
+		}
 	}
 
 	if cfg.layout == nil {

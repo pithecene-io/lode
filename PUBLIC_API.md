@@ -67,6 +67,9 @@ reader, _ := lode.NewReader(
 Options are opt-in and composable. They override default components when
 provided.
 
+Options are validated at construction time. Passing an option that does
+not apply to the target (dataset vs reader) returns an error.
+
 Dataset construction uses:
 - StoreFactory
 - Layout
@@ -113,6 +116,9 @@ valid; nil metadata is not.
 
 Errors are returned for invalid configuration, storage failures, or
 missing objects. Error semantics are stable and documented.
+
+`ListDatasets` returns `ErrNoManifests` when storage contains objects but
+no valid manifests.
 
 ---
 

@@ -24,12 +24,14 @@ These indicate a requested resource does not exist.
 | `lode.ErrNotFound` | Storage | Object path does not exist |
 | `lode.ErrNotFound` | Read API | Dataset or segment not found (no manifests) |
 | `lode.ErrNoSnapshots` | Dataset | Dataset exists but has no committed snapshots |
+| `lode.ErrNoManifests` | Read API | Storage contains objects but no valid manifests |
 
 **Behavior**:
 - `ListSegments` returns `ErrNotFound` when dataset has no committed manifests.
 - `ListPartitions` returns `ErrNotFound` when dataset has no committed manifests.
 - `GetManifest` returns `ErrNotFound` when manifest path doesn't exist.
 - `Snapshot` returns `ErrNotFound` when snapshot ID doesn't exist.
+ - `ListDatasets` returns `ErrNoManifests` when storage contains objects but no valid manifests.
 
 ---
 
@@ -96,7 +98,7 @@ These indicate storage-level failures.
 | Error | Source | Meaning |
 |-------|--------|---------|
 | `lode.ErrPathExists` | Storage | Attempt to write to existing path (immutability violation) |
-| `storage.ErrInvalidPath` | Storage | Path escapes storage root or is empty |
+| `lode.ErrInvalidPath` | Storage | Path escapes storage root or is empty |
 | `read.ErrRangeReadNotSupported` | Read API | Store doesn't support range reads |
 
 **Behavior**:
@@ -116,7 +118,7 @@ These indicate invalid configuration at setup time.
 | Error | Reader/Dataset | Nil store provided |
 
 **Behavior**:
-- `NewReader(nil)` panics.
+- `NewReader(nil)` returns error.
 - `NewDataset(id, nil)` returns error.
 
 ---

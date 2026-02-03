@@ -27,44 +27,87 @@ type datasetConfig struct {
 }
 
 // Option configures dataset or reader construction.
-type Option func(any)
+// Options implement methods for the constructors they support.
+// Using an option with an unsupported constructor returns an error.
+type Option interface {
+	applyDataset(*datasetConfig) error
+	applyReader(*readerConfig) error
+}
+
+// ErrOptionNotValidForReader indicates an option was used with NewReader
+// that only applies to NewDataset.
+var ErrOptionNotValidForReader = errors.New("option not valid for reader")
+
+// ErrOptionNotValidForDataset indicates an option was used with NewDataset
+// that only applies to NewReader.
+var ErrOptionNotValidForDataset = errors.New("option not valid for dataset")
+
+// layoutOption implements Option for WithLayout.
+type layoutOption struct {
+	layout layout
+}
 
 // WithLayout sets the layout for the dataset or reader.
 // Layout configures both path topology AND partitioning.
 // Default: NewDefaultLayout() (flat, no partitions).
 func WithLayout(l layout) Option {
-	return func(cfg any) {
-		switch c := cfg.(type) {
-		case *datasetConfig:
-			c.layout = l
-		case *readerConfig:
-			c.layout = l
-		}
-	}
+	return &layoutOption{layout: l}
+}
+
+func (o *layoutOption) applyDataset(cfg *datasetConfig) error {
+	cfg.layout = o.layout
+	return nil
+}
+
+func (o *layoutOption) applyReader(cfg *readerConfig) error {
+	cfg.layout = o.layout
+	return nil
+}
+
+// compressorOption implements Option for WithCompressor (dataset-only).
+type compressorOption struct {
+	compressor Compressor
 }
 
 // WithCompressor sets the compressor for the dataset.
 // Default: NewNoOpCompressor().
+// This option is only valid for NewDataset.
 func WithCompressor(c Compressor) Option {
-	return func(cfg any) {
-		if dc, ok := cfg.(*datasetConfig); ok {
-			dc.compressor = c
-		}
-	}
+	return &compressorOption{compressor: c}
+}
+
+func (o *compressorOption) applyDataset(cfg *datasetConfig) error {
+	cfg.compressor = o.compressor
+	return nil
+}
+
+func (o *compressorOption) applyReader(*readerConfig) error {
+	return fmt.Errorf("WithCompressor: %w", ErrOptionNotValidForReader)
+}
+
+// codecOption implements Option for WithCodec (dataset-only).
+type codecOption struct {
+	codec Codec
 }
 
 // WithCodec sets the codec for the dataset.
 // Default: none (raw blob storage).
+// This option is only valid for NewDataset.
 //
 // When a codec is set, Write expects structured records that will be
 // serialized using the codec. When nil (default), Write expects a single
 // []byte element and stores it as a raw blob.
 func WithCodec(c Codec) Option {
-	return func(cfg any) {
-		if dc, ok := cfg.(*datasetConfig); ok {
-			dc.codec = c
-		}
-	}
+	return &codecOption{codec: c}
+}
+
+func (o *codecOption) applyDataset(cfg *datasetConfig) error {
+	cfg.codec = o.codec
+	return nil
+}
+
+func (o *codecOption) applyReader(*readerConfig) error {
+	return fmt.Errorf("WithCodec: %w", ErrOptionNotValidForReader)
 }
 
 // -----------------------------------------------------------------------------
@@ -111,7 +154,9 @@ func NewDataset(id DatasetID, factory StoreFactory, opts ...Option) (Dataset, er
 	}
 
 	for _, opt := range opts {
-		opt(cfg)
+		if err := opt.applyDataset(cfg); err != nil {
+			return nil, fmt.Errorf("lode: %w", err)
+		}
 	}
 
 	if cfg.layout == nil {
