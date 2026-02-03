@@ -15,7 +15,7 @@ import (
 // -----------------------------------------------------------------------------
 
 func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -44,7 +44,7 @@ func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
 }
 
 func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -73,7 +73,7 @@ func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
 }
 
 func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -102,7 +102,7 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 }
 
 func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write an invalid manifest (missing required fields)
@@ -125,7 +125,7 @@ func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t 
 }
 
 func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write an invalid manifest (missing required fields)
@@ -154,7 +154,7 @@ func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError
 // -----------------------------------------------------------------------------
 
 func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	// Write data files but no manifest
@@ -175,7 +175,7 @@ func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
 }
 
 func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
@@ -193,7 +193,7 @@ func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
 }
 
 func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	manifest := &Manifest{
@@ -229,7 +229,7 @@ func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store := NewMemory()
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store), WithLayout(NewFlatLayout()))
@@ -244,7 +244,7 @@ func TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.
 }
 
 func TestReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
 	if err != nil {

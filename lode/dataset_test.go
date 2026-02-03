@@ -1,7 +1,6 @@
 package lode
 
 import (
-	"context"
 	"errors"
 	"io"
 	"strings"
@@ -153,7 +152,7 @@ func TestDataset_Latest_EmptyDataset_ReturnsErrNoSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ds.Latest(context.Background())
+	_, err = ds.Latest(t.Context())
 	if !errors.Is(err, ErrNoSnapshots) {
 		t.Errorf("expected ErrNoSnapshots, got: %v", err)
 	}
@@ -165,7 +164,7 @@ func TestDataset_Snapshots_EmptyDataset_ReturnsEmptyList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snapshots, err := ds.Snapshots(context.Background())
+	snapshots, err := ds.Snapshots(t.Context())
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -180,7 +179,7 @@ func TestDataset_Snapshot_EmptyDataset_ReturnsErrNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ds.Snapshot(context.Background(), "nonexistent-id")
+	_, err = ds.Snapshot(t.Context(), "nonexistent-id")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
@@ -196,7 +195,7 @@ func TestDataset_Write_NilMetadata_ReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ds.Write(context.Background(), []any{[]byte("data")}, nil)
+	_, err = ds.Write(t.Context(), []any{[]byte("data")}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil metadata, got nil")
 	}
@@ -212,7 +211,7 @@ func TestDataset_RawBlobWrite_MultipleElements_ReturnsError(t *testing.T) {
 	}
 
 	// Raw blob mode requires exactly one []byte element
-	_, err = ds.Write(context.Background(), []any{[]byte("one"), []byte("two")}, Metadata{})
+	_, err = ds.Write(t.Context(), []any{[]byte("one"), []byte("two")}, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for multiple elements in raw blob mode, got nil")
 	}
@@ -228,7 +227,7 @@ func TestDataset_RawBlobWrite_WrongType_ReturnsError(t *testing.T) {
 	}
 
 	// Raw blob mode requires []byte, not string
-	_, err = ds.Write(context.Background(), []any{"not a byte slice"}, Metadata{})
+	_, err = ds.Write(t.Context(), []any{"not a byte slice"}, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for wrong type in raw blob mode, got nil")
 	}
@@ -257,7 +256,7 @@ func TestDataset_Write_TimestampedRecords_ComputesMinMax(t *testing.T) {
 		&timestampedRecord{ID: "c", Time: ts3},
 	}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +288,7 @@ func TestDataset_Write_NonTimestampedRecords_OmitsMinMax(t *testing.T) {
 		D{"id": "b", "value": 2},
 	}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +307,7 @@ func TestDataset_Write_RawBlob_OmitsTimestamps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := ds.Write(context.Background(), []any{[]byte("blob data")}, Metadata{})
+	snap, err := ds.Write(t.Context(), []any{[]byte("blob data")}, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +329,7 @@ func TestDataset_Write_SingleTimestampedRecord_SameMinMax(t *testing.T) {
 	ts := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 	records := []any{&timestampedRecord{ID: "only", Time: ts}}
 
-	snap, err := ds.Write(context.Background(), records, Metadata{})
+	snap, err := ds.Write(t.Context(), records, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}

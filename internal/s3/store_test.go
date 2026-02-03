@@ -2,7 +2,6 @@ package s3
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"math"
@@ -58,7 +57,7 @@ func TestNew_PrefixNormalization(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_Put_Success(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	err := store.Put(ctx, "test/file.txt", bytes.NewReader([]byte("hello")))
@@ -68,7 +67,7 @@ func TestStore_Put_Success(t *testing.T) {
 }
 
 func TestStore_Put_ErrPathExists(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	// First write should succeed
@@ -85,7 +84,7 @@ func TestStore_Put_ErrPathExists(t *testing.T) {
 }
 
 func TestStore_Put_ErrInvalidPath_Empty(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	err := store.Put(ctx, "", bytes.NewReader([]byte("hello")))
@@ -95,7 +94,7 @@ func TestStore_Put_ErrInvalidPath_Empty(t *testing.T) {
 }
 
 func TestStore_Put_ErrInvalidPath_Escaping(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	tests := []string{
@@ -118,7 +117,7 @@ func TestStore_Put_ErrInvalidPath_Escaping(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_Get_Success(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello world")
@@ -137,7 +136,7 @@ func TestStore_Get_Success(t *testing.T) {
 }
 
 func TestStore_Get_ErrNotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.Get(ctx, "nonexistent.txt")
@@ -147,7 +146,7 @@ func TestStore_Get_ErrNotFound(t *testing.T) {
 }
 
 func TestStore_Get_ErrInvalidPath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.Get(ctx, "")
@@ -161,7 +160,7 @@ func TestStore_Get_ErrInvalidPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_Exists_True(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_ = store.Put(ctx, "test.txt", bytes.NewReader([]byte("hello")))
@@ -176,7 +175,7 @@ func TestStore_Exists_True(t *testing.T) {
 }
 
 func TestStore_Exists_False(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	exists, err := store.Exists(ctx, "nonexistent.txt")
@@ -189,7 +188,7 @@ func TestStore_Exists_False(t *testing.T) {
 }
 
 func TestStore_Exists_ErrInvalidPath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.Exists(ctx, "")
@@ -203,7 +202,7 @@ func TestStore_Exists_ErrInvalidPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_Delete_Exists(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_ = store.Put(ctx, "test.txt", bytes.NewReader([]byte("hello")))
@@ -220,7 +219,7 @@ func TestStore_Delete_Exists(t *testing.T) {
 }
 
 func TestStore_Delete_NotExists_Idempotent(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	// Delete on non-existent file should not error (idempotent)
@@ -231,7 +230,7 @@ func TestStore_Delete_NotExists_Idempotent(t *testing.T) {
 }
 
 func TestStore_Delete_ErrInvalidPath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	err := store.Delete(ctx, "")
@@ -245,7 +244,7 @@ func TestStore_Delete_ErrInvalidPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_List_Empty(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	keys, err := store.List(ctx, "")
@@ -258,7 +257,7 @@ func TestStore_List_Empty(t *testing.T) {
 }
 
 func TestStore_List_WithPrefix(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_ = store.Put(ctx, "a/1.txt", bytes.NewReader([]byte("1")))
@@ -275,7 +274,7 @@ func TestStore_List_WithPrefix(t *testing.T) {
 }
 
 func TestStore_List_WithStorePrefix(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test", Prefix: "datasets/"})
 
 	_ = store.Put(ctx, "foo/1.txt", bytes.NewReader([]byte("1")))
@@ -298,7 +297,7 @@ func TestStore_List_WithStorePrefix(t *testing.T) {
 }
 
 func TestStore_List_ErrInvalidPath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.List(ctx, "../")
@@ -312,7 +311,7 @@ func TestStore_List_ErrInvalidPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_ReadRange_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello world")
@@ -329,7 +328,7 @@ func TestStore_ReadRange_Basic(t *testing.T) {
 }
 
 func TestStore_ReadRange_BeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello")
@@ -346,7 +345,7 @@ func TestStore_ReadRange_BeyondEOF(t *testing.T) {
 }
 
 func TestStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello")
@@ -363,7 +362,7 @@ func TestStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
 }
 
 func TestStore_ReadRange_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReadRange(ctx, "nonexistent.txt", 0, 10)
@@ -373,7 +372,7 @@ func TestStore_ReadRange_NotFound(t *testing.T) {
 }
 
 func TestStore_ReadRange_NegativeOffset(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReadRange(ctx, "test.txt", -1, 10)
@@ -383,7 +382,7 @@ func TestStore_ReadRange_NegativeOffset(t *testing.T) {
 }
 
 func TestStore_ReadRange_NegativeLength(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReadRange(ctx, "test.txt", 0, -1)
@@ -398,7 +397,7 @@ func TestStore_ReadRange_LengthOverflow(t *testing.T) {
 		t.Skip("length overflow check only applies to 32-bit platforms")
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReadRange(ctx, "test.txt", 0, math.MaxInt64)
@@ -408,7 +407,7 @@ func TestStore_ReadRange_LengthOverflow(t *testing.T) {
 }
 
 func TestStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	// offset + length would overflow int64
@@ -419,7 +418,7 @@ func TestStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
 }
 
 func TestStore_ReadRange_ZeroLength(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello world")
@@ -436,7 +435,7 @@ func TestStore_ReadRange_ZeroLength(t *testing.T) {
 }
 
 func TestStore_ReadRange_ZeroLength_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	// Zero-length read on non-existent file must return ErrNotFound per contract
@@ -451,7 +450,7 @@ func TestStore_ReadRange_ZeroLength_NotFound(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStore_ReaderAt_Basic(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello world")
@@ -473,7 +472,7 @@ func TestStore_ReaderAt_Basic(t *testing.T) {
 }
 
 func TestStore_ReaderAt_ConcurrentReads(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("0123456789")
@@ -510,7 +509,7 @@ func TestStore_ReaderAt_ConcurrentReads(t *testing.T) {
 }
 
 func TestStore_ReaderAt_NotFound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReaderAt(ctx, "nonexistent.txt")
@@ -520,7 +519,7 @@ func TestStore_ReaderAt_NotFound(t *testing.T) {
 }
 
 func TestStore_ReaderAt_ErrInvalidPath(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	_, err := store.ReaderAt(ctx, "")
@@ -530,7 +529,7 @@ func TestStore_ReaderAt_ErrInvalidPath(t *testing.T) {
 }
 
 func TestStore_ReaderAt_EOF(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
 	content := []byte("hello")
