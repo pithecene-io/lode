@@ -19,21 +19,46 @@ Execution, scheduling, and query planning are out of scope.
 
 ### Dataset
 
-`NewDataset(store, opts...)` creates a dataset with a documented default
-configuration. Options override parts of that default bundle.
+`NewDataset(id, storeFactory, opts...)` creates a dataset with a documented
+default configuration. Options override parts of that default bundle.
 
 Default bundle:
 - Layout: DefaultLayout
-- Partitioner: NoOp
+- Partitioner: NoOp (via layout)
 - Compressor: NoOp
-- Codec: none (omitted)
+- Codec: none (raw blob storage)
+
+Example:
+```go
+import (
+    "github.com/justapithecus/lode/lode"
+)
+
+ds, _ := lode.NewDataset(
+    "mydata",
+    lode.NewFSFactory("/data"),
+    lode.WithCodec(lode.NewJSONLCodec()),  // Optional: for structured records
+)
+```
 
 ### Reader
 
-`NewReader(store, opts...)` creates a read facade.
+`NewReader(storeFactory, opts...)` creates a read facade.
 
 Default behavior:
 - Layout: DefaultLayout
+
+Example:
+```go
+reader, _ := lode.NewReader(
+    lode.NewFSFactory("/data"),
+)
+// Or with custom layout:
+reader, _ := lode.NewReader(
+    lode.NewFSFactory("/data"),
+    lode.WithLayout(lode.NewHiveLayout("day")),
+)
+```
 
 ---
 
@@ -43,9 +68,9 @@ Options are opt-in and composable. They override default components when
 provided.
 
 Dataset construction uses:
-- Store
+- StoreFactory
 - Layout
-- Partitioner
+- Partitioning (via layout)
 - Compressor
 - Optional codec
 
@@ -55,14 +80,25 @@ Dataset construction uses:
 
 Each configurable component has a public constructor. The public surface
 includes a curated set of components:
-- Layouts (Default, Hive, Manifest-driven)
-- Partitioners (NoOp and curated partitioners)
-- Compressors (NoOp and curated compressors)
-- Codecs (curated codecs)
-- Storage adapters (e.g., filesystem, in-memory)
+
+**Storage adapters:**
+- `NewFSFactory(root)` - Filesystem storage
+- `NewMemoryFactory()` - In-memory storage
+
+**Layouts:**
+- `NewDefaultLayout()` - Default novice-friendly layout
+- `NewHiveLayout(keys...)` - Partition-first layout for pruning
+- `NewFlatLayout()` - Minimal flat layout
+
+**Compressors:**
+- `NewNoOpCompressor()` - No compression (default)
+- `NewGzipCompressor()` - Gzip compression
+
+**Codecs:**
+- `NewJSONLCodec()` - JSON Lines format
 
 Constructed components are intended to be passed into dataset or reader
-options.
+construction.
 
 ---
 

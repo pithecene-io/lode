@@ -93,10 +93,17 @@ Defines:
 - Range-read requirements
 - Manifest-driven discovery
 
+#### 0.5.7 Public API Spec (`PUBLIC_API.md`)
+Defines:
+- Public entrypoints and defaults
+- Option-based configuration shape
+- Default bundle behavior
+
 ### Exit criteria
 - All contract documents exist
 - Ambiguity is resolved by contract references
 - Phase 0 plan assertions are captured in contracts
+- Public API spec exists and documents defaults and options
 
 ---
 
@@ -167,12 +174,14 @@ Stabilize behavior and validate invariants with tests and examples.
 ### Deliverables
 - Error taxonomy and test coverage
 - Example: write → list → read
+- Example: single-object blob upload (public API only)
 - Explicit metadata visibility on disk
 - Examples for default layout and hive-style layout
 
 ### Mini-milestones
 - [ ] Tests enforce immutability
 - [ ] Examples align with contracts
+- [ ] Single-object blob example uses default bundle and explicit metadata
 - [ ] No hidden state detected
 
 ---
