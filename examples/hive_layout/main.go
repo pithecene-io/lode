@@ -63,12 +63,12 @@ func run() error {
 	}
 
 	// Write records with different days (will create partitions)
-	records := []any{
-		map[string]any{"id": 1, "event": "login", "day": "2024-01-15", "user": "alice"},
-		map[string]any{"id": 2, "event": "click", "day": "2024-01-15", "user": "bob"},
-		map[string]any{"id": 3, "event": "logout", "day": "2024-01-16", "user": "alice"},
-		map[string]any{"id": 4, "event": "login", "day": "2024-01-16", "user": "charlie"},
-	}
+	records := lode.R(
+		lode.D{"id": 1, "event": "login", "day": "2024-01-15", "user": "alice"},
+		lode.D{"id": 2, "event": "click", "day": "2024-01-15", "user": "bob"},
+		lode.D{"id": 3, "event": "logout", "day": "2024-01-16", "user": "alice"},
+		lode.D{"id": 4, "event": "login", "day": "2024-01-16", "user": "charlie"},
+	)
 
 	snapshot, err := ds.Write(ctx, records, lode.Metadata{"source": "hive-example"})
 	if err != nil {

@@ -34,8 +34,8 @@ Do not introduce features that cross this boundary.
 ## Public API boundaries
 
 - Public APIs live in `/lode`
-- The public surface must remain small
-- Adding a public method or type requires strong justification
+- The public surface should remain intentionally scoped and coherent
+- Adding a public method or type is allowed when it clearly improves usability or expressiveness
 - Prefer internal implementations over public extensibility
 
 If functionality can live in `/internal`, it must live there.
@@ -113,6 +113,5 @@ Assume it is invalid and stop.
 1. Correctness
 2. Clarity
 3. Explicitness
-4. Extensibility
-5. Convenience (last)
-
+4. Convenience
+5. Extensibility

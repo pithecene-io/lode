@@ -103,6 +103,10 @@ includes a curated set of components:
 Constructed components are intended to be passed into dataset or reader
 construction.
 
+**Record helpers:**
+- `D` - Shorthand alias for `map[string]any` in callsites and examples
+- `R(...)` - Convenience helper to build `[]any` from record literals
+
 ---
 
 ## Metadata

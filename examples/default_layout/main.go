@@ -60,11 +60,11 @@ func run() error {
 	}
 
 	// Write some records
-	records := []any{
-		map[string]any{"id": 1, "event": "login", "user": "alice"},
-		map[string]any{"id": 2, "event": "click", "user": "bob"},
-		map[string]any{"id": 3, "event": "logout", "user": "alice"},
-	}
+	records := lode.R(
+		lode.D{"id": 1, "event": "login", "user": "alice"},
+		lode.D{"id": 2, "event": "click", "user": "bob"},
+		lode.D{"id": 3, "event": "logout", "user": "alice"},
+	)
 
 	snapshot, err := ds.Write(ctx, records, lode.Metadata{"source": "example"})
 	if err != nil {

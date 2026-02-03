@@ -25,6 +25,20 @@ type SnapshotID string
 // Metadata holds user-defined key-value pairs stored with a snapshot.
 type Metadata map[string]any
 
+// D is a shorthand alias for map-based records in examples and callsites.
+// It is equivalent to map[string]any.
+type D = map[string]any
+
+// R converts record literals into the []any form expected by Dataset.Write.
+// This is a convenience helper for callsites and examples.
+func R(records ...D) []any {
+	out := make([]any, len(records))
+	for i, r := range records {
+		out[i] = r
+	}
+	return out
+}
+
 // -----------------------------------------------------------------------------
 // Manifest
 // -----------------------------------------------------------------------------
