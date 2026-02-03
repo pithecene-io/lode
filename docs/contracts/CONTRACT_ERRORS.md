@@ -41,7 +41,7 @@ These indicate semantic incompatibility between the layout and the requested ope
 
 | Error | Source | Meaning |
 |-------|--------|---------|
-| `read.ErrDatasetsNotModeled` | Read API | Layout doesn't support dataset enumeration |
+| `lode.ErrDatasetsNotModeled` | Read API | Layout doesn't support dataset enumeration |
 
 **Behavior**:
 - `ListDatasets` returns `ErrDatasetsNotModeled` when `Layout.SupportsDatasetEnumeration()` is false.
@@ -60,7 +60,7 @@ These indicate a manifest fails structural or semantic validation.
 
 | Error | Source | Meaning |
 |-------|--------|---------|
-| `read.ManifestValidationError` | Manifest loader | Manifest missing required fields or has invalid values |
+| `lode.ErrManifestInvalid` | Manifest loader | Manifest missing required fields or has invalid values |
 
 **Required Manifest Fields** (per CONTRACT_CORE.md):
 - `SchemaName`: Non-empty string identifying schema
@@ -99,7 +99,7 @@ These indicate storage-level failures.
 |-------|--------|---------|
 | `lode.ErrPathExists` | Storage | Attempt to write to existing path (immutability violation) |
 | `lode.ErrInvalidPath` | Storage | Path escapes storage root or is empty |
-| `read.ErrRangeReadNotSupported` | Read API | Store doesn't support range reads |
+| `lode.ErrRangeReadNotSupported` | Read API | Store doesn't support range reads |
 
 **Behavior**:
 - `Put` returns `ErrPathExists` if path already exists (enforces immutability).
