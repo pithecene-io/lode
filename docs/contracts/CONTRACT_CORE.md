@@ -52,9 +52,13 @@ Minimum required fields:
 - list of files with sizes and checksums (if available)
 - parent snapshot ID (when applicable)
 - row/event count (total data units in snapshot)
-- min/max timestamp (when data units are timestamped; omit if not applicable)
+- min/max timestamp (when data units implement `Timestamped`; omit if not applicable)
 Optional fields:
 - codec name (omit when no codec is configured)
+
+**v0.1.0 implementation note**: Checksums are not yet computed during writes.
+The `FileRef.Checksum` field exists for forward compatibility but is omitted
+in manifests written by the current implementation.
 
 Manifests are immutable once written.
 

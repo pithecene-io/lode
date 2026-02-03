@@ -242,6 +242,9 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Sn
 		codecName = d.codec.Name()
 	}
 
+	// Extract timestamps from records that implement Timestamped
+	minTs, maxTs := extractTimestamps(data)
+
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
 	})
@@ -256,6 +259,8 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Sn
 		Files:            files,
 		ParentSnapshotID: parentID,
 		RowCount:         rowCount,
+		MinTimestamp:     minTs,
+		MaxTimestamp:     maxTs,
 		Codec:            codecName,
 		Compressor:       d.compressor.Name(),
 		Partitioner:      d.layout.partitioner().name(),
@@ -593,4 +598,35 @@ func (d *dataset) findSnapshotByID(ctx context.Context, id SnapshotID) (*Snapsho
 
 func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+// extractTimestamps iterates over records and extracts min/max timestamps
+// from records that implement the Timestamped interface.
+// Returns nil pointers if no records implement Timestamped.
+func extractTimestamps(data []any) (minTs, maxTs *time.Time) {
+	var hasTimestamp bool
+
+	for _, record := range data {
+		ts, ok := record.(Timestamped)
+		if !ok {
+			continue
+		}
+
+		t := ts.Timestamp()
+		if !hasTimestamp {
+			minTs = &t
+			maxTs = &t
+			hasTimestamp = true
+			continue
+		}
+
+		if t.Before(*minTs) {
+			minTs = &t
+		}
+		if t.After(*maxTs) {
+			maxTs = &t
+		}
+	}
+
+	return minTs, maxTs
 }

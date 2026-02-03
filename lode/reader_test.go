@@ -100,7 +100,7 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 	}
 }
 
-func TestReader_ListSegments_InvalidManifest_ReturnsError(t *testing.T) {
+func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 
@@ -117,9 +117,32 @@ func TestReader_ListSegments_InvalidManifest_ReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Must provide partition filter to trigger manifest loading/validation.
-	// Without partition filter, ListSegments only parses paths without loading manifests.
 	_, err = reader.ListSegments(ctx, "test-ds", "some-partition", SegmentListOptions{})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+
+	// Write an invalid manifest (missing required fields)
+	manifest := &Manifest{
+		// SchemaName missing - invalid
+		DatasetID:  "test-ds",
+		SnapshotID: "snap-1",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Per CONTRACT_READ_API.md, invalid manifests must return an error
+	// even when no partition filter is specified
+	_, err = reader.ListSegments(ctx, "test-ds", "", SegmentListOptions{})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}

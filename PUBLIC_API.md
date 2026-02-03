@@ -107,6 +107,9 @@ construction.
 - `D` - Shorthand alias for `map[string]any` in callsites and examples
 - `R(...)` - Convenience helper to build `[]any` from record literals
 
+**Interfaces:**
+- `Timestamped` - Optional interface for records with timestamps (see below)
+
 **Range read support:**
 - `Store.ReadRange(ctx, path, offset, length)` - Read byte range from object
 - `Store.ReaderAt(ctx, path)` - Get `io.ReaderAt` for random access
@@ -114,6 +117,41 @@ construction.
 
 Range reads enable efficient access to columnar formats (Parquet footers),
 block-indexed logs, and partial artifact previews.
+
+---
+
+## Timestamped Records
+
+Records can optionally implement the `Timestamped` interface to enable
+automatic min/max timestamp tracking in manifests:
+
+```go
+type Timestamped interface {
+    Timestamp() time.Time
+}
+```
+
+When records implement this interface, `Dataset.Write` computes
+`MinTimestamp` and `MaxTimestamp` from the data and populates the manifest.
+This enables time-range pruning by query engines.
+
+Example:
+```go
+type Event struct {
+    ID        string
+    EventTime time.Time
+    Data      map[string]any
+}
+
+func (e Event) Timestamp() time.Time { return e.EventTime }
+
+// Write computes min/max from Event.Timestamp()
+ds.Write(ctx, []any{Event{...}, Event{...}}, lode.Metadata{})
+```
+
+Records that do not implement `Timestamped` (including `map[string]any`)
+result in `nil` timestamp fields in the manifest—this is valid and indicates
+timestamps are not applicable for that snapshot.
 
 ---
 

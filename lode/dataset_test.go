@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // -----------------------------------------------------------------------------
@@ -136,8 +137,124 @@ func TestDataset_RawBlobWrite_WrongType_ReturnsError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// Timestamped interface tests
+// -----------------------------------------------------------------------------
+
+func TestDataset_Write_TimestampedRecords_ComputesMinMax(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts1 := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	ts3 := time.Date(2024, 1, 10, 8, 0, 0, 0, time.UTC)
+
+	records := []any{
+		&timestampedRecord{ID: "a", Time: ts1},
+		&timestampedRecord{ID: "b", Time: ts2},
+		&timestampedRecord{ID: "c", Time: ts3},
+	}
+
+	snap, err := ds.Write(context.Background(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.MinTimestamp == nil {
+		t.Fatal("expected MinTimestamp to be set")
+	}
+	if snap.Manifest.MaxTimestamp == nil {
+		t.Fatal("expected MaxTimestamp to be set")
+	}
+
+	if !snap.Manifest.MinTimestamp.Equal(ts1) {
+		t.Errorf("expected MinTimestamp %v, got %v", ts1, *snap.Manifest.MinTimestamp)
+	}
+	if !snap.Manifest.MaxTimestamp.Equal(ts2) {
+		t.Errorf("expected MaxTimestamp %v, got %v", ts2, *snap.Manifest.MaxTimestamp)
+	}
+}
+
+func TestDataset_Write_NonTimestampedRecords_OmitsMinMax(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Plain maps don't implement Timestamped
+	records := []any{
+		D{"id": "a", "value": 1},
+		D{"id": "b", "value": 2},
+	}
+
+	snap, err := ds.Write(context.Background(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.MinTimestamp != nil {
+		t.Errorf("expected MinTimestamp to be nil, got %v", snap.Manifest.MinTimestamp)
+	}
+	if snap.Manifest.MaxTimestamp != nil {
+		t.Errorf("expected MaxTimestamp to be nil, got %v", snap.Manifest.MaxTimestamp)
+	}
+}
+
+func TestDataset_Write_RawBlob_OmitsTimestamps(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := ds.Write(context.Background(), []any{[]byte("blob data")}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.MinTimestamp != nil {
+		t.Errorf("expected MinTimestamp to be nil for raw blob, got %v", snap.Manifest.MinTimestamp)
+	}
+	if snap.Manifest.MaxTimestamp != nil {
+		t.Errorf("expected MaxTimestamp to be nil for raw blob, got %v", snap.Manifest.MaxTimestamp)
+	}
+}
+
+func TestDataset_Write_SingleTimestampedRecord_SameMinMax(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+	records := []any{&timestampedRecord{ID: "only", Time: ts}}
+
+	snap, err := ds.Write(context.Background(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.MinTimestamp == nil || snap.Manifest.MaxTimestamp == nil {
+		t.Fatal("expected both timestamps to be set")
+	}
+	if !snap.Manifest.MinTimestamp.Equal(ts) || !snap.Manifest.MaxTimestamp.Equal(ts) {
+		t.Errorf("expected both timestamps to be %v", ts)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Test helpers
 // -----------------------------------------------------------------------------
+
+// timestampedRecord implements Timestamped for testing.
+type timestampedRecord struct {
+	ID   string    `json:"id"`
+	Time time.Time `json:"time"`
+}
+
+func (r *timestampedRecord) Timestamp() time.Time {
+	return r.Time
+}
 
 // testCodec is a simple codec for testing.
 type testCodec struct{}

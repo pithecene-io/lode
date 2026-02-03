@@ -166,11 +166,14 @@ func (r *reader) ListSegments(ctx context.Context, dataset DatasetID, partition 
 
 		manifestPartition := r.layout.parsePartitionFromManifest(p)
 
+		// Always validate manifest per CONTRACT_READ_API.md
+		manifest, err := r.loadManifest(ctx, p)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load manifest %s: %w", p, err)
+		}
+
+		// Apply partition filter if specified
 		if partition != "" && manifestPartition == "" {
-			manifest, err := r.loadManifest(ctx, p)
-			if err != nil {
-				return nil, fmt.Errorf("failed to load manifest %s: %w", p, err)
-			}
 			if !r.segmentContainsPartition(manifest, partition) {
 				continue
 			}

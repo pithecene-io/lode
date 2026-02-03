@@ -39,6 +39,14 @@ func R(records ...D) []any {
 	return out
 }
 
+// Timestamped is implemented by records that have an associated timestamp.
+// When records passed to Dataset.Write implement this interface, the manifest's
+// MinTimestamp and MaxTimestamp fields are automatically computed from the data.
+// Records that do not implement this interface are ignored for timestamp tracking.
+type Timestamped interface {
+	Timestamp() time.Time
+}
+
 // -----------------------------------------------------------------------------
 // Manifest
 // -----------------------------------------------------------------------------
