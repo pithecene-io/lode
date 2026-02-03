@@ -36,6 +36,20 @@ It is authoritative for any `Dataset` implementation.
 - When no codec is configured, each write represents a single data unit and
   the row/event count MUST be `1`.
 
+### StreamWrite Semantics
+
+- `StreamWrite(ctx, metadata)` MUST return an error if metadata is nil.
+- `StreamWrite` MUST return a `StreamWriter` for a single binary data unit.
+- `StreamWriter.Commit(ctx)` MUST write the manifest and return the new snapshot.
+- A snapshot MUST NOT be visible before `Commit` writes the manifest.
+- `StreamWriter.Abort(ctx)` MUST ensure no manifest is written.
+- `StreamWriter.Close()` without `Commit` MUST behave as `Abort`.
+- Streamed writes MUST NOT mutate existing objects; all staged objects are new paths.
+- Streamed writes MUST set row/event count to `1`.
+- When a checksum component is configured, `Commit` MUST record the component name
+  and a checksum value for each file written.
+- When a codec is configured, `StreamWrite` MUST return an error.
+
 ### Timestamp computation
 
 - When records implement the `Timestamped` interface, `Write` MUST compute

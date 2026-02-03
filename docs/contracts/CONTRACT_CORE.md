@@ -49,16 +49,20 @@ Minimum required fields:
 - snapshot ID
 - creation time
 - explicit metadata object (see below)
-- list of files with sizes and checksums (if available)
+- list of files with sizes and checksums (when configured)
 - parent snapshot ID (when applicable)
 - row/event count (total data units in snapshot)
 - min/max timestamp (when data units implement `Timestamped`; omit if not applicable)
 Optional fields:
 - codec name (omit when no codec is configured)
 
-**v0.1.0 implementation note**: Checksums are not yet computed during writes.
-The `FileRef.Checksum` field exists for forward compatibility but is omitted
-in manifests written by the current implementation.
+### Checksum Rules
+
+- Checksum computation is opt-in and explicit.
+- When a checksum component is configured, manifests MUST record:
+  - the checksum component name, and
+  - a checksum value for each file written by the dataset.
+- When no checksum component is configured, checksum fields MUST be omitted.
 
 Manifests are immutable once written.
 

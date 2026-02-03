@@ -61,6 +61,13 @@ It is authoritative for any implementation of the `Store` interface.
 - Writers MUST write data objects before the manifest.
 - Readers MUST treat manifest presence as the commit signal.
 
+## Staged Writes
+
+- Adapters MUST allow data objects to be written before manifest commit.
+- Adapters MUST NOT provide any implicit commit signal outside manifest presence.
+- Safe write semantics (no overwrite) apply to staged objects as well.
+- Adapters MUST allow deletion of staged objects via `Delete` for cleanup.
+
 ---
 
 ## Consistency Notes
