@@ -175,7 +175,7 @@ func (f *fsStore) ReadRange(_ context.Context, path string, offset, length int64
 
 	data := make([]byte, int(length))
 	n, err := file.ReadAt(data, offset)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 

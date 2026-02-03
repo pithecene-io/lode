@@ -29,7 +29,7 @@ func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
 		Compressor:    "noop",
 		Partitioner:   "noop",
 	}
-	writeManifest(t, ctx, store, "datasets/test-ds/snapshots/snap-1/manifest.json", manifest)
+	writeManifest(ctx, t, store, manifest)
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
 	if err != nil {
@@ -58,7 +58,7 @@ func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
 		Compressor:  "noop",
 		Partitioner: "noop",
 	}
-	writeManifest(t, ctx, store, "datasets/test-ds/snapshots/snap-1/manifest.json", manifest)
+	writeManifest(ctx, t, store, manifest)
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
 	if err != nil {
@@ -87,7 +87,7 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 		Compressor:    "noop",
 		Partitioner:   "noop",
 	}
-	writeManifest(t, ctx, store, "datasets/test-ds/snapshots/snap-1/manifest.json", manifest)
+	writeManifest(ctx, t, store, manifest)
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
 	if err != nil {
@@ -110,7 +110,7 @@ func TestReader_ListSegments_InvalidManifest_ReturnsError(t *testing.T) {
 		DatasetID:  "test-ds",
 		SnapshotID: "snap-1",
 	}
-	writeManifest(t, ctx, store, "datasets/test-ds/snapshots/snap-1/manifest.json", manifest)
+	writeManifest(ctx, t, store, manifest)
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
 	if err != nil {
@@ -184,7 +184,7 @@ func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
 		Compressor:    "noop",
 		Partitioner:   "noop",
 	}
-	writeManifest(t, ctx, store, "datasets/test-ds/snapshots/snap-1/manifest.json", manifest)
+	writeManifest(ctx, t, store, manifest)
 
 	reader, err := NewReader(NewMemoryFactoryFrom(store))
 	if err != nil {
@@ -211,12 +211,13 @@ func NewMemoryFactoryFrom(store Store) StoreFactory {
 	}
 }
 
-func writeManifest(t *testing.T, ctx context.Context, store Store, path string, m *Manifest) {
+func writeManifest(ctx context.Context, t *testing.T, store Store, m *Manifest) {
 	t.Helper()
 	data, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
+	path := "datasets/" + string(m.DatasetID) + "/snapshots/" + string(m.SnapshotID) + "/manifest.json"
 	if err := store.Put(ctx, path, bytes.NewReader(data)); err != nil {
 		t.Fatal(err)
 	}

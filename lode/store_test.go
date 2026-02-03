@@ -7,6 +7,8 @@ import (
 	"math"
 	"os"
 	"testing"
+
+	"github.com/justapithecus/lode/internal/testutil"
 )
 
 // -----------------------------------------------------------------------------
@@ -19,7 +21,7 @@ func TestFSStore_Put_ErrPathExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -66,7 +68,7 @@ func TestFSStore_ReadRange_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -95,7 +97,7 @@ func TestFSStore_ReadRange_BeyondEOF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -124,7 +126,7 @@ func TestFSStore_ReadRange_OffsetBeyondEOF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -153,7 +155,7 @@ func TestFSStore_ReadRange_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -172,7 +174,7 @@ func TestFSStore_ReadRange_NegativeOffset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -191,7 +193,7 @@ func TestFSStore_ReadRange_NegativeLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -217,7 +219,7 @@ func TestFSStore_ReadRange_LengthOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -237,7 +239,7 @@ func TestFSStore_ReadRange_OffsetPlusLengthOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -257,7 +259,7 @@ func TestFSStore_ReaderAt_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {
@@ -295,7 +297,7 @@ func TestFSStore_ReaderAt_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer testutil.RemoveAll(tmpDir)
 
 	store, err := NewFS(tmpDir)
 	if err != nil {

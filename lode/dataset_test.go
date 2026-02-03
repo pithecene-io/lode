@@ -49,7 +49,7 @@ func TestNewDataset_NilFactory_ReturnsError(t *testing.T) {
 
 func TestNewDataset_FactoryReturnsNil_ReturnsError(t *testing.T) {
 	nilFactory := func() (Store, error) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentionally testing nil store with nil error
 	}
 
 	_, err := NewDataset("test-ds", nilFactory)
@@ -144,10 +144,10 @@ type testCodec struct{}
 
 func (c *testCodec) Name() string { return "test-codec" }
 
-func (c *testCodec) Encode(w io.Writer, records []any) error {
+func (c *testCodec) Encode(_ io.Writer, _ []any) error {
 	return nil
 }
 
-func (c *testCodec) Decode(r io.Reader) ([]any, error) {
-	return nil, nil
+func (c *testCodec) Decode(_ io.Reader) ([]any, error) {
+	return nil, nil //nolint:nilnil // stub for testing
 }
