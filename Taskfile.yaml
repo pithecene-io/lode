@@ -16,3 +16,21 @@ tasks:
     desc: Run tests
     cmds:
       - go test ./...
+
+  test:race:
+    desc: Run tests with race detector
+    cmds:
+      - go test -race -count=1 ./...
+
+  build:
+    desc: Build all packages
+    cmds:
+      - go build ./...
+
+  examples:
+    desc: Build and run examples
+    cmds:
+      - go run ./examples/default_layout
+      - go run ./examples/hive_layout
+      - go run ./examples/blob_upload
+      - go run ./examples/manifest_driven
