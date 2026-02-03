@@ -1,9 +1,10 @@
 // Example: Default Layout Round-Trip
 //
 // This example demonstrates the write → list → read flow using the default layout:
-//   datasets/<dataset>/snapshots/<segment>/
-//     manifest.json
-//     data/[partition/]filename
+//
+//	datasets/<dataset>/snapshots/<segment>/
+//	  manifest.json
+//	  data/filename
 //
 // Run with: go run ./examples/default_layout
 package main
@@ -15,12 +16,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/justapithecus/lode/internal/codec"
-	"github.com/justapithecus/lode/internal/compress"
-	"github.com/justapithecus/lode/internal/dataset"
-	"github.com/justapithecus/lode/internal/partition"
-	"github.com/justapithecus/lode/internal/read"
-	"github.com/justapithecus/lode/internal/storage"
 	"github.com/justapithecus/lode/lode"
 )
 
@@ -43,7 +38,7 @@ func run() error {
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 
 	// Create filesystem-backed store
-	store, err := storage.NewFS(tmpDir)
+	store, err := lode.NewFS(tmpDir)
 	if err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
 	}
@@ -53,14 +48,14 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== WRITE ===")
 
-	// Create dataset with default layout (no Layout specified = DefaultLayout)
-	ds, err := dataset.New("events", dataset.Config{
-		Store:       store,
-		Codec:       codec.NewJSONL(),
-		Compressor:  compress.NewNoop(),
-		Partitioner: partition.NewNoop(),
-		// Layout: nil uses DefaultLayout
-	})
+	// Create dataset with JSONL codec.
+	// Default bundle:
+	//   - Layout: NewDefaultLayout() (flat, no partitions)
+	//   - Compressor: NewNoOpCompressor()
+	//   - Codec: none (we override with JSONL for structured records)
+	ds, err := lode.NewDataset("events", store,
+		lode.WithCodec(lode.NewJSONLCodec()),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create dataset: %w", err)
 	}
@@ -110,21 +105,24 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== LIST ===")
 
-	reader := read.NewReader(store)
+	reader := lode.NewReader(store)
 
 	// List all datasets
-	datasets, err := reader.ListDatasets(ctx, read.DatasetListOptions{})
+	datasets, err := reader.ListDatasets(ctx, lode.DatasetListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list datasets: %w", err)
 	}
 	fmt.Printf("Datasets found: %v\n", datasets)
 
 	// List segments in the dataset
-	segments, err := reader.ListSegments(ctx, "events", "", read.SegmentListOptions{})
+	segments, err := reader.ListSegments(ctx, "events", "", lode.SegmentListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list segments: %w", err)
 	}
-	fmt.Printf("Segments in 'events': %v\n", segments)
+	fmt.Printf("Segments in 'events': %d segment(s)\n", len(segments))
+	for _, seg := range segments {
+		fmt.Printf("  - %s\n", seg.ID)
+	}
 	fmt.Println()
 
 	// -------------------------------------------------------------------------
@@ -142,7 +140,7 @@ func run() error {
 	fmt.Printf("Codec: %s, Compressor: %s\n", manifest.Codec, manifest.Compressor)
 
 	// Read data through the dataset
-	readRecords, err := ds.Read(ctx, lode.SnapshotID(segments[0].ID))
+	readRecords, err := ds.Read(ctx, segments[0].ID)
 	if err != nil {
 		return fmt.Errorf("failed to read: %w", err)
 	}

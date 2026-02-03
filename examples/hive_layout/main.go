@@ -1,9 +1,10 @@
 // Example: Hive Layout Round-Trip
 //
 // This example demonstrates write → list → read with Hive (partition-first) layout:
-//   datasets/<dataset>/[partitions/<k=v>/]segments/<segment>/
-//     manifest.json
-//     data/filename
+//
+//	datasets/<dataset>/partitions/<k=v>/segments/<segment>/
+//	  manifest.json
+//	  data/filename
 //
 // Hive layout places partitions at the dataset level, enabling efficient
 // partition pruning at the storage layer.
@@ -18,12 +19,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/justapithecus/lode/internal/codec"
-	"github.com/justapithecus/lode/internal/compress"
-	"github.com/justapithecus/lode/internal/dataset"
-	"github.com/justapithecus/lode/internal/partition"
-	"github.com/justapithecus/lode/internal/read"
-	"github.com/justapithecus/lode/internal/storage"
 	"github.com/justapithecus/lode/lode"
 )
 
@@ -46,7 +41,7 @@ func run() error {
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 
 	// Create filesystem-backed store
-	store, err := storage.NewFS(tmpDir)
+	store, err := lode.NewFS(tmpDir)
 	if err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
 	}
@@ -56,14 +51,14 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== WRITE ===")
 
-	// Create dataset with HiveLayout and Hive partitioner
-	ds, err := dataset.New("events", dataset.Config{
-		Store:       store,
-		Codec:       codec.NewJSONL(),
-		Compressor:  compress.NewNoop(),
-		Partitioner: partition.NewHive("day"), // Partitions by "day" field
-		Layout:      read.HiveLayout{},        // Hive (partition-first) layout
-	})
+	// Create dataset with HiveLayout.
+	// NewHiveLayout("day") configures BOTH:
+	//   - Hive (partition-first) path topology
+	//   - Hive partitioner that extracts "day" field from records
+	ds, err := lode.NewDataset("events", store,
+		lode.WithLayout(lode.NewHiveLayout("day")),
+		lode.WithCodec(lode.NewJSONLCodec()),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create dataset: %w", err)
 	}
@@ -115,27 +110,27 @@ func run() error {
 	fmt.Println("=== LIST ===")
 
 	// Create reader with HiveLayout
-	reader := read.NewReaderWithLayout(store, read.HiveLayout{})
+	reader := lode.NewReader(store, lode.WithReaderLayout(lode.NewHiveLayout("day")))
 
 	// List all datasets
-	datasets, err := reader.ListDatasets(ctx, read.DatasetListOptions{})
+	datasets, err := reader.ListDatasets(ctx, lode.DatasetListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list datasets: %w", err)
 	}
 	fmt.Printf("Datasets found: %v\n", datasets)
 
 	// List segments in the dataset
-	segments, err := reader.ListSegments(ctx, "events", "", read.SegmentListOptions{})
+	segments, err := reader.ListSegments(ctx, "events", "", lode.SegmentListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list segments: %w", err)
 	}
 	fmt.Printf("Segments in 'events': %d segment(s)\n", len(segments))
 	for _, seg := range segments {
-		fmt.Printf("  - %s\n", seg.ID)
+		fmt.Printf("  - %s (partition: %s)\n", seg.ID, seg.Partition)
 	}
 
 	// List partitions
-	partitions, err := reader.ListPartitions(ctx, "events", read.PartitionListOptions{})
+	partitions, err := reader.ListPartitions(ctx, "events", lode.PartitionListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list partitions: %w", err)
 	}
@@ -150,7 +145,7 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== READ ===")
 
-	// Get manifest for the segment
+	// Get manifest for the first segment
 	manifest, err := reader.GetManifest(ctx, "events", segments[0])
 	if err != nil {
 		return fmt.Errorf("failed to get manifest: %w", err)
@@ -160,7 +155,7 @@ func run() error {
 	fmt.Printf("Partitioner: %s\n", manifest.Partitioner)
 
 	// Read data through the dataset
-	readRecords, err := ds.Read(ctx, lode.SnapshotID(segments[0].ID))
+	readRecords, err := ds.Read(ctx, segments[0].ID)
 	if err != nil {
 		return fmt.Errorf("failed to read: %w", err)
 	}

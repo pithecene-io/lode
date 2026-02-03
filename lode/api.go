@@ -170,21 +170,6 @@ type Compressor interface {
 }
 
 // -----------------------------------------------------------------------------
-// Partitioner interface
-// -----------------------------------------------------------------------------
-
-// Partitioner determines how records are organized into files.
-//
-// Partitioners are pluggable and orthogonal to storage, codecs, and compression.
-type Partitioner interface {
-	// Name returns the partitioner identifier (for example, "hive-dt", "none").
-	Name() string
-
-	// PartitionKey returns the partition path component for a record.
-	PartitionKey(record any) (string, error)
-}
-
-// -----------------------------------------------------------------------------
 // Dataset interface
 // -----------------------------------------------------------------------------
 
@@ -239,3 +224,92 @@ func (errNoSnapshots) Error() string { return "no snapshots" }
 type errPathExists struct{}
 
 func (errPathExists) Error() string { return "path exists" }
+
+// -----------------------------------------------------------------------------
+// Reader interface
+// -----------------------------------------------------------------------------
+
+// SegmentRef references an immutable segment (snapshot) within a dataset.
+type SegmentRef struct {
+	// ID is the segment/snapshot identifier.
+	ID SnapshotID
+
+	// Partition is the partition path where this segment's manifest resides.
+	// For partition-first layouts (e.g., HiveLayout), this is populated during
+	// discovery. Empty for segment-first layouts (e.g., DefaultLayout).
+	Partition string
+}
+
+// PartitionRef references a partition within a dataset.
+type PartitionRef struct {
+	// Path is the partition path (e.g., "day=2024-01-01/source=foo").
+	Path string
+}
+
+// ObjectRef references a data object within a segment.
+type ObjectRef struct {
+	// Dataset is the dataset containing this object.
+	Dataset DatasetID
+
+	// Segment is the segment containing this object.
+	Segment SegmentRef
+
+	// Path is the full storage key for the object.
+	Path string
+}
+
+// DatasetListOptions controls dataset listing.
+type DatasetListOptions struct {
+	// Limit is the maximum number of results to return.
+	// Zero means no limit.
+	Limit int
+}
+
+// PartitionListOptions controls partition listing.
+type PartitionListOptions struct {
+	// Limit is the maximum number of results to return.
+	// Zero means no limit.
+	Limit int
+}
+
+// SegmentListOptions controls segment listing.
+type SegmentListOptions struct {
+	// Limit is the maximum number of results to return.
+	// Zero means no limit.
+	Limit int
+}
+
+// Reader provides read operations over stored datasets.
+//
+// Reader is a façade over storage and layout that performs no interpretation.
+// Per CONTRACT_READ_API.md: "Lode's read API exposes stored facts, not interpretations.
+// Planning and meaning belong to consumers."
+type Reader interface {
+	// ListDatasets returns all dataset IDs found in storage.
+	// Returns ErrDatasetsNotModeled if the layout doesn't support dataset enumeration.
+	ListDatasets(ctx context.Context, opts DatasetListOptions) ([]DatasetID, error)
+
+	// ListPartitions returns partition paths found across all committed segments.
+	// Returns ErrNotFound if the dataset does not exist.
+	ListPartitions(ctx context.Context, dataset DatasetID, opts PartitionListOptions) ([]PartitionRef, error)
+
+	// ListSegments returns committed segments (snapshots) within a dataset.
+	// Returns ErrNotFound if the dataset does not exist.
+	ListSegments(ctx context.Context, dataset DatasetID, partition string, opts SegmentListOptions) ([]SegmentRef, error)
+
+	// GetManifest loads the manifest for a specific segment.
+	// Returns ErrNotFound if the dataset or segment does not exist.
+	GetManifest(ctx context.Context, dataset DatasetID, seg SegmentRef) (*Manifest, error)
+
+	// OpenObject returns a reader for a data object.
+	// The caller must close the reader when done.
+	OpenObject(ctx context.Context, obj ObjectRef) (io.ReadCloser, error)
+}
+
+// ErrDatasetsNotModeled indicates that the current layout does not support
+// dataset enumeration.
+var ErrDatasetsNotModeled = errDatasetsNotModeled{}
+
+type errDatasetsNotModeled struct{}
+
+func (errDatasetsNotModeled) Error() string { return "datasets not modeled by this layout" }

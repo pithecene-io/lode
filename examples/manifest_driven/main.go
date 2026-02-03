@@ -19,8 +19,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/justapithecus/lode/internal/read"
-	"github.com/justapithecus/lode/internal/storage"
 	"github.com/justapithecus/lode/lode"
 )
 
@@ -42,13 +40,14 @@ func run() error {
 
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 
-	// Create filesystem-backed store
-	store, err := storage.NewFS(tmpDir)
+	// Create filesystem-backed store using public API
+	store, err := lode.NewFS(tmpDir)
 	if err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
 	}
 
-	reader := read.NewReader(store)
+	// Create reader with default layout
+	reader := lode.NewReader(store)
 
 	// -------------------------------------------------------------------------
 	// Step 1: Write data files WITHOUT manifests (uncommitted)
@@ -64,7 +63,7 @@ func run() error {
 	fmt.Printf("Wrote data file: %s\n", dataPath)
 
 	// Try to discover datasets - should find nothing
-	datasets, err := reader.ListDatasets(ctx, read.DatasetListOptions{})
+	datasets, err := reader.ListDatasets(ctx, lode.DatasetListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list datasets: %w", err)
 	}
@@ -103,7 +102,7 @@ func run() error {
 	fmt.Printf("Wrote manifest: %s\n", manifestPath)
 
 	// Now discover datasets - should find the committed one
-	datasets, err = reader.ListDatasets(ctx, read.DatasetListOptions{})
+	datasets, err = reader.ListDatasets(ctx, lode.DatasetListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list datasets: %w", err)
 	}
@@ -115,11 +114,14 @@ func run() error {
 	fmt.Println("=== STEP 3: Manifest-driven metadata ===")
 
 	// List segments
-	segments, err := reader.ListSegments(ctx, "committed-ds", "", read.SegmentListOptions{})
+	segments, err := reader.ListSegments(ctx, "committed-ds", "", lode.SegmentListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list segments: %w", err)
 	}
-	fmt.Printf("Segments in 'committed-ds': %v\n", segments)
+	fmt.Printf("Segments in 'committed-ds': %d segment(s)\n", len(segments))
+	for _, seg := range segments {
+		fmt.Printf("  - %s\n", seg.ID)
+	}
 
 	// Get manifest metadata
 	loadedManifest, err := reader.GetManifest(ctx, "committed-ds", segments[0])
