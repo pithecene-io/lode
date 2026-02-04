@@ -6,6 +6,9 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/justapithecus/lode/lode"
@@ -409,62 +412,93 @@ func TestStore_PutMultipartFromFile_FailureTriggersAbort(t *testing.T) {
 // -----------------------------------------------------------------------------
 // Temp file cleanup tests
 //
-// These tests use t.Setenv("TMPDIR", ...) to redirect temp file creation
-// to an isolated test directory, then verify cleanup is deterministic.
+// These tests use dependency injection via the createTemp field to track
+// temp file creation and verify deterministic cleanup. This approach is
+// platform-independent (no TMPDIR/TMP/TEMP variance).
 // -----------------------------------------------------------------------------
 
+// tempFileTracker creates a test-owned temp file factory that tracks created files.
+// Safe for concurrent use.
+type tempFileTracker struct {
+	dir     string
+	mu      sync.Mutex
+	created []string
+	count   atomic.Int32
+}
+
+// newTempFileTracker returns a tracker that creates temp files in dir.
+func newTempFileTracker(dir string) *tempFileTracker {
+	return &tempFileTracker{dir: dir}
+}
+
+// createTemp implements the temp file factory interface for Store.
+func (tr *tempFileTracker) createTemp() (*os.File, error) {
+	f, err := os.CreateTemp(tr.dir, "lode-s3-*")
+	if err != nil {
+		return nil, err
+	}
+	tr.mu.Lock()
+	tr.created = append(tr.created, f.Name())
+	tr.mu.Unlock()
+	tr.count.Add(1)
+	return f, nil
+}
+
+// assertAllCleaned verifies all tracked temp files have been removed.
+func (tr *tempFileTracker) assertAllCleaned(t *testing.T) {
+	t.Helper()
+	for _, path := range tr.created {
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("temp file leak: %s still exists", filepath.Base(path))
+		}
+	}
+}
+
 func TestStore_Put_TempFileCleanup_OnSuccess(t *testing.T) {
-	// Redirect temp files to test-owned directory via TMPDIR
-	testTempDir := t.TempDir()
-	t.Setenv("TMPDIR", testTempDir)
+	tracker := newTempFileTracker(t.TempDir())
 
 	ctx := t.Context()
-	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+	store, err := New(NewMockS3Client(), Config{Bucket: "test"})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	store.createTemp = tracker.createTemp
 
 	// Perform successful Put
-	err := store.Put(ctx, "test.txt", bytes.NewReader([]byte("hello")))
+	err = store.Put(ctx, "test.txt", bytes.NewReader([]byte("hello")))
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	// Verify temp dir is empty (all temp files cleaned up)
-	assertTempDirEmpty(t, testTempDir)
+	// Verify all tracked temp files were cleaned up
+	if tracker.count.Load() == 0 {
+		t.Error("expected at least one temp file to be created")
+	}
+	tracker.assertAllCleaned(t)
 }
 
 func TestStore_Put_TempFileCleanup_OnFailure(t *testing.T) {
-	// Redirect temp files to test-owned directory via TMPDIR
-	testTempDir := t.TempDir()
-	t.Setenv("TMPDIR", testTempDir)
+	tracker := newTempFileTracker(t.TempDir())
 
 	ctx := t.Context()
 	mock := NewMockS3Client()
-	store, _ := New(mock, Config{Bucket: "test"})
+	store, err := New(mock, Config{Bucket: "test"})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	store.createTemp = tracker.createTemp
 
-	// Configure mock to fail at PutObject (atomic path failure)
-	// Use a pre-existing key to trigger ErrPathExists
+	// First Put succeeds
 	_ = store.Put(ctx, "existing.txt", bytes.NewReader([]byte("first")))
 
-	// Second Put to same path will fail with ErrPathExists
+	// Second Put fails with ErrPathExists
 	_ = store.Put(ctx, "existing.txt", bytes.NewReader([]byte("second")))
 
-	// Verify temp dir is empty (all temp files cleaned up even on failure)
-	assertTempDirEmpty(t, testTempDir)
-}
-
-// assertTempDirEmpty verifies that the given directory contains no files.
-func assertTempDirEmpty(t *testing.T, dir string) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("failed to read temp dir: %v", err)
+	// Verify all tracked temp files were cleaned up (including both Put calls)
+	if tracker.count.Load() < 2 {
+		t.Errorf("expected at least 2 temp files created, got %d", tracker.count.Load())
 	}
-	if len(entries) > 0 {
-		names := make([]string, len(entries))
-		for i, e := range entries {
-			names[i] = e.Name()
-		}
-		t.Errorf("temp file leak: found %d files in temp dir: %v", len(entries), names)
-	}
+	tracker.assertAllCleaned(t)
 }
 
 // -----------------------------------------------------------------------------
