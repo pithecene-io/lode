@@ -138,21 +138,24 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 		return err
 	}
 
-	// Read first chunk to determine routing: one-shot vs multipart
-	firstChunk := make([]byte, maxSinglePutSize+1)
-	n, err := io.ReadFull(r, firstChunk)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	// Read up to threshold+1 bytes to determine routing.
+	// Use LimitedReader to avoid allocating 100MB+ upfront for small payloads.
+	// The buffer grows organically as data is read.
+	var buf bytes.Buffer
+	limited := io.LimitReader(r, maxSinglePutSize+1)
+	n, err := buf.ReadFrom(limited)
+	if err != nil {
 		return fmt.Errorf("s3: reading data: %w", err)
 	}
-	firstChunk = firstChunk[:n]
 
 	// One-shot path: atomic via If-None-Match
 	if n <= maxSinglePutSize {
-		return s.putSimple(ctx, fullKey, firstChunk)
+		return s.putSimple(ctx, fullKey, buf.Bytes())
 	}
 
 	// Multipart path: best-effort via preflight check
-	return s.putMultipart(ctx, fullKey, firstChunk, r)
+	// Combine buffered data with remaining reader
+	return s.putMultipart(ctx, fullKey, buf.Bytes(), r)
 }
 
 // putSimple implements the one-shot Put path for objects ≤ maxSinglePutSize.
@@ -612,6 +615,10 @@ type MockS3Client struct {
 	objects  map[string][]byte
 	uploads  map[string]*multipartUpload // uploadID -> upload
 	uploadID int
+
+	// Call counters for test assertions
+	PutObjectCalls            int
+	CreateMultipartUploadCalls int
 }
 
 // NewMockS3Client creates a new mock S3 client for testing.
@@ -620,6 +627,14 @@ func NewMockS3Client() *MockS3Client {
 		objects: make(map[string][]byte),
 		uploads: make(map[string]*multipartUpload),
 	}
+}
+
+// ResetCounts resets call counters for test isolation.
+func (m *MockS3Client) ResetCounts() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.PutObjectCalls = 0
+	m.CreateMultipartUploadCalls = 0
 }
 
 // PutObject implements API.PutObject for testing.
@@ -632,6 +647,8 @@ func (m *MockS3Client) PutObject(_ context.Context, params *s3.PutObjectInput, _
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.PutObjectCalls++
 
 	// Handle If-None-Match: "*" (conditional write for immutability)
 	if aws.ToString(params.IfNoneMatch) == "*" {
@@ -698,6 +715,7 @@ func (m *MockS3Client) CreateMultipartUpload(_ context.Context, params *s3.Creat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.CreateMultipartUploadCalls++
 	m.uploadID++
 	uploadID := fmt.Sprintf("upload-%d", m.uploadID)
 

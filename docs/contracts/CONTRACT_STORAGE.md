@@ -16,36 +16,44 @@ It is authoritative for any implementation of the `Store` interface.
 ## Adapter Obligations
 
 ### Put
+
+**Intent**: Put creates a new object. It MUST NOT silently overwrite existing data.
+
+**Behavior**:
 - MUST write data to the given path.
-- MUST NOT overwrite existing data.
-- If the path already exists, MUST return `ErrPathExists` (or an equivalent error).
+- If the path already exists, MUST return `ErrPathExists`.
+- The mechanism for detecting existing paths varies by upload path (see below).
 
-#### One-Shot vs Streaming Put
+#### Put Upload Paths
 
-Adapters MAY implement Put using different mechanisms based on payload size:
+Adapters MAY route Put through different mechanisms based on payload size.
+The no-overwrite guarantee strength depends on the path used:
 
-**One-Shot Path** (for payloads ≤ adapter-defined threshold):
-- MUST use atomic conditional-create semantics where the backend supports it
-  (e.g., S3 `If-None-Match: "*"`).
-- Overwrite protection is atomic: no TOCTOU window.
-- Duplicate writes MUST return `ErrPathExists`.
+| Path | Trigger | Detection Mechanism | Guarantee |
+|------|---------|---------------------|-----------|
+| One-shot | payload ≤ threshold | Atomic conditional write | **Atomic** — no TOCTOU |
+| Multipart | payload > threshold | Preflight existence check | **Best-effort** — TOCTOU window exists |
 
-**Streaming/Multipart Path** (for payloads > threshold):
-- Used when the backend requires chunked uploads for large payloads.
-- If the backend does not support conditional completion (e.g., S3 multipart),
-  the adapter MUST perform a preflight existence check before starting the upload.
-- Overwrite protection is best-effort: a TOCTOU window exists between the
-  existence check and upload completion.
-- If the preflight check detects an existing path, MUST return `ErrPathExists`.
-- **Single-writer or external coordination is REQUIRED** to guarantee no-overwrite
-  semantics on backends without conditional multipart completion.
+**One-Shot Path** (≤ threshold):
+- MUST use atomic conditional-create where backend supports it (e.g., S3 `If-None-Match: "*"`).
+- Duplicate writes MUST return `ErrPathExists` atomically.
+- No coordination required beyond the adapter.
+
+**Multipart Path** (> threshold):
+- Used when backend requires chunked uploads for large payloads.
+- MUST perform preflight existence check before starting upload.
+- If preflight detects existing path, MUST return `ErrPathExists`.
+- **TOCTOU window**: Between preflight check and upload completion, a concurrent
+  writer may create the same path. The adapter cannot prevent this race.
+- **Caller responsibility**: Single-writer semantics or external coordination
+  is REQUIRED to guarantee no-overwrite on this path.
 
 #### Adapter Documentation Requirements
 
 Adapters MUST document:
-- The size threshold for one-shot vs streaming/multipart routing.
-- Which mechanism provides atomic vs best-effort overwrite protection.
-- Any backend-specific limitations affecting the no-overwrite guarantee.
+- The size threshold for one-shot vs multipart routing.
+- Which path provides atomic vs best-effort detection.
+- Backend-specific limitations (e.g., "S3 multipart lacks conditional completion").
 
 ### Get
 - MUST return a readable stream for an existing path.
