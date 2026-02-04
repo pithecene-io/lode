@@ -6,14 +6,21 @@
 // # Contract Compliance
 //
 // This adapter implements CONTRACT_STORAGE.md obligations:
-//   - Put: Uses one-shot or multipart path based on payload size.
-//     One-shot (≤100MB): Atomic via If-None-Match conditional write.
-//     Multipart (>100MB): Best-effort via preflight existence check;
+//   - Put: Uses atomic or multipart path based on payload size.
+//     Atomic (≤5GB): Spools to temp file, then PutObject with If-None-Match.
+//     Provides atomic no-overwrite guarantee with O(1) memory usage.
+//     Multipart (>5GB): Best-effort via preflight existence check;
 //     TOCTOU window exists—single-writer or external coordination required.
 //   - Get/Exists/Delete: Standard ErrNotFound semantics
 //   - List: Full pagination support, returns all matching keys
 //   - ReadRange: True range reads via HTTP Range header
 //   - ReaderAt: Concurrent-safe random access reads
+//
+// # S3-Specific Limits
+//
+//   - Atomic path threshold: 5GB (S3 PutObject limit)
+//   - Maximum object size: 5TB (S3 multipart limit)
+//   - Part size: 5MB minimum, adaptive for objects >50GB to stay under 10,000 parts
 //
 // # Consistency
 //
@@ -30,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -43,16 +51,27 @@ import (
 	"github.com/justapithecus/lode/lode"
 )
 
-// multipartPartSize is the size of each part in a multipart upload.
-// S3 requires at least 5MB per part (except the last part).
-const multipartPartSize = 5 * 1024 * 1024 // 5MB
+// S3 multipart upload constraints.
+const (
+	// minPartSize is the minimum part size for S3 multipart uploads (except last part).
+	minPartSize = 5 * 1024 * 1024 // 5MB
 
-// maxSinglePutSize is the threshold for one-shot vs multipart Put routing.
+	// maxPartSize is the maximum part size for S3 multipart uploads.
+	maxPartSize = 5 * 1024 * 1024 * 1024 // 5GB
+
+	// maxParts is the maximum number of parts allowed in an S3 multipart upload.
+	maxParts = 10000
+
+	// maxObjectSize is the maximum object size for S3 (5TB per AWS documentation).
+	// This is an S3 service limit, independent of part size calculations.
+	maxObjectSize = 5 * 1024 * 1024 * 1024 * 1024 // 5TB
+)
+
+// maxAtomicPutSize is the threshold for atomic vs multipart Put routing.
 // Objects ≤ this size use PutObject with If-None-Match (atomic no-overwrite).
 // Objects > this size use multipart upload (best-effort no-overwrite via preflight check).
-// Set to 100MB as a practical balance: most artifacts fit in one-shot path while
-// allowing true streaming for larger payloads. S3 PutObject supports up to 5GB.
-const maxSinglePutSize = 100 * 1024 * 1024 // 100MB
+// Set to 5GB (the S3 PutObject limit) to maximize atomic upload coverage.
+const maxAtomicPutSize = 5 * 1024 * 1024 * 1024 // 5GB
 
 // maxReadRangeLength is the maximum length for ReadRange to prevent overflow
 // when converting int64 to int on 32-bit platforms.
@@ -119,16 +138,23 @@ func New(client API, cfg Config) (*Store, error) {
 	}, nil
 }
 
+// shouldUseAtomicPath returns true if the given size should use the atomic Put path.
+// This is a pure function for routing decisions, testable without large files.
+func shouldUseAtomicPath(size int64) bool {
+	return size <= maxAtomicPutSize
+}
+
 // Put writes data to the given path.
 // Returns ErrPathExists if the path already exists.
 // Returns ErrInvalidPath for empty or escaping paths.
 //
 // # Routing and Atomicity (per CONTRACT_STORAGE.md)
 //
-// One-shot path (≤100MB): Uses PutObject with If-None-Match for atomic
-// no-overwrite protection. Duplicate writes return ErrPathExists.
+// Atomic path (≤5GB): Spools to temp file, then uses PutObject with
+// If-None-Match for atomic no-overwrite protection. O(1) memory usage.
+// Duplicate writes return ErrPathExists.
 //
-// Multipart path (>100MB): Uses preflight HeadObject check then multipart
+// Multipart path (>5GB): Uses preflight HeadObject check then multipart
 // upload. Provides best-effort no-overwrite protection with a TOCTOU window.
 // Single-writer or external coordination is required for guaranteed
 // no-overwrite semantics on this path.
@@ -138,35 +164,45 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 		return err
 	}
 
-	// Read up to threshold+1 bytes to determine routing.
-	// Use LimitedReader to avoid allocating 100MB+ upfront for small payloads.
-	// The buffer grows organically as data is read.
-	var buf bytes.Buffer
-	limited := io.LimitReader(r, maxSinglePutSize+1)
-	n, err := buf.ReadFrom(limited)
+	// Spool to temp file to determine size and enable seekable upload.
+	// This provides O(1) memory usage regardless of upload size.
+	// Uses empty dir to respect TMPDIR environment variable.
+	tmpFile, err := os.CreateTemp("", "lode-s3-*")
 	if err != nil {
-		return fmt.Errorf("s3: reading data: %w", err)
+		return fmt.Errorf("s3: creating temp file: %w", err)
+	}
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+	}()
+
+	// Copy to temp file, tracking size
+	size, err := io.Copy(tmpFile, r)
+	if err != nil {
+		return fmt.Errorf("s3: writing temp file: %w", err)
 	}
 
-	// One-shot path: atomic via If-None-Match
-	if n <= maxSinglePutSize {
-		return s.putSimple(ctx, fullKey, buf.Bytes())
+	// Seek to start for upload
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("s3: seeking temp file: %w", err)
 	}
 
-	// Multipart path: best-effort via preflight check
-	// Combine buffered data with remaining reader
-	return s.putMultipart(ctx, fullKey, buf.Bytes(), r)
+	// Route based on size
+	if shouldUseAtomicPath(size) {
+		return s.putAtomicFromFile(ctx, fullKey, tmpFile, size)
+	}
+	return s.putMultipartFromFile(ctx, fullKey, tmpFile, size)
 }
 
-// putSimple implements the one-shot Put path for objects ≤ maxSinglePutSize.
-// Uses If-None-Match: "*" for atomic no-overwrite protection.
-// Returns ErrPathExists if the object already exists.
-func (s *Store) putSimple(ctx context.Context, fullKey string, data []byte) error {
+// putAtomicFromFile implements atomic Put via PutObject with If-None-Match.
+// Supports uploads up to 5GB (S3 PutObject limit).
+// The file is passed directly to the SDK for memory-efficient streaming.
+func (s *Store) putAtomicFromFile(ctx context.Context, fullKey string, file io.ReadSeeker, size int64) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(fullKey),
-		Body:          bytes.NewReader(data),
-		ContentLength: aws.Int64(int64(len(data))),
+		Body:          file,
+		ContentLength: aws.Int64(size),
 		IfNoneMatch:   aws.String("*"),
 	})
 	if err != nil {
@@ -183,8 +219,8 @@ func (s *Store) putSimple(ctx context.Context, fullKey string, data []byte) erro
 	return nil
 }
 
-// putMultipart implements the multipart Put path for objects > maxSinglePutSize.
-// Enables true streaming without full buffering.
+// putMultipartFromFile implements multipart upload for objects > 5GB.
+// Reads parts directly from file using io.SectionReader for memory efficiency.
 //
 // S3 multipart upload does not support conditional completion, so this path
 // uses a preflight existence check. This provides best-effort no-overwrite
@@ -192,7 +228,21 @@ func (s *Store) putSimple(ctx context.Context, fullKey string, data []byte) erro
 //
 // Per CONTRACT_STORAGE.md: single-writer or external coordination is required
 // to guarantee no-overwrite semantics on this path.
-func (s *Store) putMultipart(ctx context.Context, fullKey string, firstChunk []byte, remaining io.Reader) error {
+func (s *Store) putMultipartFromFile(ctx context.Context, fullKey string, file io.ReaderAt, size int64) error {
+	// Check S3 size limit (5TB max)
+	if size > maxObjectSize {
+		return fmt.Errorf("s3: object size %d exceeds maximum %d (5TB)", size, maxObjectSize)
+	}
+
+	// Calculate adaptive part size to stay under 10,000 parts.
+	// For objects ≤50GB, use 5MB parts. For larger objects, scale up.
+	partSize := int64(minPartSize)
+	if size > int64(minPartSize)*maxParts {
+		// Need larger parts to fit within maxParts limit
+		// Round up: ceil(size / maxParts)
+		partSize = (size + maxParts - 1) / maxParts
+	}
+
 	// Preflight existence check (best-effort; TOCTOU window exists).
 	exists, err := s.exists(ctx, fullKey)
 	if err != nil {
@@ -228,56 +278,37 @@ func (s *Store) putMultipart(ctx context.Context, fullKey string, firstChunk []b
 		})
 	}
 
-	// Upload first chunk as part 1
-	partNum := int32(1)
-	uploadResp, err := s.client.UploadPart(ctx, &s3.UploadPartInput{
-		Bucket:        aws.String(s.bucket),
-		Key:           aws.String(fullKey),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(partNum),
-		Body:          bytes.NewReader(firstChunk),
-		ContentLength: aws.Int64(int64(len(firstChunk))),
-	})
-	if err != nil {
-		abortUpload()
-		return fmt.Errorf("s3: upload part %d: %w", partNum, err)
-	}
-	completedParts = append(completedParts, types.CompletedPart{
-		ETag:       uploadResp.ETag,
-		PartNumber: aws.Int32(partNum),
-	})
-
-	// Stream remaining data in chunks
-	buf := make([]byte, multipartPartSize)
-	for {
-		n, err := io.ReadFull(remaining, buf)
-		if n > 0 {
-			partNum++
-			uploadResp, uploadErr := s.client.UploadPart(ctx, &s3.UploadPartInput{
-				Bucket:        aws.String(s.bucket),
-				Key:           aws.String(fullKey),
-				UploadId:      aws.String(uploadID),
-				PartNumber:    aws.Int32(partNum),
-				Body:          bytes.NewReader(buf[:n]),
-				ContentLength: aws.Int64(int64(n)),
-			})
-			if uploadErr != nil {
-				abortUpload()
-				return fmt.Errorf("s3: upload part %d: %w", partNum, uploadErr)
-			}
-			completedParts = append(completedParts, types.CompletedPart{
-				ETag:       uploadResp.ETag,
-				PartNumber: aws.Int32(partNum),
-			})
+	// Upload parts directly from file using SectionReader (no memory buffering)
+	var offset int64
+	partNum := int32(0)
+	for offset < size {
+		partNum++
+		thisPartSize := partSize
+		if remaining := size - offset; remaining < thisPartSize {
+			thisPartSize = remaining
 		}
 
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		}
-		if err != nil {
+		// SectionReader provides a view into the file without copying
+		partReader := io.NewSectionReader(file, offset, thisPartSize)
+
+		uploadResp, uploadErr := s.client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:        aws.String(s.bucket),
+			Key:           aws.String(fullKey),
+			UploadId:      aws.String(uploadID),
+			PartNumber:    aws.Int32(partNum),
+			Body:          partReader,
+			ContentLength: aws.Int64(thisPartSize),
+		})
+		if uploadErr != nil {
 			abortUpload()
-			return fmt.Errorf("s3: reading data: %w", err)
+			return fmt.Errorf("s3: upload part %d: %w", partNum, uploadErr)
 		}
+		completedParts = append(completedParts, types.CompletedPart{
+			ETag:       uploadResp.ETag,
+			PartNumber: aws.Int32(partNum),
+		})
+
+		offset += thisPartSize
 	}
 
 	// Complete multipart upload

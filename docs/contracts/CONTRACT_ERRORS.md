@@ -115,12 +115,13 @@ These indicate storage-level failures.
 
 | Put Path | Detection | Guarantee |
 |----------|-----------|-----------|
-| One-shot (≤ threshold) | Atomic conditional write | Always detected |
+| Atomic (≤ threshold) | Conditional write | Always detected |
 | Multipart (> threshold) | Preflight existence check | Best-effort (TOCTOU window) |
 
 The multipart path has a TOCTOU window between preflight check and upload completion.
 Under concurrent writers without external coordination, an existing path may not be
-detected and data may be overwritten. Single-writer semantics are required.
+detected and data may be overwritten. Single-writer semantics or external coordination required.
+Threshold values are adapter-specific; consult adapter documentation.
 
 ---
 

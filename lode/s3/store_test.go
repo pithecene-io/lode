@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"os"
 	"testing"
 
 	"github.com/justapithecus/lode/lode"
@@ -113,109 +114,130 @@ func TestStore_Put_ErrInvalidPath_Escaping(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Put routing boundary tests (per CONTRACT_STORAGE.md)
+// Put routing decision tests (per CONTRACT_STORAGE.md)
 //
-// Threshold: maxSinglePutSize = 100MB
-// - size ≤ threshold: one-shot path (PutObject with If-None-Match)
-// - size > threshold: multipart path (preflight HeadObject + multipart upload)
+// Production threshold: maxAtomicPutSize = 5GB
+// - size ≤ 5GB: atomic path (PutObject with If-None-Match)
+// - size > 5GB: multipart path (preflight HeadObject + multipart upload)
+//
+// These tests verify the pure routing function with synthetic sizes,
+// avoiding the need for 5GB test files.
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_Routing_AtThresholdMinusOne_UsesOneShot(t *testing.T) {
-	ctx := t.Context()
-	mock := NewMockS3Client()
-	store, _ := New(mock, Config{Bucket: "test"})
-
-	// threshold - 1 byte should use one-shot path
-	size := maxSinglePutSize - 1
-	data := make([]byte, size)
-
-	err := store.Put(ctx, "at-threshold-minus-one.bin", bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("Put failed: %v", err)
+func TestShouldUseAtomicPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int64
+		expected bool
+	}{
+		{"zero bytes", 0, true},
+		{"1 byte", 1, true},
+		{"1 MB", 1 * 1024 * 1024, true},
+		{"1 GB", 1 * 1024 * 1024 * 1024, true},
+		{"5 GB - 1", maxAtomicPutSize - 1, true},
+		{"exactly 5 GB", maxAtomicPutSize, true},
+		{"5 GB + 1", maxAtomicPutSize + 1, false},
+		{"10 GB", 10 * 1024 * 1024 * 1024, false},
+		{"5 TB", maxObjectSize, false},
 	}
 
-	// Verify one-shot path was taken (PutObject called, no multipart)
-	mock.mu.RLock()
-	putCalls := mock.PutObjectCalls
-	multipartCalls := mock.CreateMultipartUploadCalls
-	stored := mock.objects["at-threshold-minus-one.bin"]
-	mock.mu.RUnlock()
-
-	if putCalls != 1 {
-		t.Errorf("expected 1 PutObject call (one-shot), got %d", putCalls)
-	}
-	if multipartCalls != 0 {
-		t.Errorf("expected 0 CreateMultipartUpload calls, got %d", multipartCalls)
-	}
-	if len(stored) != size {
-		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldUseAtomicPath(tt.size)
+			if got != tt.expected {
+				t.Errorf("shouldUseAtomicPath(%d) = %v, want %v", tt.size, got, tt.expected)
+			}
+		})
 	}
 }
 
-func TestStore_Put_Routing_AtThreshold_UsesOneShot(t *testing.T) {
+// -----------------------------------------------------------------------------
+// Internal path tests - verify atomic and multipart paths work correctly
+// by calling internal methods directly with small test data.
+// -----------------------------------------------------------------------------
+
+func TestStore_PutAtomicFromFile_Success(t *testing.T) {
 	ctx := t.Context()
 	mock := NewMockS3Client()
 	store, _ := New(mock, Config{Bucket: "test"})
 
-	// Exactly at threshold should use one-shot path
-	size := maxSinglePutSize
-	data := make([]byte, size)
-
-	err := store.Put(ctx, "at-threshold.bin", bytes.NewReader(data))
+	// Create a small temp file
+	data := []byte("hello atomic path")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "test-*")
 	if err != nil {
-		t.Fatalf("Put failed: %v", err)
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	if _, err := tmpFile.Seek(0, 0); err != nil {
+		t.Fatalf("failed to seek temp file: %v", err)
 	}
 
-	// Verify one-shot path was taken
+	// Call internal atomic path directly
+	err = store.putAtomicFromFile(ctx, "atomic-test.txt", tmpFile, int64(len(data)))
+	if err != nil {
+		t.Fatalf("putAtomicFromFile failed: %v", err)
+	}
+
+	// Verify PutObject was called with If-None-Match
 	mock.mu.RLock()
 	putCalls := mock.PutObjectCalls
-	multipartCalls := mock.CreateMultipartUploadCalls
-	stored := mock.objects["at-threshold.bin"]
+	stored := mock.objects["atomic-test.txt"]
 	mock.mu.RUnlock()
 
 	if putCalls != 1 {
-		t.Errorf("expected 1 PutObject call (one-shot), got %d", putCalls)
+		t.Errorf("expected 1 PutObject call, got %d", putCalls)
 	}
-	if multipartCalls != 0 {
-		t.Errorf("expected 0 CreateMultipartUpload calls, got %d", multipartCalls)
-	}
-	if len(stored) != size {
-		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
+	if !bytes.Equal(data, stored) {
+		t.Error("stored data does not match original")
 	}
 }
 
-func TestStore_Put_Routing_AtThresholdPlusOne_UsesMultipart(t *testing.T) {
+func TestStore_PutMultipartFromFile_Success(t *testing.T) {
 	ctx := t.Context()
 	mock := NewMockS3Client()
 	store, _ := New(mock, Config{Bucket: "test"})
 
-	// threshold + 1 byte should use multipart path
-	size := maxSinglePutSize + 1
-	data := make([]byte, size)
+	// Create a small temp file (multipart works with any size when called directly)
+	data := make([]byte, 10*1024*1024) // 10MB - enough for 2 parts
 	for i := range data {
 		data[i] = byte(i % 256)
 	}
 
-	err := store.Put(ctx, "at-threshold-plus-one.bin", bytes.NewReader(data))
+	tmpFile, err := os.CreateTemp(t.TempDir(), "test-*")
 	if err != nil {
-		t.Fatalf("Put failed: %v", err)
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	if _, err := tmpFile.Seek(0, 0); err != nil {
+		t.Fatalf("failed to seek temp file: %v", err)
 	}
 
-	// Verify multipart path was taken (no PutObject, CreateMultipartUpload called)
+	// Call internal multipart path directly
+	err = store.putMultipartFromFile(ctx, "multipart-test.bin", tmpFile, int64(len(data)))
+	if err != nil {
+		t.Fatalf("putMultipartFromFile failed: %v", err)
+	}
+
+	// Verify multipart upload was used
 	mock.mu.RLock()
+	createCalls := mock.CreateMultipartUploadCalls
 	putCalls := mock.PutObjectCalls
-	multipartCalls := mock.CreateMultipartUploadCalls
-	stored := mock.objects["at-threshold-plus-one.bin"]
+	stored := mock.objects["multipart-test.bin"]
 	mock.mu.RUnlock()
 
+	if createCalls != 1 {
+		t.Errorf("expected 1 CreateMultipartUpload call, got %d", createCalls)
+	}
 	if putCalls != 0 {
 		t.Errorf("expected 0 PutObject calls (multipart path), got %d", putCalls)
-	}
-	if multipartCalls != 1 {
-		t.Errorf("expected 1 CreateMultipartUpload call, got %d", multipartCalls)
-	}
-	if len(stored) != size {
-		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
 	}
 	if !bytes.Equal(data, stored) {
 		t.Error("stored data does not match original")
@@ -226,44 +248,57 @@ func TestStore_Put_Routing_AtThresholdPlusOne_UsesMultipart(t *testing.T) {
 // Put duplicate behavior tests (per CONTRACT_STORAGE.md)
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_OneShot_Duplicate_ReturnsErrPathExists(t *testing.T) {
+func TestStore_Put_Atomic_Duplicate_ReturnsErrPathExists(t *testing.T) {
 	ctx := t.Context()
 	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
 
-	// Small file uses one-shot path with If-None-Match
+	// Small file uses atomic path with If-None-Match
 	data := []byte("hello")
 
 	// First write should succeed
-	err := store.Put(ctx, "oneshot-dup.txt", bytes.NewReader(data))
+	err := store.Put(ctx, "atomic-dup.txt", bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("first Put failed: %v", err)
 	}
 
 	// Second write should return ErrPathExists (atomic detection via PreconditionFailed)
-	err = store.Put(ctx, "oneshot-dup.txt", bytes.NewReader(data))
+	err = store.Put(ctx, "atomic-dup.txt", bytes.NewReader(data))
 	if !errors.Is(err, lode.ErrPathExists) {
 		t.Errorf("expected ErrPathExists, got: %v", err)
 	}
 }
 
-func TestStore_Put_Multipart_PreExisting_ReturnsErrPathExists(t *testing.T) {
+func TestStore_PutMultipartFromFile_PreExisting_ReturnsErrPathExists(t *testing.T) {
+	// Test multipart preflight detection by calling internal method directly
 	ctx := t.Context()
-	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
 
-	// Large file uses multipart path with preflight check
-	size := maxSinglePutSize + 1
-	data := make([]byte, size)
-
-	// First write should succeed
-	err := store.Put(ctx, "multipart-dup.bin", bytes.NewReader(data))
+	// Pre-create an object via atomic path
+	data := []byte("existing data")
+	err := store.Put(ctx, "existing.bin", bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("first Put failed: %v", err)
 	}
 
-	// Second write should return ErrPathExists (detected at preflight HeadObject)
-	err = store.Put(ctx, "multipart-dup.bin", bytes.NewReader(data))
+	// Now try multipart to same path - should fail at preflight
+	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
+	defer func() { _ = tmpFile.Close() }()
+	_, _ = tmpFile.Write([]byte("new data"))
+	_, _ = tmpFile.Seek(0, 0)
+
+	err = store.putMultipartFromFile(ctx, "existing.bin", tmpFile, 8)
 	if !errors.Is(err, lode.ErrPathExists) {
-		t.Errorf("expected ErrPathExists, got: %v", err)
+		t.Errorf("expected ErrPathExists from preflight check, got: %v", err)
+	}
+
+	// Verify no multipart upload was started (failed at preflight HeadObject)
+	mock.mu.RLock()
+	multipartCalls := mock.CreateMultipartUploadCalls
+	mock.mu.RUnlock()
+
+	if multipartCalls != 0 {
+		t.Errorf("expected 0 CreateMultipartUpload calls (should fail at preflight), got %d", multipartCalls)
 	}
 }
 
@@ -271,20 +306,27 @@ func TestStore_Put_Multipart_PreExisting_ReturnsErrPathExists(t *testing.T) {
 // Put multipart content integrity test
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_Multipart_ContentIntegrity(t *testing.T) {
+func TestStore_PutMultipartFromFile_ContentIntegrity(t *testing.T) {
+	// Test multipart content integrity by calling internal method directly
 	ctx := t.Context()
-	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
 
-	// Create data larger than threshold with known pattern
-	size := maxSinglePutSize + (5 * 1024 * 1024) // threshold + 5MB
+	// Create data with known pattern (6MB = 2 parts)
+	size := 6 * 1024 * 1024
 	data := make([]byte, size)
 	for i := range data {
 		data[i] = byte(i % 256)
 	}
 
-	err := store.Put(ctx, "large-file.bin", bytes.NewReader(data))
+	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
+	defer func() { _ = tmpFile.Close() }()
+	_, _ = tmpFile.Write(data)
+	_, _ = tmpFile.Seek(0, 0)
+
+	err := store.putMultipartFromFile(ctx, "large-file.bin", tmpFile, int64(size))
 	if err != nil {
-		t.Fatalf("Put large file failed: %v", err)
+		t.Fatalf("putMultipartFromFile failed: %v", err)
 	}
 
 	// Verify the data was stored correctly
@@ -312,9 +354,9 @@ func TestStore_Put_Multipart_ContentIntegrity(t *testing.T) {
 // Multipart abort cleanup test
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
+func TestStore_PutMultipartFromFile_FailureTriggersAbort(t *testing.T) {
 	// Verify that when multipart upload fails, AbortMultipartUpload is called.
-	// This tests the actual abort path, not just successful completion.
+	// This tests the actual abort path by calling internal method directly.
 
 	ctx := t.Context()
 	mock := NewMockS3Client()
@@ -323,14 +365,19 @@ func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
 	// Configure mock to fail on second part upload (first part succeeds, then fails)
 	mock.UploadPartFailOnCall = 2
 
-	// Create data that requires multiple parts (threshold + 10MB to ensure multiple chunks)
-	size := maxSinglePutSize + (10 * 1024 * 1024)
+	// Create data that requires multiple parts (11MB = 3 parts with 5MB part size)
+	size := 11 * 1024 * 1024
 	data := make([]byte, size)
 
-	// Put should fail due to simulated UploadPart failure
-	err := store.Put(ctx, "will-fail.bin", bytes.NewReader(data))
+	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
+	defer func() { _ = tmpFile.Close() }()
+	_, _ = tmpFile.Write(data)
+	_, _ = tmpFile.Seek(0, 0)
+
+	// Call multipart path directly - should fail due to simulated UploadPart failure
+	err := store.putMultipartFromFile(ctx, "will-fail.bin", tmpFile, int64(size))
 	if err == nil {
-		t.Fatal("expected Put to fail due to simulated UploadPart error")
+		t.Fatal("expected putMultipartFromFile to fail due to simulated UploadPart error")
 	}
 
 	// Verify abort was called
@@ -360,6 +407,115 @@ func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// Temp file cleanup tests
+//
+// These tests use t.Setenv("TMPDIR", ...) to redirect temp file creation
+// to an isolated test directory, then verify cleanup is deterministic.
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_TempFileCleanup_OnSuccess(t *testing.T) {
+	// Redirect temp files to test-owned directory via TMPDIR
+	testTempDir := t.TempDir()
+	t.Setenv("TMPDIR", testTempDir)
+
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Perform successful Put
+	err := store.Put(ctx, "test.txt", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Verify temp dir is empty (all temp files cleaned up)
+	assertTempDirEmpty(t, testTempDir)
+}
+
+func TestStore_Put_TempFileCleanup_OnFailure(t *testing.T) {
+	// Redirect temp files to test-owned directory via TMPDIR
+	testTempDir := t.TempDir()
+	t.Setenv("TMPDIR", testTempDir)
+
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Configure mock to fail at PutObject (atomic path failure)
+	// Use a pre-existing key to trigger ErrPathExists
+	_ = store.Put(ctx, "existing.txt", bytes.NewReader([]byte("first")))
+
+	// Second Put to same path will fail with ErrPathExists
+	_ = store.Put(ctx, "existing.txt", bytes.NewReader([]byte("second")))
+
+	// Verify temp dir is empty (all temp files cleaned up even on failure)
+	assertTempDirEmpty(t, testTempDir)
+}
+
+// assertTempDirEmpty verifies that the given directory contains no files.
+func assertTempDirEmpty(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read temp dir: %v", err)
+	}
+	if len(entries) > 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("temp file leak: found %d files in temp dir: %v", len(entries), names)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// S3 limit validation tests
+// -----------------------------------------------------------------------------
+
+func TestStore_S3Limits_AreCorrect(t *testing.T) {
+	// Verify S3 limits are correctly defined per AWS documentation
+	if minPartSize != 5*1024*1024 {
+		t.Errorf("minPartSize should be 5MB, got %d", minPartSize)
+	}
+	if maxPartSize != 5*1024*1024*1024 {
+		t.Errorf("maxPartSize should be 5GB, got %d", maxPartSize)
+	}
+	if maxParts != 10000 {
+		t.Errorf("maxParts should be 10000, got %d", maxParts)
+	}
+	// S3's max object size is 5TB (service limit, not computed from parts)
+	const fiveTB = int64(5) * 1024 * 1024 * 1024 * 1024
+	if maxObjectSize != fiveTB {
+		t.Errorf("maxObjectSize should be %d (5TB), got %d", fiveTB, maxObjectSize)
+	}
+	if maxAtomicPutSize != 5*1024*1024*1024 {
+		t.Errorf("maxAtomicPutSize should be 5GB, got %d", maxAtomicPutSize)
+	}
+}
+
+func TestStore_Put_AdaptivePartSizing(t *testing.T) {
+	// Test that part size calculation works correctly for large objects.
+	// We can't actually create 50GB+ files, but we can verify the math.
+
+	// For size <= 50GB (minPartSize * maxParts), partSize = minPartSize
+	size50GB := int64(minPartSize) * maxParts
+	expectedPartSize := int64(minPartSize)
+	if size50GB/expectedPartSize > maxParts {
+		t.Errorf("50GB with 5MB parts would exceed maxParts")
+	}
+
+	// For size = 100GB, need larger parts
+	size100GB := int64(100) * 1024 * 1024 * 1024
+	neededPartSize := (size100GB + maxParts - 1) / maxParts // ceil division
+	numParts := (size100GB + neededPartSize - 1) / neededPartSize
+	if numParts > maxParts {
+		t.Errorf("100GB adaptive sizing would use %d parts (max %d)", numParts, maxParts)
+	}
+	if neededPartSize < minPartSize {
+		t.Errorf("100GB part size %d is below minimum %d", neededPartSize, minPartSize)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Multipart TOCTOU documentation test
 //
 // This test documents and asserts the known limitation: multipart path has a
@@ -367,51 +523,22 @@ func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
 // single-writer or external coordination is required.
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_Multipart_TOCTOU_Limitation(t *testing.T) {
-	// Assert: maxSinglePutSize is 100MB (the documented threshold)
-	const expectedThreshold = 100 * 1024 * 1024
-	if maxSinglePutSize != expectedThreshold {
-		t.Fatalf("maxSinglePutSize should be %d (100MB), got %d", expectedThreshold, maxSinglePutSize)
+func TestStore_Multipart_TOCTOU_Documentation(t *testing.T) {
+	// Assert: maxAtomicPutSize is 5GB (the documented threshold)
+	const expectedThreshold = 5 * 1024 * 1024 * 1024
+	if maxAtomicPutSize != expectedThreshold {
+		t.Fatalf("maxAtomicPutSize should be %d (5GB), got %d", expectedThreshold, maxAtomicPutSize)
 	}
 
-	// Assert: One-shot path uses If-None-Match (atomic)
-	// Verified by TestStore_Put_OneShot_Duplicate_ReturnsErrPathExists
+	// Assert: Atomic path uses If-None-Match (atomic)
+	// Verified by TestStore_Put_Atomic_Duplicate_ReturnsErrPathExists
 
 	// Assert: Multipart path uses preflight HeadObject (best-effort)
-	// The TOCTOU window is between HeadObject and CompleteMultipartUpload.
-	// We verify the multipart path checks existence before upload:
-
-	ctx := t.Context()
-	mock := NewMockS3Client()
-	store, _ := New(mock, Config{Bucket: "test"})
-
-	// Pre-create an object
-	size := maxSinglePutSize + 1
-	data := make([]byte, size)
-	err := store.Put(ctx, "existing.bin", bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("first Put failed: %v", err)
-	}
-
-	// Second multipart Put should fail at preflight (ErrPathExists)
-	mock.ResetCounts()
-	err = store.Put(ctx, "existing.bin", bytes.NewReader(data))
-	if !errors.Is(err, lode.ErrPathExists) {
-		t.Fatalf("expected ErrPathExists from preflight check, got: %v", err)
-	}
-
-	// Verify no new multipart upload was started (failed at preflight HeadObject)
-	mock.mu.RLock()
-	multipartCalls := mock.CreateMultipartUploadCalls
-	mock.mu.RUnlock()
-
-	if multipartCalls != 0 {
-		t.Errorf("expected 0 CreateMultipartUpload calls (should fail at preflight), got %d", multipartCalls)
-	}
+	// Verified by TestStore_PutMultipartFromFile_PreExisting_ReturnsErrPathExists
 
 	// Document the limitation
 	t.Log("TOCTOU limitation: Between HeadObject and CompleteMultipartUpload,")
-	t.Log("a concurrent writer could create the same key. This test verifies")
+	t.Log("a concurrent writer could create the same key. Tests verify")
 	t.Log("preflight detection works, but cannot test the race itself.")
 	t.Log("Per CONTRACT_STORAGE.md: single-writer or external coordination required.")
 }

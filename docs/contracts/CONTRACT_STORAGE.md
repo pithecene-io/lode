@@ -32,16 +32,17 @@ The no-overwrite guarantee strength depends on the path used:
 
 | Path | Trigger | Detection Mechanism | Guarantee |
 |------|---------|---------------------|-----------|
-| One-shot | payload ≤ threshold | Atomic conditional write | **Atomic** — no TOCTOU |
+| Atomic | payload ≤ threshold | Conditional write | **Atomic** — no TOCTOU |
 | Multipart | payload > threshold | Preflight existence check | **Best-effort** — TOCTOU window exists |
 
-**One-Shot Path** (≤ threshold):
-- MUST use atomic conditional-create where backend supports it (e.g., S3 `If-None-Match: "*"`).
+**Atomic Path** (≤ threshold):
+- MUST use atomic conditional-create where backend supports it.
 - Duplicate writes MUST return `ErrPathExists` atomically.
 - No coordination required beyond the adapter.
+- MAY spool to temp file for memory efficiency; cleanup MUST be automatic.
 
 **Multipart Path** (> threshold):
-- Used when backend requires chunked uploads for large payloads.
+- Used when backend API limits require chunked uploads.
 - MUST perform preflight existence check before starting upload.
 - If preflight detects existing path, MUST return `ErrPathExists`.
 - **TOCTOU window**: Between preflight check and upload completion, a concurrent
@@ -52,9 +53,9 @@ The no-overwrite guarantee strength depends on the path used:
 #### Adapter Documentation Requirements
 
 Adapters MUST document:
-- The size threshold for one-shot vs multipart routing.
+- The size threshold for atomic vs multipart routing.
 - Which path provides atomic vs best-effort detection.
-- Backend-specific limitations (e.g., "S3 multipart lacks conditional completion").
+- Backend-specific limitations (e.g., maximum object size, part limits).
 
 ### Get
 - MUST return a readable stream for an existing path.
@@ -101,13 +102,13 @@ Adapters MUST document:
 
 - Adapters MUST allow data objects to be written before manifest commit.
 - Adapters MUST NOT provide any implicit commit signal outside manifest presence.
-- Safe write semantics (no overwrite) apply to streamed objects as well.
+- Safe write semantics (no overwrite) apply per Put path guarantees (see "Put Upload Paths").
 - Adapters MUST allow deletion of partial objects via `Delete` for cleanup.
 
 ### Streaming Write Atomicity
 
 For streaming writes that use the multipart/chunked path:
-- The no-overwrite guarantee depends on the Put path used (see "One-Shot vs Streaming Put").
+- The no-overwrite guarantee depends on the Put path used (see "Put Upload Paths").
 - On backends without conditional multipart completion, concurrent writers may
   create a race condition where both detect "not exists" and proceed to write.
 - Callers using streaming writes on such backends MUST ensure single-writer
