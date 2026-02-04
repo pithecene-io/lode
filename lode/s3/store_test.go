@@ -112,6 +112,66 @@ func TestStore_Put_ErrInvalidPath_Escaping(t *testing.T) {
 	}
 }
 
+func TestStore_Put_LargeFile_MultipartUpload(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Create data larger than maxSinglePutSize (5MB) to trigger multipart upload
+	// Use 6MB to ensure multipart path is taken
+	size := 6 * 1024 * 1024
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	err := store.Put(ctx, "large-file.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Put large file failed: %v", err)
+	}
+
+	// Verify the data was stored correctly
+	rc, err := store.Get(ctx, "large-file.bin")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	retrieved, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+
+	if len(retrieved) != size {
+		t.Errorf("expected %d bytes, got %d", size, len(retrieved))
+	}
+
+	// Verify content integrity
+	if !bytes.Equal(data, retrieved) {
+		t.Error("retrieved data does not match original")
+	}
+}
+
+func TestStore_Put_LargeFile_ErrPathExists(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Create data larger than maxSinglePutSize to trigger multipart upload
+	size := 6 * 1024 * 1024
+	data := make([]byte, size)
+
+	// First write should succeed
+	err := store.Put(ctx, "large-file.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("first Put failed: %v", err)
+	}
+
+	// Second write to same path should return ErrPathExists
+	err = store.Put(ctx, "large-file.bin", bytes.NewReader(data))
+	if !errors.Is(err, lode.ErrPathExists) {
+		t.Errorf("expected ErrPathExists, got: %v", err)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Get tests
 // -----------------------------------------------------------------------------
