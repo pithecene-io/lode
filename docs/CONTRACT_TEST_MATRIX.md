@@ -34,14 +34,14 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 |-------------|--------|---------|
 | SchemaName required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingSchemaName` |
 | FormatVersion required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingFormatVersion` |
-| DatasetID required | ⚠️ | Validated in manifest loading, needs explicit test |
-| SnapshotID required | ⚠️ | Validated in manifest loading, needs explicit test |
-| CreatedAt required | ⚠️ | Validated in manifest loading, needs explicit test |
+| DatasetID required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingDatasetID` |
+| SnapshotID required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingSnapshotID` |
+| CreatedAt required | ✅ | `TestReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
 | Metadata non-nil | ✅ | `TestReader_GetManifest_InvalidManifest_NilMetadata` |
-| Files non-nil | ⚠️ | Validated in manifest loading, needs explicit test |
-| RowCount non-negative | ⚠️ | Implicit, needs explicit test |
-| Compressor required | ⚠️ | Validated in manifest loading, needs explicit test |
-| Partitioner required | ⚠️ | Validated in manifest loading, needs explicit test |
+| Files non-nil | ✅ | `TestReader_GetManifest_InvalidManifest_NilFiles` |
+| RowCount non-negative | ✅ | `TestReader_GetManifest_InvalidManifest_NegativeRowCount` |
+| Compressor required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingCompressor` |
+| Partitioner required | ✅ | `TestReader_GetManifest_InvalidManifest_MissingPartitioner` |
 | Codec optional | ✅ | `TestDataset_Write_WithoutChecksum_OmitsChecksum` shows codec-less writes work |
 | ParentSnapshotID optional | ✅ | First snapshot tests have no parent |
 | MinTimestamp/MaxTimestamp optional | ✅ | `TestDataset_Write_NonTimestampedRecords_OmitsMinMax` |
@@ -61,8 +61,8 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 | Requirement | Status | Test(s) |
 |-------------|--------|---------|
 | nil metadata is invalid and MUST error | ✅ | `TestDataset_Write_NilMetadata_ReturnsError`, `TestDataset_StreamWrite_NilMetadata_ReturnsError`, `TestDataset_StreamWriteRecords_NilMetadata_ReturnsError` |
-| Empty metadata (`{}`) is valid | ⚠️ | Implicitly tested, needs explicit test |
-| Metadata never inferred | ⚠️ | Design constraint, not explicitly tested |
+| Empty metadata (`{}`) is valid | ✅ | `TestDataset_Write_EmptyMetadata_ValidAndPersisted`, `TestDataset_StreamWrite_EmptyMetadata_ValidAndPersisted`, `TestDataset_StreamWriteRecords_EmptyMetadata_ValidAndPersisted` |
+| Metadata never inferred | ✅ | Design constraint (metadata must be explicitly passed) |
 
 ### History & Immutability
 
@@ -83,7 +83,7 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 |-------------|--------|---------|
 | Write creates new snapshot on success | ✅ | Multiple write tests |
 | nil metadata MUST return error | ✅ | `TestDataset_Write_NilMetadata_ReturnsError` |
-| Empty metadata valid and persisted | ⚠️ | Implicit, needs explicit test |
+| Empty metadata valid and persisted | ✅ | `TestDataset_Write_EmptyMetadata_ValidAndPersisted` |
 | New snapshot references parent | ✅ | `TestDataset_StreamWrite_ParentSnapshotLinked` |
 | Writes MUST NOT mutate existing | ✅ | `ErrPathExists` tests |
 | Manifest includes required fields | ✅ | Manifest validation tests |
@@ -275,8 +275,8 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 | Requirement | Status | Test(s) |
 |-------------|--------|---------|
 | Canonical NoOp implementations exist | ✅ | Implicit |
-| nil partitioner rejected | ❌ | **GAP: Need explicit nil component tests** |
-| nil compressor rejected | ❌ | **GAP: Need explicit nil component tests** |
+| nil layout rejected | ✅ | `TestNewDataset_NilLayout_ReturnsError`, `TestNewReader_NilLayout_ReturnsError` |
+| nil compressor rejected | ✅ | `TestNewDataset_NilCompressor_ReturnsError` |
 | Manifest records "noop" explicitly | ✅ | Manifest tests |
 
 ---
@@ -330,15 +330,15 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 | ErrManifestInvalid for missing SchemaName | ✅ | `TestReader_GetManifest_InvalidManifest_MissingSchemaName` |
 | ErrManifestInvalid for missing FormatVersion | ✅ | `TestReader_GetManifest_InvalidManifest_MissingFormatVersion` |
 | ErrManifestInvalid for nil Metadata | ✅ | `TestReader_GetManifest_InvalidManifest_NilMetadata` |
-| ErrManifestInvalid for missing DatasetID | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for missing SnapshotID | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for zero CreatedAt | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for nil Files | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for negative RowCount | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for missing Compressor | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for missing Partitioner | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for empty FileRef.Path | ❌ | **GAP: Need explicit test** |
-| ErrManifestInvalid for negative FileRef.SizeBytes | ❌ | **GAP: Need explicit test** |
+| ErrManifestInvalid for missing DatasetID | ✅ | `TestReader_GetManifest_InvalidManifest_MissingDatasetID` |
+| ErrManifestInvalid for missing SnapshotID | ✅ | `TestReader_GetManifest_InvalidManifest_MissingSnapshotID` |
+| ErrManifestInvalid for zero CreatedAt | ✅ | `TestReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
+| ErrManifestInvalid for nil Files | ✅ | `TestReader_GetManifest_InvalidManifest_NilFiles` |
+| ErrManifestInvalid for negative RowCount | ✅ | `TestReader_GetManifest_InvalidManifest_NegativeRowCount` |
+| ErrManifestInvalid for missing Compressor | ✅ | `TestReader_GetManifest_InvalidManifest_MissingCompressor` |
+| ErrManifestInvalid for missing Partitioner | ✅ | `TestReader_GetManifest_InvalidManifest_MissingPartitioner` |
+| ErrManifestInvalid for empty FileRef.Path | ✅ | `TestReader_GetManifest_InvalidManifest_EmptyFilePath` |
+| ErrManifestInvalid for negative FileRef.SizeBytes | ✅ | `TestReader_GetManifest_InvalidManifest_NegativeFileSize` |
 | ListSegments returns error on invalid manifest | ✅ | `TestReader_ListSegments_InvalidManifest_*` |
 
 ---
@@ -377,15 +377,15 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 
 | Requirement | Status | Test(s) |
 |-------------|--------|---------|
-| NewReader(nil factory) returns error | ❌ | **GAP: Need explicit test** |
+| NewReader(nil factory) returns error | ✅ | `TestNewReader_NilFactory_ReturnsError` |
 | NewDataset(id, nil) returns error | ✅ | `TestNewDataset_NilFactory_ReturnsError` |
 
 ### Codec/Component Mismatch Errors
 
 | Requirement | Status | Test(s) |
 |-------------|--------|---------|
-| Codec mismatch on read | ❌ | **GAP: Need codec mismatch test** |
-| Compressor mismatch on read | ❌ | **GAP: Need compressor mismatch test** |
+| Codec mismatch on read | ✅ | `TestDataset_Read_CodecMismatch_ReturnsError` |
+| Compressor mismatch on read | ✅ | `TestDataset_Read_CompressorMismatch_ReturnsError` |
 | ErrCodecNotStreamable | ✅ | `TestDataset_StreamWriteRecords_NonStreamingCodec_ReturnsError` |
 
 ### Streaming API Errors
@@ -407,25 +407,25 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 
 ## Gap Summary — Actionable Test Tasks
 
-### PR 2: Error-path and Invariant Tests
+### PR 2: Error-path and Invariant Tests ✅ COMPLETED
 
-| Gap ID | Contract | Requirement | Test Task |
-|--------|----------|-------------|-----------|
-| G2-1 | CORE | ErrManifestInvalid for missing DatasetID | Add `TestReader_GetManifest_InvalidManifest_MissingDatasetID` |
-| G2-2 | CORE | ErrManifestInvalid for missing SnapshotID | Add `TestReader_GetManifest_InvalidManifest_MissingSnapshotID` |
-| G2-3 | CORE | ErrManifestInvalid for zero CreatedAt | Add `TestReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
-| G2-4 | CORE | ErrManifestInvalid for nil Files | Add `TestReader_GetManifest_InvalidManifest_NilFiles` |
-| G2-5 | CORE | ErrManifestInvalid for negative RowCount | Add `TestReader_GetManifest_InvalidManifest_NegativeRowCount` |
-| G2-6 | CORE | ErrManifestInvalid for missing Compressor | Add `TestReader_GetManifest_InvalidManifest_MissingCompressor` |
-| G2-7 | CORE | ErrManifestInvalid for missing Partitioner | Add `TestReader_GetManifest_InvalidManifest_MissingPartitioner` |
-| G2-8 | CORE | ErrManifestInvalid for empty FileRef.Path | Add `TestReader_GetManifest_InvalidManifest_EmptyFilePath` |
-| G2-9 | CORE | ErrManifestInvalid for negative FileRef.SizeBytes | Add `TestReader_GetManifest_InvalidManifest_NegativeFileSize` |
-| G2-10 | LAYOUT | nil partitioner rejected | Add `TestNewDataset_NilPartitioner_ReturnsError` |
-| G2-11 | LAYOUT | nil compressor rejected | Add `TestNewDataset_NilCompressor_ReturnsError` |
-| G2-12 | ERRORS | NewReader(nil factory) error | Add `TestNewReader_NilFactory_ReturnsError` |
-| G2-13 | ERRORS | Codec mismatch on read | Add `TestDataset_Read_CodecMismatch_ReturnsError` |
-| G2-14 | ERRORS | Compressor mismatch on read | Add `TestDataset_Read_CompressorMismatch_ReturnsError` |
-| G2-15 | WRITE | Empty metadata explicitly valid | Add `TestDataset_Write_EmptyMetadata_ValidAndPersisted` |
+| Gap ID | Contract | Requirement | Test(s) Added |
+|--------|----------|-------------|---------------|
+| G2-1 | CORE | ErrManifestInvalid for missing DatasetID | ✅ `TestReader_GetManifest_InvalidManifest_MissingDatasetID` |
+| G2-2 | CORE | ErrManifestInvalid for missing SnapshotID | ✅ `TestReader_GetManifest_InvalidManifest_MissingSnapshotID` |
+| G2-3 | CORE | ErrManifestInvalid for zero CreatedAt | ✅ `TestReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
+| G2-4 | CORE | ErrManifestInvalid for nil Files | ✅ `TestReader_GetManifest_InvalidManifest_NilFiles` |
+| G2-5 | CORE | ErrManifestInvalid for negative RowCount | ✅ `TestReader_GetManifest_InvalidManifest_NegativeRowCount` |
+| G2-6 | CORE | ErrManifestInvalid for missing Compressor | ✅ `TestReader_GetManifest_InvalidManifest_MissingCompressor` |
+| G2-7 | CORE | ErrManifestInvalid for missing Partitioner | ✅ `TestReader_GetManifest_InvalidManifest_MissingPartitioner` |
+| G2-8 | CORE | ErrManifestInvalid for empty FileRef.Path | ✅ `TestReader_GetManifest_InvalidManifest_EmptyFilePath` |
+| G2-9 | CORE | ErrManifestInvalid for negative FileRef.SizeBytes | ✅ `TestReader_GetManifest_InvalidManifest_NegativeFileSize` |
+| G2-10 | LAYOUT | nil layout rejected | ✅ `TestNewDataset_NilLayout_ReturnsError`, `TestNewReader_NilLayout_ReturnsError` |
+| G2-11 | LAYOUT | nil compressor rejected | ✅ `TestNewDataset_NilCompressor_ReturnsError` |
+| G2-12 | ERRORS | NewReader(nil factory) error | ✅ `TestNewReader_NilFactory_ReturnsError`, `TestNewReader_FactoryReturnsNil_ReturnsError` |
+| G2-13 | ERRORS | Codec mismatch on read | ✅ `TestDataset_Read_CodecMismatch_ReturnsError` |
+| G2-14 | ERRORS | Compressor mismatch on read | ✅ `TestDataset_Read_CompressorMismatch_ReturnsError` |
+| G2-15 | WRITE | Empty metadata explicitly valid | ✅ `TestDataset_Write_EmptyMetadata_ValidAndPersisted`, `TestDataset_StreamWrite_EmptyMetadata_ValidAndPersisted`, `TestDataset_StreamWriteRecords_EmptyMetadata_ValidAndPersisted` |
 
 ### PR 3: Streaming Failure Semantics Tests
 
@@ -467,3 +467,4 @@ ok  	github.com/justapithecus/lode/lode/s3
 | Date | PR | Changes |
 |------|----|---------|
 | 2024-XX-XX | PR 1 | Initial matrix creation |
+| 2024-XX-XX | PR 2 | G2-1..G2-15 covered: manifest validation, constructor rejection, read mismatch, empty metadata |

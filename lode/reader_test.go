@@ -101,6 +101,274 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 	}
 }
 
+func TestReader_GetManifest_InvalidManifest_MissingDatasetID(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		// DatasetID missing
+		SnapshotID:  "snap-1",
+		CreatedAt:   time.Now().UTC(),
+		Metadata:    Metadata{},
+		Files:       []FileRef{},
+		RowCount:    0,
+		Compressor:  "noop",
+		Partitioner: "noop",
+	}
+	// Manually write with a path that includes dataset ID
+	data, _ := json.Marshal(manifest)
+	_ = store.Put(ctx, "datasets/test-ds/snapshots/snap-1/manifest.json", bytes.NewReader(data))
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_MissingSnapshotID(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		// SnapshotID missing
+		CreatedAt:   time.Now().UTC(),
+		Metadata:    Metadata{},
+		Files:       []FileRef{},
+		RowCount:    0,
+		Compressor:  "noop",
+		Partitioner: "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Use empty SegmentRef since manifest has no ID
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: ""})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_ZeroCreatedAt(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		// CreatedAt zero value (not set)
+		Metadata:    Metadata{},
+		Files:       []FileRef{},
+		RowCount:    0,
+		Compressor:  "noop",
+		Partitioner: "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_NilFiles(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files:         nil, // nil not allowed (use empty slice)
+		RowCount:      0,
+		Compressor:    "noop",
+		Partitioner:   "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_NegativeRowCount(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files:         []FileRef{},
+		RowCount:      -1, // negative not allowed
+		Compressor:    "noop",
+		Partitioner:   "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_MissingCompressor(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files:         []FileRef{},
+		RowCount:      0,
+		// Compressor missing
+		Partitioner: "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_MissingPartitioner(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files:         []FileRef{},
+		RowCount:      0,
+		Compressor:    "noop",
+		// Partitioner missing
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_EmptyFilePath(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files: []FileRef{
+			{Path: "", SizeBytes: 100}, // empty path not allowed
+		},
+		RowCount:    1,
+		Compressor:  "noop",
+		Partitioner: "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
+func TestReader_GetManifest_InvalidManifest_NegativeFileSize(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemory()
+
+	manifest := &Manifest{
+		SchemaName:    "lode-manifest",
+		FormatVersion: "1.0.0",
+		DatasetID:     "test-ds",
+		SnapshotID:    "snap-1",
+		CreatedAt:     time.Now().UTC(),
+		Metadata:      Metadata{},
+		Files: []FileRef{
+			{Path: "data/file.bin", SizeBytes: -100}, // negative size not allowed
+		},
+		RowCount:    1,
+		Compressor:  "noop",
+		Partitioner: "noop",
+	}
+	writeManifest(ctx, t, store, manifest)
+
+	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	if !errors.Is(err, ErrManifestInvalid) {
+		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	}
+}
+
 func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()

@@ -117,6 +117,216 @@ func TestNewDataset_FactoryReturnsNil_ReturnsError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// G2-10, G2-11: Nil component rejection tests
+// -----------------------------------------------------------------------------
+
+func TestNewDataset_NilLayout_ReturnsError(t *testing.T) {
+	_, err := NewDataset("test-ds", NewMemoryFactory(), WithLayout(nil))
+	if err == nil {
+		t.Fatal("expected error for nil layout, got nil")
+	}
+	if !strings.Contains(err.Error(), "layout must not be nil") {
+		t.Errorf("expected 'layout must not be nil' error, got: %v", err)
+	}
+}
+
+func TestNewDataset_NilCompressor_ReturnsError(t *testing.T) {
+	_, err := NewDataset("test-ds", NewMemoryFactory(), WithCompressor(nil))
+	if err == nil {
+		t.Fatal("expected error for nil compressor, got nil")
+	}
+	if !strings.Contains(err.Error(), "compressor must not be nil") {
+		t.Errorf("expected 'compressor must not be nil' error, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// G2-12: NewReader nil factory rejection
+// -----------------------------------------------------------------------------
+
+func TestNewReader_NilFactory_ReturnsError(t *testing.T) {
+	_, err := NewReader(nil)
+	if err == nil {
+		t.Fatal("expected error for nil factory, got nil")
+	}
+	if !strings.Contains(err.Error(), "store factory is required") {
+		t.Errorf("expected 'store factory is required' error, got: %v", err)
+	}
+}
+
+func TestNewReader_FactoryReturnsNil_ReturnsError(t *testing.T) {
+	nilFactory := func() (Store, error) {
+		return nil, nil //nolint:nilnil // intentionally testing nil store with nil error
+	}
+
+	_, err := NewReader(nilFactory)
+	if err == nil {
+		t.Fatal("expected error for factory returning nil, got nil")
+	}
+	if !strings.Contains(err.Error(), "returned nil store") {
+		t.Errorf("expected 'returned nil store' error, got: %v", err)
+	}
+}
+
+func TestNewReader_NilLayout_ReturnsError(t *testing.T) {
+	_, err := NewReader(NewMemoryFactory(), WithLayout(nil))
+	if err == nil {
+		t.Fatal("expected error for nil layout, got nil")
+	}
+	if !strings.Contains(err.Error(), "layout must not be nil") {
+		t.Errorf("expected 'layout must not be nil' error, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// G2-13, G2-14: Codec/compressor mismatch on read
+// -----------------------------------------------------------------------------
+
+func TestDataset_Read_CodecMismatch_ReturnsError(t *testing.T) {
+	store := NewMemory()
+
+	// Write with JSONL codec
+	dsWrite, err := NewDataset("test-ds", NewMemoryFactoryFrom(store), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := dsWrite.Write(t.Context(), []any{D{"id": "1"}}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to read with no codec (raw blob mode)
+	dsRead, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = dsRead.Read(t.Context(), snap.ID)
+	if err == nil {
+		t.Fatal("expected error for codec mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "codec mismatch") {
+		t.Errorf("expected 'codec mismatch' error, got: %v", err)
+	}
+}
+
+func TestDataset_Read_CompressorMismatch_ReturnsError(t *testing.T) {
+	store := NewMemory()
+
+	// Write with gzip compression
+	dsWrite, err := NewDataset("test-ds", NewMemoryFactoryFrom(store), WithCompressor(NewGzipCompressor()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := dsWrite.Write(t.Context(), []any{[]byte("data")}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to read with no compression (noop)
+	dsRead, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = dsRead.Read(t.Context(), snap.ID)
+	if err == nil {
+		t.Fatal("expected error for compressor mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "compressor mismatch") {
+		t.Errorf("expected 'compressor mismatch' error, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// G2-15: Empty metadata explicitly valid and persisted
+// -----------------------------------------------------------------------------
+
+func TestDataset_Write_EmptyMetadata_ValidAndPersisted(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write with explicitly empty metadata (not nil)
+	snap, err := ds.Write(t.Context(), []any{[]byte("data")}, Metadata{})
+	if err != nil {
+		t.Fatalf("expected empty metadata to be valid, got error: %v", err)
+	}
+
+	// Verify metadata is persisted as empty object, not nil
+	if snap.Manifest.Metadata == nil {
+		t.Fatal("expected metadata to be non-nil empty map, got nil")
+	}
+	if len(snap.Manifest.Metadata) != 0 {
+		t.Errorf("expected empty metadata, got %d keys", len(snap.Manifest.Metadata))
+	}
+
+	// Verify we can read it back and metadata is preserved
+	retrieved, err := ds.Snapshot(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("failed to retrieve snapshot: %v", err)
+	}
+	if retrieved.Manifest.Metadata == nil {
+		t.Fatal("retrieved metadata should be non-nil empty map, got nil")
+	}
+	if len(retrieved.Manifest.Metadata) != 0 {
+		t.Errorf("retrieved metadata should be empty, got %d keys", len(retrieved.Manifest.Metadata))
+	}
+}
+
+func TestDataset_StreamWrite_EmptyMetadata_ValidAndPersisted(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatalf("expected empty metadata to be valid, got error: %v", err)
+	}
+
+	_, err = sw.Write([]byte("streaming data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := sw.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify metadata is persisted as empty object
+	if snap.Manifest.Metadata == nil {
+		t.Fatal("expected metadata to be non-nil empty map, got nil")
+	}
+	if len(snap.Manifest.Metadata) != 0 {
+		t.Errorf("expected empty metadata, got %d keys", len(snap.Manifest.Metadata))
+	}
+}
+
+func TestDataset_StreamWriteRecords_EmptyMetadata_ValidAndPersisted(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iter := &sliceIterator{records: []any{D{"id": "1"}}}
+	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	if err != nil {
+		t.Fatalf("expected empty metadata to be valid, got error: %v", err)
+	}
+
+	// Verify metadata is persisted as empty object
+	if snap.Manifest.Metadata == nil {
+		t.Fatal("expected metadata to be non-nil empty map, got nil")
+	}
+	if len(snap.Manifest.Metadata) != 0 {
+		t.Errorf("expected empty metadata, got %d keys", len(snap.Manifest.Metadata))
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Option validation tests
 // -----------------------------------------------------------------------------
 
