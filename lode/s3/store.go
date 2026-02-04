@@ -216,7 +216,8 @@ func (s *Store) putMultipart(ctx context.Context, fullKey string, firstChunk []b
 	var completedParts []types.CompletedPart
 
 	// Helper to abort on error. Uses background context to ensure cleanup
-	// even if the original context was canceled.
+	// even if the original context was canceled (per CONTRACT_STORAGE.md).
+	//nolint:contextcheck // Intentionally uses background context for cleanup resilience
 	abortUpload := func() {
 		abortCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
