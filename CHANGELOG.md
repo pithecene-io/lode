@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Limitations
 
-- G3-4: Context cancellation cleanup behavior is nondeterministic; documented as residual risk
+- N/A
 
 ### Upgrade Notes
 
@@ -36,6 +36,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### References
 
 - [PUBLIC_API.md](PUBLIC_API.md) — User-facing API documentation
+- [docs/contracts/](docs/contracts/) — Normative contract specifications
+
+---
+
+## [0.3.0-rc.1] - 2026-02-04
+
+### Added
+
+- **README Quick Start**: 5-minute guide with blob, records, and streaming examples
+- **Write API Decision Table**: Clear guidance for choosing Write/StreamWrite/StreamWriteRecords
+- **Guarantees Table**: Explicit commitments vs non-goals in README
+- **Gotchas Section**: Common pitfalls documented in README
+- **Examples Index**: One-line purpose + run commands for all examples
+- **Option Applicability Matrix**: Dataset vs Reader option compatibility in PUBLIC_API.md
+- **Sentinel Error Table**: Complete error reference with `errors.Is()` guidance
+- **Streaming Constraints Table**: Clear codec/partitioning rules for streaming APIs
+- **Contract Cross-Links**: All PUBLIC_API.md claims now traceable to contracts
+- **Streaming Failure Tests**: G3-1..G3-3 hardening tests for commit/abort/error semantics
+
+### Changed
+
+- **CHANGELOG Format**: Adopted Keep a Changelog structured format
+- **PUBLIC_API.md**: Reorganized with Safety Guarantees section and error handling guidelines
+
+### Fixed
+
+- N/A
+
+### Breaking Changes
+
+- None
+
+### Known Limitations
+
+- **G3-4 (Residual Risk)**: Context cancellation cleanup behavior is nondeterministic due to
+  timing characteristics of storage adapters. Deterministic abort paths are tested; context
+  cancellation semantics documented as best-effort. See `docs/CONTRACT_TEST_MATRIX.md` for details.
+
+### Upgrade Notes
+
+- No API changes; documentation and test coverage improvements only
+- Safe to upgrade from v0.2.0
+
+### References
+
+- [PUBLIC_API.md](PUBLIC_API.md) — Enhanced with option matrix and error guidance
+- [docs/CONTRACT_TEST_MATRIX.md](docs/CONTRACT_TEST_MATRIX.md) — Test coverage traceability
 - [docs/contracts/](docs/contracts/) — Normative contract specifications
 
 ---
@@ -128,6 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/justapithecus/lode/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/justapithecus/lode/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/justapithecus/lode/compare/v0.2.0...v0.3.0-rc.1
 [0.2.0]: https://github.com/justapithecus/lode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/justapithecus/lode/releases/tag/v0.1.0
