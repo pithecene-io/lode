@@ -206,7 +206,7 @@ codec does not support streaming, `StreamWriteRecords` returns an error.
 - `StreamWrite` is only valid when no codec is configured; otherwise it returns an error.
 - `StreamWriteRecords` requires a streaming-capable codec; otherwise it returns an error.
 - `StreamWriteRecords` does not support partitioning (single-pass streaming cannot partition).
-- Aborted streams leave no snapshot; partial objects may remain and require cleanup.
+- Aborted streams leave no snapshot; partial objects may remain (see "Safety Guarantees").
 
 ---
 
@@ -215,6 +215,63 @@ codec does not support streaming, `StreamWriteRecords` returns an error.
 - Use `Write` for in-memory data, partitioned data, or codecs that do not support streaming.
 - Use `StreamWrite` for large binary payloads that should be streamed once (no codec).
 - Use `StreamWriteRecords` for large record streams with streaming-capable codecs (no partitioning).
+
+---
+
+## Safety Guarantees
+
+### Commit Semantics
+
+**Manifest presence is the commit signal.**
+
+A snapshot becomes visible only after its manifest is successfully written to storage.
+Data files may exist before the manifest, but they are not discoverable until the
+manifest references them.
+
+- `StreamWriter.Commit()` writes the manifest; the snapshot is invisible until then.
+- `StreamWriter.Abort()` or `Close()` without `Commit()` ensures no manifest is written.
+- On error during streaming, no manifest is written (the write never "happened").
+
+### Single-Writer Requirement
+
+**Lode does not implement concurrent multi-writer conflict resolution.**
+
+Callers MUST ensure at most one writer is active per dataset at any time.
+Concurrent writes from multiple processes may produce inconsistent history
+(e.g., two snapshots with the same parent).
+
+External coordination (locks, queues, leader election) is the caller's responsibility.
+
+### Large Upload Caveats (TOCTOU)
+
+For uploads exceeding the storage adapter's atomic threshold (e.g., 5GB for S3),
+the no-overwrite guarantee weakens:
+
+1. Adapter performs preflight existence check → "not exists"
+2. Another writer creates the same path
+3. This writer's upload completes and may overwrite
+
+This TOCTOU (time-of-check-to-time-of-use) window cannot be closed without
+conditional multipart completion (which S3 does not support).
+
+**To preserve the no-overwrite guarantee on large uploads:**
+- Ensure single-writer semantics per object path, OR
+- Use external coordination (distributed locks, etc.)
+
+Small uploads (≤ threshold) use atomic conditional writes with no TOCTOU window.
+
+### Cleanup Behavior
+
+**Cleanup of partial objects is best-effort, not guaranteed.**
+
+On abort or error before commit:
+- No manifest is written (the snapshot does not exist).
+- Partial data objects may remain in storage.
+- Callers should not rely on automatic cleanup of partial objects.
+- Cleanup uses an independent context to maximize success even if the caller's
+  context was canceled.
+
+Failure to delete a partial object does not create a snapshot.
 
 ---
 

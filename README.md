@@ -39,8 +39,10 @@ Lode is built around a small set of invariants:
 - **Writes produce snapshots**
 - **Snapshots reference manifests**
 - **Manifests describe data files and metadata**
+- **Manifest presence is the commit signal** — a snapshot is visible only after its manifest is persisted
 - **Metadata is explicit, persisted, and self-describing (never inferred)**
 - **Storage, format, compression, and partitioning are orthogonal**
+- **Single-writer semantics required** — Lode does not resolve concurrent writer conflicts
 
 If you know the snapshot ID, you know exactly what data you are reading.
 
