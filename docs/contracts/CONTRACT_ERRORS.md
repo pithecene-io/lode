@@ -151,11 +151,15 @@ These indicate invalid use of streaming write APIs.
 | Error | Source | Meaning |
 |-------|--------|---------|
 | `lode.ErrCodecConfigured` | Dataset.StreamWrite | StreamWrite called with a codec configured |
+| `lode.ErrNilIterator` | Dataset.StreamWriteRecords | Nil record iterator passed |
+| `lode.ErrPartitioningNotSupported` | Dataset.StreamWriteRecords | StreamWriteRecords called with non-noop partitioner |
 
 **Behavior**:
 - `StreamWrite` is for raw binary payloads only; it returns `ErrCodecConfigured` if a codec is set.
 - Use `StreamWriteRecords` for structured data with streaming codecs.
 - Use `Write` for structured data with non-streaming codecs.
+- `StreamWriteRecords` returns `ErrNilIterator` when the iterator argument is nil.
+- `StreamWriteRecords` returns `ErrPartitioningNotSupported` when partitioning is configured.
 
 **Cleanup on Error**:
 - On abort or error before commit, no manifest is written.
@@ -178,7 +182,8 @@ These indicate invalid use of streaming write APIs.
 - Component mismatch — reconfigure dataset or use matching snapshot.
 
 ### Fatal Errors
-- Nil store/layout panics — programming error.
+- No fatal panics are part of the public contract; invalid configuration and
+  invalid API usage MUST return errors.
 
 ---
 

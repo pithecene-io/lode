@@ -365,6 +365,12 @@ var (
 
 	// ErrCodecNotStreamable indicates the configured codec does not support streaming.
 	ErrCodecNotStreamable = errCodecNotStreamable{}
+
+	// ErrNilIterator indicates a nil iterator was passed to StreamWriteRecords.
+	ErrNilIterator = errNilIterator{}
+
+	// ErrPartitioningNotSupported indicates StreamWriteRecords was called with partitioning configured.
+	ErrPartitioningNotSupported = errPartitioningNotSupported{}
 )
 
 type errNotFound struct{}
@@ -396,6 +402,16 @@ func (errCodecConfigured) Error() string {
 type errCodecNotStreamable struct{}
 
 func (errCodecNotStreamable) Error() string { return "codec does not support streaming" }
+
+type errNilIterator struct{}
+
+func (errNilIterator) Error() string { return "records iterator must be non-nil" }
+
+type errPartitioningNotSupported struct{}
+
+func (errPartitioningNotSupported) Error() string {
+	return "StreamWriteRecords does not support partitioning; use Write for partitioned data"
+}
 
 // -----------------------------------------------------------------------------
 // Reader interface

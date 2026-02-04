@@ -120,7 +120,7 @@ Manifests are immutable and authoritative.
 ### Minimum required fields
 
 - schema name + version
-- list of files with sizes and checksums
+- list of files with sizes and checksums (when configured)
 - row/event counts (total data units in snapshot)
 - min/max timestamp (when data units are timestamped; omit if not applicable)
 - references to sidecar indexes (optional)

@@ -121,6 +121,13 @@ Implementations MUST use the following error sentinels where applicable:
 - `ErrNoSnapshots` for empty history
 - `ErrNotFound` for missing snapshot ID
 - `ErrPathExists` when attempting to write to an existing path
+- `ErrCodecConfigured` when `StreamWrite` is called with a configured codec
+- `ErrCodecNotStreamable` when `StreamWriteRecords` codec lacks streaming support
+- `ErrNilIterator` when `StreamWriteRecords` is called with a nil iterator
+- `ErrPartitioningNotSupported` when `StreamWriteRecords` is used with non-noop partitioning
+
+Streaming-specific error taxonomy and handling guidance are defined in
+`CONTRACT_ERRORS.md`.
 
 ---
 

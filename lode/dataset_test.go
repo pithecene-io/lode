@@ -755,8 +755,8 @@ func TestDataset_StreamWriteRecords_NilIterator_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil iterator, got nil")
 	}
-	if !strings.Contains(err.Error(), "iterator must be non-nil") {
-		t.Errorf("expected iterator error, got: %v", err)
+	if !errors.Is(err, ErrNilIterator) {
+		t.Errorf("expected ErrNilIterator, got: %v", err)
 	}
 }
 
@@ -774,8 +774,8 @@ func TestDataset_StreamWriteRecords_WithPartitioner_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for partitioning, got nil")
 	}
-	if !strings.Contains(err.Error(), "does not support partitioning") {
-		t.Errorf("expected partitioning error, got: %v", err)
+	if !errors.Is(err, ErrPartitioningNotSupported) {
+		t.Errorf("expected ErrPartitioningNotSupported, got: %v", err)
 	}
 }
 
