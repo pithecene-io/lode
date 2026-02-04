@@ -112,6 +112,24 @@ Lode does not implement concurrent multi-writer conflict resolution.
 Lode guarantees safety within a single writer but does not detect or resolve
 conflicts between multiple concurrent writers.
 
+### Storage-Level Concurrency for Streaming Writes
+
+Streaming writes (`StreamWrite`, `StreamWriteRecords`) that produce large payloads
+may use the storage adapter's multipart/chunked upload path. On backends without
+conditional multipart completion (e.g., S3), this path has a TOCTOU window:
+
+1. Preflight existence check returns "not exists"
+2. Another writer creates the same path
+3. This writer's upload completes and overwrites
+
+**To preserve the no-overwrite guarantee on such backends:**
+- Callers MUST ensure single-writer semantics per object path, OR
+- Callers MUST use external coordination (distributed locks, queues, etc.)
+
+The storage adapter's one-shot path (for small payloads) provides atomic
+no-overwrite protection where the backend supports conditional writes.
+See `CONTRACT_STORAGE.md` for adapter-specific thresholds and guarantees.
+
 ---
 
 ## Error Semantics

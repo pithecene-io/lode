@@ -113,6 +113,310 @@ func TestStore_Put_ErrInvalidPath_Escaping(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// Put routing boundary tests (per CONTRACT_STORAGE.md)
+//
+// Threshold: maxSinglePutSize = 100MB
+// - size ≤ threshold: one-shot path (PutObject with If-None-Match)
+// - size > threshold: multipart path (preflight HeadObject + multipart upload)
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_Routing_AtThresholdMinusOne_UsesOneShot(t *testing.T) {
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// threshold - 1 byte should use one-shot path
+	size := maxSinglePutSize - 1
+	data := make([]byte, size)
+
+	err := store.Put(ctx, "at-threshold-minus-one.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Verify one-shot path was taken (PutObject called, no multipart)
+	mock.mu.RLock()
+	putCalls := mock.PutObjectCalls
+	multipartCalls := mock.CreateMultipartUploadCalls
+	stored := mock.objects["at-threshold-minus-one.bin"]
+	mock.mu.RUnlock()
+
+	if putCalls != 1 {
+		t.Errorf("expected 1 PutObject call (one-shot), got %d", putCalls)
+	}
+	if multipartCalls != 0 {
+		t.Errorf("expected 0 CreateMultipartUpload calls, got %d", multipartCalls)
+	}
+	if len(stored) != size {
+		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
+	}
+}
+
+func TestStore_Put_Routing_AtThreshold_UsesOneShot(t *testing.T) {
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Exactly at threshold should use one-shot path
+	size := maxSinglePutSize
+	data := make([]byte, size)
+
+	err := store.Put(ctx, "at-threshold.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Verify one-shot path was taken
+	mock.mu.RLock()
+	putCalls := mock.PutObjectCalls
+	multipartCalls := mock.CreateMultipartUploadCalls
+	stored := mock.objects["at-threshold.bin"]
+	mock.mu.RUnlock()
+
+	if putCalls != 1 {
+		t.Errorf("expected 1 PutObject call (one-shot), got %d", putCalls)
+	}
+	if multipartCalls != 0 {
+		t.Errorf("expected 0 CreateMultipartUpload calls, got %d", multipartCalls)
+	}
+	if len(stored) != size {
+		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
+	}
+}
+
+func TestStore_Put_Routing_AtThresholdPlusOne_UsesMultipart(t *testing.T) {
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// threshold + 1 byte should use multipart path
+	size := maxSinglePutSize + 1
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	err := store.Put(ctx, "at-threshold-plus-one.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Verify multipart path was taken (no PutObject, CreateMultipartUpload called)
+	mock.mu.RLock()
+	putCalls := mock.PutObjectCalls
+	multipartCalls := mock.CreateMultipartUploadCalls
+	stored := mock.objects["at-threshold-plus-one.bin"]
+	mock.mu.RUnlock()
+
+	if putCalls != 0 {
+		t.Errorf("expected 0 PutObject calls (multipart path), got %d", putCalls)
+	}
+	if multipartCalls != 1 {
+		t.Errorf("expected 1 CreateMultipartUpload call, got %d", multipartCalls)
+	}
+	if len(stored) != size {
+		t.Errorf("expected %d bytes stored, got %d", size, len(stored))
+	}
+	if !bytes.Equal(data, stored) {
+		t.Error("stored data does not match original")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Put duplicate behavior tests (per CONTRACT_STORAGE.md)
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_OneShot_Duplicate_ReturnsErrPathExists(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Small file uses one-shot path with If-None-Match
+	data := []byte("hello")
+
+	// First write should succeed
+	err := store.Put(ctx, "oneshot-dup.txt", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("first Put failed: %v", err)
+	}
+
+	// Second write should return ErrPathExists (atomic detection via PreconditionFailed)
+	err = store.Put(ctx, "oneshot-dup.txt", bytes.NewReader(data))
+	if !errors.Is(err, lode.ErrPathExists) {
+		t.Errorf("expected ErrPathExists, got: %v", err)
+	}
+}
+
+func TestStore_Put_Multipart_PreExisting_ReturnsErrPathExists(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Large file uses multipart path with preflight check
+	size := maxSinglePutSize + 1
+	data := make([]byte, size)
+
+	// First write should succeed
+	err := store.Put(ctx, "multipart-dup.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("first Put failed: %v", err)
+	}
+
+	// Second write should return ErrPathExists (detected at preflight HeadObject)
+	err = store.Put(ctx, "multipart-dup.bin", bytes.NewReader(data))
+	if !errors.Is(err, lode.ErrPathExists) {
+		t.Errorf("expected ErrPathExists, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Put multipart content integrity test
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_Multipart_ContentIntegrity(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	// Create data larger than threshold with known pattern
+	size := maxSinglePutSize + (5 * 1024 * 1024) // threshold + 5MB
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	err := store.Put(ctx, "large-file.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Put large file failed: %v", err)
+	}
+
+	// Verify the data was stored correctly
+	rc, err := store.Get(ctx, "large-file.bin")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	retrieved, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+
+	if len(retrieved) != size {
+		t.Errorf("expected %d bytes, got %d", size, len(retrieved))
+	}
+
+	if !bytes.Equal(data, retrieved) {
+		t.Error("retrieved data does not match original")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Multipart abort cleanup test
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
+	// Verify that when multipart upload fails, AbortMultipartUpload is called.
+	// This tests the actual abort path, not just successful completion.
+
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Configure mock to fail on second part upload (first part succeeds, then fails)
+	mock.UploadPartFailOnCall = 2
+
+	// Create data that requires multiple parts (threshold + 10MB to ensure multiple chunks)
+	size := maxSinglePutSize + (10 * 1024 * 1024)
+	data := make([]byte, size)
+
+	// Put should fail due to simulated UploadPart failure
+	err := store.Put(ctx, "will-fail.bin", bytes.NewReader(data))
+	if err == nil {
+		t.Fatal("expected Put to fail due to simulated UploadPart error")
+	}
+
+	// Verify abort was called
+	mock.mu.RLock()
+	abortCalls := mock.AbortMultipartUploadCalls
+	createCalls := mock.CreateMultipartUploadCalls
+	numUploads := len(mock.uploads)
+	mock.mu.RUnlock()
+
+	if createCalls != 1 {
+		t.Errorf("expected 1 CreateMultipartUpload call, got %d", createCalls)
+	}
+	if abortCalls != 1 {
+		t.Errorf("expected 1 AbortMultipartUpload call (cleanup), got %d", abortCalls)
+	}
+	if numUploads != 0 {
+		t.Errorf("expected 0 in-progress uploads after abort, got %d", numUploads)
+	}
+
+	// Verify object was not created
+	mock.mu.RLock()
+	_, exists := mock.objects["will-fail.bin"]
+	mock.mu.RUnlock()
+	if exists {
+		t.Error("object should not exist after failed upload")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Multipart TOCTOU documentation test
+//
+// This test documents and asserts the known limitation: multipart path has a
+// TOCTOU window. Per CONTRACT_STORAGE.md, this is expected behavior and
+// single-writer or external coordination is required.
+// -----------------------------------------------------------------------------
+
+func TestStore_Put_Multipart_TOCTOU_Limitation(t *testing.T) {
+	// Assert: maxSinglePutSize is 100MB (the documented threshold)
+	const expectedThreshold = 100 * 1024 * 1024
+	if maxSinglePutSize != expectedThreshold {
+		t.Fatalf("maxSinglePutSize should be %d (100MB), got %d", expectedThreshold, maxSinglePutSize)
+	}
+
+	// Assert: One-shot path uses If-None-Match (atomic)
+	// Verified by TestStore_Put_OneShot_Duplicate_ReturnsErrPathExists
+
+	// Assert: Multipart path uses preflight HeadObject (best-effort)
+	// The TOCTOU window is between HeadObject and CompleteMultipartUpload.
+	// We verify the multipart path checks existence before upload:
+
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Pre-create an object
+	size := maxSinglePutSize + 1
+	data := make([]byte, size)
+	err := store.Put(ctx, "existing.bin", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("first Put failed: %v", err)
+	}
+
+	// Second multipart Put should fail at preflight (ErrPathExists)
+	mock.ResetCounts()
+	err = store.Put(ctx, "existing.bin", bytes.NewReader(data))
+	if !errors.Is(err, lode.ErrPathExists) {
+		t.Fatalf("expected ErrPathExists from preflight check, got: %v", err)
+	}
+
+	// Verify no new multipart upload was started (failed at preflight HeadObject)
+	mock.mu.RLock()
+	multipartCalls := mock.CreateMultipartUploadCalls
+	mock.mu.RUnlock()
+
+	if multipartCalls != 0 {
+		t.Errorf("expected 0 CreateMultipartUpload calls (should fail at preflight), got %d", multipartCalls)
+	}
+
+	// Document the limitation
+	t.Log("TOCTOU limitation: Between HeadObject and CompleteMultipartUpload,")
+	t.Log("a concurrent writer could create the same key. This test verifies")
+	t.Log("preflight detection works, but cannot test the race itself.")
+	t.Log("Per CONTRACT_STORAGE.md: single-writer or external coordination required.")
+}
+
+// -----------------------------------------------------------------------------
 // Get tests
 // -----------------------------------------------------------------------------
 

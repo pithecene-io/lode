@@ -16,9 +16,45 @@ It is authoritative for any implementation of the `Store` interface.
 ## Adapter Obligations
 
 ### Put
+
+**Intent**: Put creates a new object. It MUST NOT silently overwrite existing data.
+
+**Behavior**:
 - MUST write data to the given path.
-- MUST NOT overwrite existing data.
-- If the path already exists, MUST return `ErrPathExists` (or an equivalent error).
+- If an existing path is detected, MUST return `ErrPathExists`.
+- Detection mechanism and guarantee vary by upload path (see table below).
+- On paths with TOCTOU windows, existence may not be detected under concurrent writers.
+
+#### Put Upload Paths
+
+Adapters MAY route Put through different mechanisms based on payload size.
+The no-overwrite guarantee strength depends on the path used:
+
+| Path | Trigger | Detection Mechanism | Guarantee |
+|------|---------|---------------------|-----------|
+| One-shot | payload ≤ threshold | Atomic conditional write | **Atomic** — no TOCTOU |
+| Multipart | payload > threshold | Preflight existence check | **Best-effort** — TOCTOU window exists |
+
+**One-Shot Path** (≤ threshold):
+- MUST use atomic conditional-create where backend supports it (e.g., S3 `If-None-Match: "*"`).
+- Duplicate writes MUST return `ErrPathExists` atomically.
+- No coordination required beyond the adapter.
+
+**Multipart Path** (> threshold):
+- Used when backend requires chunked uploads for large payloads.
+- MUST perform preflight existence check before starting upload.
+- If preflight detects existing path, MUST return `ErrPathExists`.
+- **TOCTOU window**: Between preflight check and upload completion, a concurrent
+  writer may create the same path. The adapter cannot prevent this race.
+- **Caller responsibility**: Single-writer semantics or external coordination
+  is REQUIRED to guarantee no-overwrite on this path.
+
+#### Adapter Documentation Requirements
+
+Adapters MUST document:
+- The size threshold for one-shot vs multipart routing.
+- Which path provides atomic vs best-effort detection.
+- Backend-specific limitations (e.g., "S3 multipart lacks conditional completion").
 
 ### Get
 - MUST return a readable stream for an existing path.
@@ -67,6 +103,18 @@ It is authoritative for any implementation of the `Store` interface.
 - Adapters MUST NOT provide any implicit commit signal outside manifest presence.
 - Safe write semantics (no overwrite) apply to streamed objects as well.
 - Adapters MUST allow deletion of partial objects via `Delete` for cleanup.
+
+### Streaming Write Atomicity
+
+For streaming writes that use the multipart/chunked path:
+- The no-overwrite guarantee depends on the Put path used (see "One-Shot vs Streaming Put").
+- On backends without conditional multipart completion, concurrent writers may
+  create a race condition where both detect "not exists" and proceed to write.
+- Callers using streaming writes on such backends MUST ensure single-writer
+  semantics or use external coordination.
+- Failure during multipart upload SHOULD trigger best-effort abort/cleanup.
+- Cleanup MUST use an independent context (not the caller's potentially-canceled
+  context) to maximize cleanup success.
 
 ---
 

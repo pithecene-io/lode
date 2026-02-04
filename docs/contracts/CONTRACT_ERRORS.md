@@ -102,7 +102,7 @@ These indicate storage-level failures.
 | `lode.ErrRangeReadNotSupported` | Read API | Store doesn't support range reads |
 
 **Behavior**:
-- `Put` returns `ErrPathExists` if path already exists (enforces immutability).
+- `Put` returns `ErrPathExists` when an existing path is detected (see detection table below).
 - `Put` returns `ErrInvalidPath` for paths that escape root or are empty.
 - `Get` returns `ErrInvalidPath` for invalid paths.
 - `ReadRange` returns `ErrInvalidPath` for:
@@ -110,6 +110,17 @@ These indicate storage-level failures.
   - length exceeding platform `int` capacity
   - offset+length overflow
 - `ReaderAt` returns `ErrRangeReadNotSupported` for stores without range capability.
+
+**ErrPathExists Detection by Put Path** (see CONTRACT_STORAGE.md):
+
+| Put Path | Detection | Guarantee |
+|----------|-----------|-----------|
+| One-shot (≤ threshold) | Atomic conditional write | Always detected |
+| Multipart (> threshold) | Preflight existence check | Best-effort (TOCTOU window) |
+
+The multipart path has a TOCTOU window between preflight check and upload completion.
+Under concurrent writers without external coordination, an existing path may not be
+detected and data may be overwritten. Single-writer semantics are required.
 
 ---
 

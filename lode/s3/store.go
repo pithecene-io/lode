@@ -6,7 +6,10 @@
 // # Contract Compliance
 //
 // This adapter implements CONTRACT_STORAGE.md obligations:
-//   - Put: Atomic immutability via If-None-Match conditional writes
+//   - Put: Uses one-shot or multipart path based on payload size.
+//     One-shot (≤100MB): Atomic via If-None-Match conditional write.
+//     Multipart (>100MB): Best-effort via preflight existence check;
+//     TOCTOU window exists—single-writer or external coordination required.
 //   - Get/Exists/Delete: Standard ErrNotFound semantics
 //   - List: Full pagination support, returns all matching keys
 //   - ReadRange: True range reads via HTTP Range header
@@ -30,6 +33,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -38,6 +42,17 @@ import (
 
 	"github.com/justapithecus/lode/lode"
 )
+
+// multipartPartSize is the size of each part in a multipart upload.
+// S3 requires at least 5MB per part (except the last part).
+const multipartPartSize = 5 * 1024 * 1024 // 5MB
+
+// maxSinglePutSize is the threshold for one-shot vs multipart Put routing.
+// Objects ≤ this size use PutObject with If-None-Match (atomic no-overwrite).
+// Objects > this size use multipart upload (best-effort no-overwrite via preflight check).
+// Set to 100MB as a practical balance: most artifacts fit in one-shot path while
+// allowing true streaming for larger payloads. S3 PutObject supports up to 5GB.
+const maxSinglePutSize = 100 * 1024 * 1024 // 100MB
 
 // maxReadRangeLength is the maximum length for ReadRange to prevent overflow
 // when converting int64 to int on 32-bit platforms.
@@ -49,6 +64,10 @@ type API interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error)
+	CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
@@ -104,28 +123,51 @@ func New(client API, cfg Config) (*Store, error) {
 // Returns ErrPathExists if the path already exists.
 // Returns ErrInvalidPath for empty or escaping paths.
 //
-// Note: The current implementation buffers the entire object in memory before
-// upload. For large files, callers should be aware of memory implications.
+// # Routing and Atomicity (per CONTRACT_STORAGE.md)
+//
+// One-shot path (≤100MB): Uses PutObject with If-None-Match for atomic
+// no-overwrite protection. Duplicate writes return ErrPathExists.
+//
+// Multipart path (>100MB): Uses preflight HeadObject check then multipart
+// upload. Provides best-effort no-overwrite protection with a TOCTOU window.
+// Single-writer or external coordination is required for guaranteed
+// no-overwrite semantics on this path.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 	fullKey, err := s.validateKey(key)
 	if err != nil {
 		return err
 	}
 
-	// Read all data into memory for PutObject.
-	// Note: For large files, a streaming approach with known Content-Length would be better.
-	data, err := io.ReadAll(r)
+	// Read up to threshold+1 bytes to determine routing.
+	// Use LimitedReader to avoid allocating 100MB+ upfront for small payloads.
+	// The buffer grows organically as data is read.
+	var buf bytes.Buffer
+	limited := io.LimitReader(r, maxSinglePutSize+1)
+	n, err := buf.ReadFrom(limited)
 	if err != nil {
 		return fmt.Errorf("s3: reading data: %w", err)
 	}
 
-	// Use conditional write with If-None-Match to enforce immutability atomically.
-	// This avoids the race condition of check-then-write.
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(fullKey),
-		Body:        bytes.NewReader(data),
-		IfNoneMatch: aws.String("*"),
+	// One-shot path: atomic via If-None-Match
+	if n <= maxSinglePutSize {
+		return s.putSimple(ctx, fullKey, buf.Bytes())
+	}
+
+	// Multipart path: best-effort via preflight check
+	// Combine buffered data with remaining reader
+	return s.putMultipart(ctx, fullKey, buf.Bytes(), r)
+}
+
+// putSimple implements the one-shot Put path for objects ≤ maxSinglePutSize.
+// Uses If-None-Match: "*" for atomic no-overwrite protection.
+// Returns ErrPathExists if the object already exists.
+func (s *Store) putSimple(ctx context.Context, fullKey string, data []byte) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(fullKey),
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		IfNoneMatch:   aws.String("*"),
 	})
 	if err != nil {
 		// Check for PreconditionFailed (object already exists)
@@ -137,6 +179,119 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 			}
 		}
 		return fmt.Errorf("s3: put object: %w", err)
+	}
+	return nil
+}
+
+// putMultipart implements the multipart Put path for objects > maxSinglePutSize.
+// Enables true streaming without full buffering.
+//
+// S3 multipart upload does not support conditional completion, so this path
+// uses a preflight existence check. This provides best-effort no-overwrite
+// protection with a TOCTOU window between check and completion.
+//
+// Per CONTRACT_STORAGE.md: single-writer or external coordination is required
+// to guarantee no-overwrite semantics on this path.
+func (s *Store) putMultipart(ctx context.Context, fullKey string, firstChunk []byte, remaining io.Reader) error {
+	// Preflight existence check (best-effort; TOCTOU window exists).
+	exists, err := s.exists(ctx, fullKey)
+	if err != nil {
+		return fmt.Errorf("s3: checking existence: %w", err)
+	}
+	if exists {
+		return lode.ErrPathExists
+	}
+
+	// Create multipart upload
+	createResp, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(fullKey),
+	})
+	if err != nil {
+		return fmt.Errorf("s3: create multipart upload: %w", err)
+	}
+	uploadID := aws.ToString(createResp.UploadId)
+
+	// Track completed parts for CompleteMultipartUpload
+	var completedParts []types.CompletedPart
+
+	// Helper to abort on error. Uses background context to ensure cleanup
+	// even if the original context was canceled (per CONTRACT_STORAGE.md).
+	//nolint:contextcheck // Intentionally uses background context for cleanup resilience
+	abortUpload := func() {
+		abortCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = s.client.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(s.bucket),
+			Key:      aws.String(fullKey),
+			UploadId: aws.String(uploadID),
+		})
+	}
+
+	// Upload first chunk as part 1
+	partNum := int32(1)
+	uploadResp, err := s.client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(fullKey),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(partNum),
+		Body:          bytes.NewReader(firstChunk),
+		ContentLength: aws.Int64(int64(len(firstChunk))),
+	})
+	if err != nil {
+		abortUpload()
+		return fmt.Errorf("s3: upload part %d: %w", partNum, err)
+	}
+	completedParts = append(completedParts, types.CompletedPart{
+		ETag:       uploadResp.ETag,
+		PartNumber: aws.Int32(partNum),
+	})
+
+	// Stream remaining data in chunks
+	buf := make([]byte, multipartPartSize)
+	for {
+		n, err := io.ReadFull(remaining, buf)
+		if n > 0 {
+			partNum++
+			uploadResp, uploadErr := s.client.UploadPart(ctx, &s3.UploadPartInput{
+				Bucket:        aws.String(s.bucket),
+				Key:           aws.String(fullKey),
+				UploadId:      aws.String(uploadID),
+				PartNumber:    aws.Int32(partNum),
+				Body:          bytes.NewReader(buf[:n]),
+				ContentLength: aws.Int64(int64(n)),
+			})
+			if uploadErr != nil {
+				abortUpload()
+				return fmt.Errorf("s3: upload part %d: %w", partNum, uploadErr)
+			}
+			completedParts = append(completedParts, types.CompletedPart{
+				ETag:       uploadResp.ETag,
+				PartNumber: aws.Int32(partNum),
+			})
+		}
+
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		}
+		if err != nil {
+			abortUpload()
+			return fmt.Errorf("s3: reading data: %w", err)
+		}
+	}
+
+	// Complete multipart upload
+	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(fullKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		abortUpload()
+		return fmt.Errorf("s3: complete multipart upload: %w", err)
 	}
 
 	return nil
@@ -450,17 +605,45 @@ func isNotFound(err error) bool {
 // Mock S3 Client for Testing
 // -----------------------------------------------------------------------------
 
+// multipartUpload tracks an in-progress multipart upload.
+type multipartUpload struct {
+	parts map[int32][]byte
+}
+
 // MockS3Client is a test double for API.
 type MockS3Client struct {
-	mu      sync.RWMutex
-	objects map[string][]byte
+	mu       sync.RWMutex
+	objects  map[string][]byte
+	uploads  map[string]*multipartUpload // uploadID -> upload
+	uploadID int
+
+	// Call counters for test assertions
+	PutObjectCalls             int
+	CreateMultipartUploadCalls int
+	AbortMultipartUploadCalls  int
+
+	// UploadPartFailOnCall causes UploadPart to fail on the Nth call.
+	// Set to 0 to disable (default). Set to 1 to fail on first part, 2 for second, etc.
+	UploadPartFailOnCall int
+	uploadPartCalls      int
 }
 
 // NewMockS3Client creates a new mock S3 client for testing.
 func NewMockS3Client() *MockS3Client {
 	return &MockS3Client{
 		objects: make(map[string][]byte),
+		uploads: make(map[string]*multipartUpload),
 	}
+}
+
+// ResetCounts resets call counters for test isolation.
+func (m *MockS3Client) ResetCounts() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.PutObjectCalls = 0
+	m.CreateMultipartUploadCalls = 0
+	m.AbortMultipartUploadCalls = 0
+	m.uploadPartCalls = 0
 }
 
 // PutObject implements API.PutObject for testing.
@@ -473,6 +656,8 @@ func (m *MockS3Client) PutObject(_ context.Context, params *s3.PutObjectInput, _
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.PutObjectCalls++
 
 	// Handle If-None-Match: "*" (conditional write for immutability)
 	if aws.ToString(params.IfNoneMatch) == "*" {
@@ -532,6 +717,94 @@ func (m *MockS3Client) HeadObject(_ context.Context, params *s3.HeadObjectInput,
 	}
 
 	return &s3.HeadObjectOutput{}, nil
+}
+
+// CreateMultipartUpload implements API.CreateMultipartUpload for testing.
+func (m *MockS3Client) CreateMultipartUpload(_ context.Context, params *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CreateMultipartUploadCalls++
+	m.uploadID++
+	uploadID := fmt.Sprintf("upload-%d", m.uploadID)
+
+	m.uploads[uploadID] = &multipartUpload{
+		parts: make(map[int32][]byte),
+	}
+
+	return &s3.CreateMultipartUploadOutput{
+		Bucket:   params.Bucket,
+		Key:      params.Key,
+		UploadId: aws.String(uploadID),
+	}, nil
+}
+
+// UploadPart implements API.UploadPart for testing.
+func (m *MockS3Client) UploadPart(_ context.Context, params *s3.UploadPartInput, _ ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	uploadID := aws.ToString(params.UploadId)
+	partNum := aws.ToInt32(params.PartNumber)
+
+	data, err := io.ReadAll(params.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Simulate failure on Nth call (for testing abort path)
+	m.uploadPartCalls++
+	if m.UploadPartFailOnCall > 0 && m.uploadPartCalls >= m.UploadPartFailOnCall {
+		return nil, &smithyAPIError{code: "InternalError", message: "simulated upload part failure"}
+	}
+
+	upload, exists := m.uploads[uploadID]
+	if !exists {
+		return nil, &smithyAPIError{code: "NoSuchUpload", message: "upload not found"}
+	}
+
+	upload.parts[partNum] = data
+
+	// Generate a fake ETag
+	etag := fmt.Sprintf("\"%d-%d\"", partNum, len(data))
+	return &s3.UploadPartOutput{ETag: aws.String(etag)}, nil
+}
+
+// CompleteMultipartUpload implements API.CompleteMultipartUpload for testing.
+func (m *MockS3Client) CompleteMultipartUpload(_ context.Context, params *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	uploadID := aws.ToString(params.UploadId)
+	key := aws.ToString(params.Key)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	upload, exists := m.uploads[uploadID]
+	if !exists {
+		return nil, &smithyAPIError{code: "NoSuchUpload", message: "upload not found"}
+	}
+
+	// Assemble parts in order
+	var assembled []byte
+	for i := int32(1); i <= int32(len(upload.parts)); i++ {
+		assembled = append(assembled, upload.parts[i]...)
+	}
+
+	m.objects[key] = assembled
+	delete(m.uploads, uploadID)
+
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+// AbortMultipartUpload implements API.AbortMultipartUpload for testing.
+func (m *MockS3Client) AbortMultipartUpload(_ context.Context, params *s3.AbortMultipartUploadInput, _ ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	uploadID := aws.ToString(params.UploadId)
+
+	m.mu.Lock()
+	m.AbortMultipartUploadCalls++
+	delete(m.uploads, uploadID)
+	m.mu.Unlock()
+
+	return &s3.AbortMultipartUploadOutput{}, nil
 }
 
 // DeleteObject implements API.DeleteObject for testing.
