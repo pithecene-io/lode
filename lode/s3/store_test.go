@@ -309,45 +309,53 @@ func TestStore_Put_Multipart_ContentIntegrity(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Context cancellation cleanup test
+// Multipart abort cleanup test
 // -----------------------------------------------------------------------------
 
-func TestStore_Put_Multipart_AbortUsesIndependentContext(t *testing.T) {
-	// Verify that abortUpload uses context.Background(), not the caller's context.
-	// This ensures cleanup is attempted even when the caller's context is canceled.
-	//
-	// We verify this by checking the code structure (the abortUpload closure uses
-	// context.Background with a timeout). This test asserts the documented behavior.
-
-	// Assert: The abort timeout is 30 seconds (documented in code)
-	// This is a compile-time constant check via the test existing.
-	// The actual verification is that abortUpload in putMultipart creates
-	// abortCtx with context.Background(), not ctx.
+func TestStore_Put_Multipart_FailureTriggersAbort(t *testing.T) {
+	// Verify that when multipart upload fails, AbortMultipartUpload is called.
+	// This tests the actual abort path, not just successful completion.
 
 	ctx := t.Context()
 	mock := NewMockS3Client()
 	store, _ := New(mock, Config{Bucket: "test"})
 
-	// Do a successful multipart upload to verify the path works
-	size := maxSinglePutSize + 1
+	// Configure mock to fail after first part upload
+	mock.UploadPartFailAfter = 1
+
+	// Create data that requires multiple parts (threshold + 10MB to ensure multiple chunks)
+	size := maxSinglePutSize + (10 * 1024 * 1024)
 	data := make([]byte, size)
 
-	err := store.Put(ctx, "multipart-test.bin", bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("Put failed: %v", err)
+	// Put should fail due to simulated UploadPart failure
+	err := store.Put(ctx, "will-fail.bin", bytes.NewReader(data))
+	if err == nil {
+		t.Fatal("expected Put to fail due to simulated UploadPart error")
 	}
 
-	// Verify multipart path was used
+	// Verify abort was called
 	mock.mu.RLock()
-	multipartCalls := mock.CreateMultipartUploadCalls
-	numUploads := len(mock.uploads) // Should be 0 after successful completion
+	abortCalls := mock.AbortMultipartUploadCalls
+	createCalls := mock.CreateMultipartUploadCalls
+	numUploads := len(mock.uploads)
 	mock.mu.RUnlock()
 
-	if multipartCalls != 1 {
-		t.Errorf("expected 1 CreateMultipartUpload call, got %d", multipartCalls)
+	if createCalls != 1 {
+		t.Errorf("expected 1 CreateMultipartUpload call, got %d", createCalls)
+	}
+	if abortCalls != 1 {
+		t.Errorf("expected 1 AbortMultipartUpload call (cleanup), got %d", abortCalls)
 	}
 	if numUploads != 0 {
-		t.Errorf("expected 0 in-progress uploads after completion, got %d", numUploads)
+		t.Errorf("expected 0 in-progress uploads after abort, got %d", numUploads)
+	}
+
+	// Verify object was not created
+	mock.mu.RLock()
+	_, exists := mock.objects["will-fail.bin"]
+	mock.mu.RUnlock()
+	if exists {
+		t.Error("object should not exist after failed upload")
 	}
 }
 

@@ -21,8 +21,9 @@ It is authoritative for any implementation of the `Store` interface.
 
 **Behavior**:
 - MUST write data to the given path.
-- If the path already exists, MUST return `ErrPathExists`.
-- The mechanism for detecting existing paths varies by upload path (see below).
+- If an existing path is detected, MUST return `ErrPathExists`.
+- Detection mechanism and guarantee vary by upload path (see table below).
+- On paths with TOCTOU windows, existence may not be detected under concurrent writers.
 
 #### Put Upload Paths
 

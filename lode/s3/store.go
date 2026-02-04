@@ -617,8 +617,14 @@ type MockS3Client struct {
 	uploadID int
 
 	// Call counters for test assertions
-	PutObjectCalls            int
+	PutObjectCalls             int
 	CreateMultipartUploadCalls int
+	AbortMultipartUploadCalls  int
+
+	// UploadPartFailAfter causes UploadPart to fail after N successful calls.
+	// Set to 0 to disable (default). Set to 1 to fail on first part, etc.
+	UploadPartFailAfter int
+	uploadPartCalls     int
 }
 
 // NewMockS3Client creates a new mock S3 client for testing.
@@ -635,6 +641,8 @@ func (m *MockS3Client) ResetCounts() {
 	defer m.mu.Unlock()
 	m.PutObjectCalls = 0
 	m.CreateMultipartUploadCalls = 0
+	m.AbortMultipartUploadCalls = 0
+	m.uploadPartCalls = 0
 }
 
 // PutObject implements API.PutObject for testing.
@@ -743,6 +751,12 @@ func (m *MockS3Client) UploadPart(_ context.Context, params *s3.UploadPartInput,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Simulate failure after N successful uploads (for testing abort path)
+	m.uploadPartCalls++
+	if m.UploadPartFailAfter > 0 && m.uploadPartCalls > m.UploadPartFailAfter {
+		return nil, &smithyAPIError{code: "InternalError", message: "simulated upload part failure"}
+	}
+
 	upload, exists := m.uploads[uploadID]
 	if !exists {
 		return nil, &smithyAPIError{code: "NoSuchUpload", message: "upload not found"}
@@ -785,6 +799,7 @@ func (m *MockS3Client) AbortMultipartUpload(_ context.Context, params *s3.AbortM
 	uploadID := aws.ToString(params.UploadId)
 
 	m.mu.Lock()
+	m.AbortMultipartUploadCalls++
 	delete(m.uploads, uploadID)
 	m.mu.Unlock()
 
