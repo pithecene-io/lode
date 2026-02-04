@@ -71,22 +71,19 @@ provided.
 Options are validated at construction time. Passing an option that does
 not apply to the target (dataset vs reader) returns an error.
 
-**Layout-specific option:**
-- `WithHiveLayout(keys...)` - Preferred for Hive layout (validates on apply)
+### Option Applicability Matrix
 
-**General options:**
-- `WithLayout(layout)` - For any layout (DefaultLayout, FlatLayout, or advanced use)
-- `WithCompressor(c)` - Dataset-only
-- `WithCodec(c)` - Dataset-only
-- `WithChecksum(c)` - Dataset-only
+| Option | Dataset | Reader | Notes |
+|--------|:-------:|:------:|-------|
+| `WithHiveLayout(keys...)` | ✅ | ✅ | Preferred for Hive layout |
+| `WithLayout(layout)` | ✅ | ✅ | For any layout |
+| `WithCompressor(c)` | ✅ | ❌ | Write-time compression |
+| `WithCodec(c)` | ✅ | ❌ | Record encoding |
+| `WithChecksum(c)` | ✅ | ❌ | File checksums |
 
-Dataset construction uses:
-- StoreFactory
-- Layout (via WithHiveLayout or WithLayout)
-- Partitioning (via layout)
-- Compressor
-- Optional codec
-- Optional checksum
+Passing a dataset-only option to `NewReader` returns an error at construction time.
+
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md), [`CONTRACT_READ_API.md`](docs/contracts/CONTRACT_READ_API.md)*
 
 ---
 
@@ -191,6 +188,20 @@ Streamed writes are raw-blob only: codecs are not applied and row count is `1`.
 of records and streams them through a streaming-capable codec. If the configured
 codec does not support streaming, `StreamWriteRecords` returns an error.
 
+### Streaming Constraints
+
+| Constraint | StreamWrite | StreamWriteRecords |
+|------------|:-----------:|:------------------:|
+| Codec allowed | ❌ Returns `ErrCodecConfigured` | ✅ Required (streaming-capable) |
+| Partitioning | ❌ Not supported | ❌ Returns `ErrPartitioningNotSupported` |
+| Row count | Always `1` | Equals records consumed |
+| Nil iterator | N/A | Returns `ErrNilIterator` |
+
+**Why no partitioning?** Single-pass streaming cannot buffer records to partition
+by key. Use `Write` for partitioned data.
+
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §StreamWrite Semantics, §StreamWriteRecords Semantics*
+
 ---
 
 ## Usage Gotchas (Important)
@@ -232,6 +243,8 @@ manifest references them.
 - `StreamWriter.Abort()` or `Close()` without `Commit()` ensures no manifest is written.
 - On error during streaming, no manifest is written (the write never "happened").
 
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Read-after-write Visibility, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Commit Semantics*
+
 ### Single-Writer Requirement
 
 **Lode does not implement concurrent multi-writer conflict resolution.**
@@ -241,6 +254,8 @@ Concurrent writes from multiple processes may produce inconsistent history
 (e.g., two snapshots with the same parent).
 
 External coordination (locks, queues, leader election) is the caller's responsibility.
+
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency*
 
 ### Large Upload Caveats (TOCTOU)
 
@@ -260,6 +275,8 @@ conditional multipart completion (which S3 does not support).
 
 Small uploads (≤ threshold) use atomic conditional writes with no TOCTOU window.
 
+*Contract reference: [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Put Upload Paths, [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Storage-Level Concurrency*
+
 ### Cleanup Behavior
 
 **Cleanup of partial objects is best-effort, not guaranteed.**
@@ -273,6 +290,8 @@ On abort or error before commit:
 
 Failure to delete a partial object does not create a snapshot.
 
+*Contract reference: [`CONTRACT_ERRORS.md`](docs/contracts/CONTRACT_ERRORS.md) §Streaming API Errors, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Streaming Write Atomicity*
+
 ---
 
 ## Errors
@@ -280,8 +299,45 @@ Failure to delete a partial object does not create a snapshot.
 Errors are returned for invalid configuration, storage failures, or
 missing objects. Error semantics are stable and documented.
 
-`ListDatasets` returns `ErrNoManifests` when storage contains objects but
-no valid manifests.
+### Sentinel Errors
+
+Use `errors.Is()` to check for sentinel errors:
+
+```go
+snap, err := ds.Latest(ctx)
+if errors.Is(err, lode.ErrNoSnapshots) {
+    // Dataset exists but has no committed snapshots
+}
+```
+
+| Sentinel | Meaning | Typical Source |
+|----------|---------|----------------|
+| `ErrNotFound` | Object/path does not exist | Storage, Reader |
+| `ErrNoSnapshots` | Dataset has no committed snapshots | Dataset |
+| `ErrNoManifests` | Storage has objects but no valid manifests | Reader |
+| `ErrPathExists` | Write to existing path (immutability violation) | Storage |
+| `ErrInvalidPath` | Path escapes root or has invalid parameters | Storage |
+| `ErrDatasetsNotModeled` | Layout doesn't support dataset enumeration | Reader |
+| `ErrManifestInvalid` | Manifest fails validation | Reader |
+| `ErrCodecConfigured` | StreamWrite called with codec configured | Dataset |
+| `ErrCodecNotStreamable` | StreamWriteRecords with non-streaming codec | Dataset |
+| `ErrNilIterator` | Nil iterator passed to StreamWriteRecords | Dataset |
+| `ErrPartitioningNotSupported` | StreamWriteRecords with partitioning | Dataset |
+| `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
+
+### Error Handling Guidelines
+
+**Retry-safe:**
+- Storage I/O errors (network, timeout) — may retry
+- `ErrNotFound` during race — may retry if expecting eventual consistency
+
+**Non-retry (configuration/logic error):**
+- `ErrDatasetsNotModeled` — reconfigure with different layout
+- `ErrManifestInvalid` — data corruption, investigate source
+- `ErrPathExists` — logic error (double-write attempt)
+- Component mismatch — reconfigure dataset or use matching snapshot
+
+*Contract reference: [`CONTRACT_ERRORS.md`](docs/contracts/CONTRACT_ERRORS.md)*
 
 ---
 
