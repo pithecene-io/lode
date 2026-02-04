@@ -48,6 +48,87 @@ If you know the snapshot ID, you know exactly what data you are reading.
 
 ---
 
+## Quick Start (5 minutes)
+
+### Install
+
+```bash
+go get github.com/justapithecus/lode
+```
+
+### Write and read a blob
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/justapithecus/lode/lode"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Create dataset with filesystem storage
+    ds, _ := lode.NewDataset("mydata", lode.NewFSFactory("/tmp/lode-demo"))
+
+    // Write a blob (default: raw bytes, no codec)
+    snap, _ := ds.Write(ctx, []any{[]byte("hello world")}, lode.Metadata{"source": "demo"})
+    fmt.Println("Created snapshot:", snap.ID)
+
+    // Read it back
+    data, _ := ds.Read(ctx, snap.ID)
+    fmt.Println("Data:", string(data[0].([]byte)))
+}
+```
+
+### Write structured records
+
+```go
+// With a codec, Write accepts structured data
+ds, _ := lode.NewDataset("events",
+    lode.NewFSFactory("/tmp/lode-demo"),
+    lode.WithCodec(lode.NewJSONLCodec()),
+)
+
+records := lode.R(
+    lode.D{"id": 1, "event": "signup"},
+    lode.D{"id": 2, "event": "login"},
+)
+snap, _ := ds.Write(ctx, records, lode.Metadata{"batch": "1"})
+```
+
+### Stream large files
+
+```go
+// StreamWrite is for large binary payloads (no codec)
+ds, _ := lode.NewDataset("backups", lode.NewFSFactory("/tmp/lode-demo"))
+
+sw, _ := ds.StreamWrite(ctx, lode.Metadata{"type": "backup"})
+sw.Write([]byte("... large data ..."))
+snap, _ := sw.Commit(ctx)
+```
+
+See [`examples/`](#examples) for complete runnable code.
+
+---
+
+## Which Write API?
+
+| API | Use Case | Codec | Partitioning |
+|-----|----------|-------|--------------|
+| `Write` | In-memory data, small batches | ✅ Optional | ✅ Supported |
+| `StreamWrite` | Large binary payloads (GB+) | ❌ Raw only | ❌ Not supported |
+| `StreamWriteRecords` | Large record streams | ✅ Required (streaming) | ❌ Not supported |
+
+**Decision flow:**
+1. Is the data already in memory? → Use `Write`
+2. Is it a large binary blob (no structure)? → Use `StreamWrite`
+3. Is it a large stream of records? → Use `StreamWriteRecords` with a streaming codec
+
+---
+
 ## What Lode is (and is not)
 
 ### Lode is:
@@ -64,6 +145,46 @@ If you know the snapshot ID, you know exactly what data you are reading.
 - A background service
 
 Lode owns *structure and life-cycle*, not execution.
+
+---
+
+## Guarantees
+
+What Lode commits to:
+
+| Guarantee | Detail |
+|-----------|--------|
+| **Immutable snapshots** | Once written, data files and manifests never change |
+| **Atomic commits** | Manifest presence is the commit signal; no partial visibility |
+| **Explicit metadata** | Every snapshot has caller-supplied metadata (never inferred) |
+| **Safe writes** | Overwrites are prevented (atomic for small files; best-effort for large) |
+| **Backend-agnostic** | Same semantics on filesystem, memory, or S3 |
+
+What Lode explicitly does NOT provide:
+
+| Non-goal | Why |
+|----------|-----|
+| Multi-writer conflict resolution | Requires distributed coordination; use external locks |
+| Query execution | Lode structures data; query engines consume it |
+| Background compaction | No implicit mutations; callers control lifecycle |
+| Automatic cleanup | Partial objects from failed writes may remain |
+
+For full contract details: [`docs/contracts/`](docs/contracts/)
+
+---
+
+## Gotchas
+
+Common pitfalls when using Lode:
+
+- **Metadata must be non-nil** — Pass `lode.Metadata{}` for empty metadata, not `nil`.
+- **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
+- **Single-writer only** — Concurrent writers to the same dataset may corrupt history.
+- **Large uploads have TOCTOU risk** — Uploads >5GB (S3) use preflight checks; coordinate externally.
+- **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
+- **StreamWriteRecords requires streaming codec** — Not all codecs support streaming.
+
+See [`PUBLIC_API.md`](PUBLIC_API.md) for complete usage guidance.
 
 ---
 
@@ -88,6 +209,20 @@ Reads always target a snapshot explicitly.
 - **Filesystem** — Local storage via `NewFSFactory`
 - **In-memory** — Testing via `NewMemoryFactory`
 - **S3** — AWS S3, MinIO, LocalStack, R2 via `lode/s3`
+
+---
+
+## Examples
+
+| Example | Purpose | Run |
+|---------|---------|-----|
+| [`default_layout`](examples/default_layout) | Write → list → read with default layout | `go run ./examples/default_layout` |
+| [`hive_layout`](examples/hive_layout) | Partition-first layout with Hive partitioner | `go run ./examples/hive_layout` |
+| [`blob_upload`](examples/blob_upload) | Raw blob write/read (no codec, default bundle) | `go run ./examples/blob_upload` |
+| [`manifest_driven`](examples/manifest_driven) | Demonstrates manifest-as-commit-signal | `go run ./examples/manifest_driven` |
+| [`s3_experimental`](examples/s3_experimental) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3_experimental` |
+
+Each example is self-contained and runnable. See the example source for detailed comments.
 
 ---
 
