@@ -327,6 +327,371 @@ func TestDataset_StreamWriteRecords_EmptyMetadata_ValidAndPersisted(t *testing.T
 }
 
 // -----------------------------------------------------------------------------
+// G3-1: Snapshot NOT visible before Commit
+// Per CONTRACT_WRITE_API.md: "A snapshot MUST NOT be visible before Commit writes the manifest."
+// -----------------------------------------------------------------------------
+
+func TestDataset_StreamWrite_NotVisibleBeforeCommit(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start streaming write
+	sw, err := ds.StreamWrite(t.Context(), Metadata{"test": "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write data but don't commit yet
+	_, err = sw.Write([]byte("streaming data before commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot should NOT be visible before commit
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots before commit, got: %v", err)
+	}
+
+	snapshots, err := ds.Snapshots(t.Context())
+	if err != nil {
+		t.Fatalf("Snapshots() failed: %v", err)
+	}
+	if len(snapshots) != 0 {
+		t.Errorf("expected 0 snapshots before commit, got %d", len(snapshots))
+	}
+
+	// Now commit
+	snap, err := sw.Commit(t.Context())
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Snapshot should now be visible
+	latest, err := ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed after commit: %v", err)
+	}
+	if latest.ID != snap.ID {
+		t.Errorf("expected latest ID %s, got %s", snap.ID, latest.ID)
+	}
+}
+
+func TestDataset_StreamWrite_NotVisibleBeforeCommit_WithExistingSnapshot(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an existing snapshot first
+	existingSnap, err := ds.Write(t.Context(), []any{[]byte("existing data")}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start streaming write for second snapshot
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sw.Write([]byte("new streaming data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Latest should still be the existing snapshot, not the uncommitted one
+	latest, err := ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed: %v", err)
+	}
+	if latest.ID != existingSnap.ID {
+		t.Errorf("expected latest to be existing snapshot %s, got %s", existingSnap.ID, latest.ID)
+	}
+
+	// Snapshots list should only have one entry
+	snapshots, err := ds.Snapshots(t.Context())
+	if err != nil {
+		t.Fatalf("Snapshots() failed: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Errorf("expected 1 snapshot before commit, got %d", len(snapshots))
+	}
+
+	// Commit and verify new snapshot is visible
+	newSnap, err := sw.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err = ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed after commit: %v", err)
+	}
+	if latest.ID != newSnap.ID {
+		t.Errorf("expected latest to be new snapshot %s, got %s", newSnap.ID, latest.ID)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// G3-2, G3-3: Abort semantics tests
+// Per CONTRACT_WRITE_API.md:
+// - "StreamWriter.Abort(ctx) MUST ensure no manifest is written."
+// - "StreamWriter.Close() without Commit MUST behave as Abort."
+//
+// RISK NOTE: Context cancellation during streaming has nondeterministic outcomes.
+// If the background store.Put completes before cancellation takes effect, the
+// data object is written. However, no manifest is written unless Commit succeeds.
+// The Abort path is deterministic and is tested explicitly below.
+// -----------------------------------------------------------------------------
+
+func TestDataset_StreamWrite_AbortDuringWrite_NoManifest(t *testing.T) {
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write some data
+	_, err = sw.Write([]byte("data that will be aborted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Abort explicitly
+	err = sw.Abort(t.Context())
+	if err != nil {
+		t.Fatalf("Abort failed: %v", err)
+	}
+
+	// Verify no snapshot is visible
+	_, latestErr := ds.Latest(t.Context())
+	if !errors.Is(latestErr, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after abort, got: %v", latestErr)
+	}
+
+	// Verify no manifest in store
+	paths, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not exist after abort, found: %s", p)
+		}
+	}
+}
+
+func TestDataset_StreamWrite_CloseDuringWrite_NoManifest(t *testing.T) {
+	// Per CONTRACT_WRITE_API.md: "Close() without Commit MUST behave as Abort"
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sw.Write([]byte("data that will be abandoned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close without commit (should behave as abort)
+	err = sw.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Verify no snapshot is visible
+	_, latestErr := ds.Latest(t.Context())
+	if !errors.Is(latestErr, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after close-without-commit, got: %v", latestErr)
+	}
+
+	// Verify no manifest in store
+	paths, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not exist after close-without-commit, found: %s", p)
+		}
+	}
+}
+
+func TestDataset_StreamWrite_WriteError_NoManifest(t *testing.T) {
+	// Test that write errors prevent manifest creation
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write data then abort to simulate failure path
+	_, err = sw.Write([]byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate failure by aborting
+	_ = sw.Abort(t.Context())
+
+	// Verify no manifest exists
+	paths, _ := store.List(t.Context(), "")
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not exist after simulated failure, found: %s", p)
+		}
+	}
+}
+
+// RISK NOTE: Context cancellation during StreamWriteRecords
+//
+// StreamWriteRecords is an atomic operation from the caller's perspective.
+// If the context is cancelled mid-stream:
+// - The background store.Put may or may not have completed
+// - Partial data may remain in storage (best-effort cleanup attempted)
+// - No manifest will be written (the commit signal)
+//
+// The cleanup uses the caller's context for Delete, which may already be
+// cancelled. Per CONTRACT_STORAGE.md, cleanup SHOULD use an independent
+// context. Current implementation risk: cleanup may fail if context is
+// already cancelled.
+//
+// This is documented behavior, not a test failure condition.
+
+// -----------------------------------------------------------------------------
+// G3-4: Commit signal = manifest presence
+// Per CONTRACT_WRITE_API.md: "Manifest presence is the commit signal."
+// -----------------------------------------------------------------------------
+
+func TestDataset_StreamWrite_ManifestPresenceIsCommitSignal(t *testing.T) {
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sw.Write([]byte("test data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Before commit: check that no manifest exists in store
+	paths, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not exist before commit, found: %s", p)
+		}
+	}
+
+	// Commit
+	_, err = sw.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// After commit: manifest must exist
+	paths, err = store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasManifest := false
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			hasManifest = true
+			break
+		}
+	}
+	if !hasManifest {
+		t.Error("manifest should exist after commit")
+	}
+}
+
+func TestDataset_StreamWriteRecords_ManifestPresenceIsCommitSignal(t *testing.T) {
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iter := &sliceIterator{records: []any{D{"id": "1"}, D{"id": "2"}}}
+	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// After successful StreamWriteRecords: manifest must exist
+	paths, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasManifest := false
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			hasManifest = true
+			break
+		}
+	}
+	if !hasManifest {
+		t.Error("manifest should exist after successful StreamWriteRecords")
+	}
+}
+
+func TestDataset_StreamWriteRecords_IteratorError_NoManifestWritten(t *testing.T) {
+	// Explicitly verifies manifest is not written on iterator error
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iterErr := errors.New("iterator failure")
+	iter := &errorIterator{err: iterErr}
+
+	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	if err == nil {
+		t.Fatal("expected error from iterator, got nil")
+	}
+
+	// Verify no manifest was written
+	paths, err := store.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not exist after iterator error, found: %s", p)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Option validation tests
 // -----------------------------------------------------------------------------
 

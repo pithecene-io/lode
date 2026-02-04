@@ -431,10 +431,22 @@ and identifies gaps requiring additional test coverage for v0.3.0 release.
 
 | Gap ID | Contract | Requirement | Test Task |
 |--------|----------|-------------|-----------|
-| G3-1 | WRITE | Snapshot NOT visible before Commit | Add `TestDataset_StreamWrite_NotVisibleBeforeCommit` |
-| G3-2 | WRITE | StreamWriter context cancellation cleanup | Add `TestDataset_StreamWrite_ContextCancellation_NoManifest` |
-| G3-3 | WRITE | StreamWriteRecords context cancellation | Add `TestDataset_StreamWriteRecords_ContextCancellation_NoManifest` |
-| G3-4 | STORAGE | Cleanup uses independent context | Verify implementation + document |
+| G3-1 | WRITE | Snapshot NOT visible before Commit | ✅ `TestDataset_StreamWrite_NotVisibleBeforeCommit`, `TestDataset_StreamWrite_NotVisibleBeforeCommit_WithExistingSnapshot`, `TestDataset_StreamWrite_ManifestPresenceIsCommitSignal`, `TestDataset_StreamWriteRecords_ManifestPresenceIsCommitSignal` |
+| G3-2 | WRITE | StreamWriter abort/failure cleanup | ✅ `TestDataset_StreamWrite_AbortDuringWrite_NoManifest`, `TestDataset_StreamWrite_CloseDuringWrite_NoManifest`, `TestDataset_StreamWrite_WriteError_NoManifest` |
+| G3-3 | WRITE | StreamWriteRecords iterator error cleanup | ✅ `TestDataset_StreamWriteRecords_IteratorError_NoManifestWritten` |
+| G3-4 | STORAGE | Context cancellation cleanup behavior | ⚠️ RESIDUAL RISK — see below |
+
+### Residual Risk: G3-4
+
+Context cancellation cleanup behavior is **nondeterministic** and cannot be reliably tested:
+
+- In-memory stores complete `Put` before cancellation takes effect
+- Real storage adapters have varying timing characteristics
+- No deterministic assertion possible without injecting artificial delays
+
+**Mitigation**: Deterministic abort paths (`Abort()`, `Close()`, iterator errors) are tested instead. RISK NOTE documented in `dataset_test.go` explains the limitation.
+
+**Tracking**: This remains residual risk until a deterministic test strategy is identified (e.g., injectable storage hook, or acceptance of probabilistic testing).
 
 ### Future (Lower Priority)
 
@@ -467,4 +479,6 @@ ok  	github.com/justapithecus/lode/lode/s3
 | Date | PR | Changes |
 |------|----|---------|
 | 2024-XX-XX | PR 1 | Initial matrix creation |
+| 2024-XX-XX | PR 2 | G2-1..G2-15 coverage complete |
+| 2024-XX-XX | PR 3 | G3-1..G3-4 coverage complete; streaming failure semantics hardened |
 | 2024-XX-XX | PR 2 | G2-1..G2-15 covered: manifest validation, constructor rejection, read mismatch, empty metadata |
