@@ -103,9 +103,10 @@ type Config struct {
 
 // Store implements lode.Store using an S3-compatible backend.
 type Store struct {
-	client API
-	bucket string
-	prefix string
+	client     API
+	bucket     string
+	prefix     string
+	createTemp func() (*os.File, error) // temp file factory for Put spooling
 }
 
 // New creates a new S3 store with the given client and configuration.
@@ -132,9 +133,10 @@ func New(client API, cfg Config) (*Store, error) {
 	}
 
 	return &Store{
-		client: client,
-		bucket: cfg.Bucket,
-		prefix: prefix,
+		client:     client,
+		bucket:     cfg.Bucket,
+		prefix:     prefix,
+		createTemp: func() (*os.File, error) { return os.CreateTemp("", "lode-s3-*") },
 	}, nil
 }
 
@@ -166,8 +168,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) error {
 
 	// Spool to temp file to determine size and enable seekable upload.
 	// This provides O(1) memory usage regardless of upload size.
-	// Uses empty dir to respect TMPDIR environment variable.
-	tmpFile, err := os.CreateTemp("", "lode-s3-*")
+	tmpFile, err := s.createTemp()
 	if err != nil {
 		return fmt.Errorf("s3: creating temp file: %w", err)
 	}
