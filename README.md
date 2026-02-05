@@ -52,12 +52,14 @@ If you know the snapshot ID, you know exactly what data you are reading.
 
 ### Install
 
+<!-- runnable -->
 ```bash
 go get github.com/justapithecus/lode
 ```
 
 ### Write and read a blob
 
+<!-- illustrative: shows API pattern; see examples/ for runnable code -->
 ```go
 package main
 
@@ -85,6 +87,7 @@ func main() {
 
 ### Write structured records
 
+<!-- illustrative: shows API pattern; see examples/ for runnable code -->
 ```go
 // With a codec, Write accepts structured data
 ds, _ := lode.NewDataset("events",
@@ -101,6 +104,7 @@ snap, _ := ds.Write(ctx, records, lode.Metadata{"batch": "1"})
 
 ### Stream large files
 
+<!-- illustrative: shows API pattern; see examples/ for runnable code -->
 ```go
 // StreamWrite is for large binary payloads (no codec)
 ds, _ := lode.NewDataset("backups", lode.NewFSFactory("/tmp/lode-demo"))

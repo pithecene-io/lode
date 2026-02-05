@@ -30,6 +30,7 @@ Default bundle:
 - Checksum: none (opt-in)
 
 Example:
+<!-- illustrative -->
 ```go
 import (
     "github.com/justapithecus/lode/lode"
@@ -50,6 +51,7 @@ Default behavior:
 - Layout: DefaultLayout
 
 Example:
+<!-- illustrative -->
 ```go
 reader, _ := lode.NewReader(
     lode.NewFSFactory("/data"),
@@ -137,6 +139,7 @@ block-indexed logs, and partial artifact previews.
 Records can optionally implement the `Timestamped` interface to enable
 automatic min/max timestamp tracking in manifests:
 
+<!-- illustrative -->
 ```go
 type Timestamped interface {
     Timestamp() time.Time
@@ -148,6 +151,7 @@ When records implement this interface, `Dataset.Write` computes
 This enables time-range pruning by query engines.
 
 Example:
+<!-- illustrative -->
 ```go
 type Event struct {
     ID        string
@@ -303,6 +307,7 @@ missing objects. Error semantics are stable and documented.
 
 Use `errors.Is()` to check for sentinel errors:
 
+<!-- illustrative -->
 ```go
 snap, err := ds.Latest(ctx)
 if errors.Is(err, lode.ErrNoSnapshots) {
@@ -354,6 +359,7 @@ minimal while giving you full control over credentials, endpoints, and options.
 
 ### AWS S3
 
+<!-- illustrative -->
 ```go
 import (
     "github.com/aws/aws-sdk-go-v2/config"
@@ -373,6 +379,7 @@ store, _ := s3.New(client, s3.Config{
 
 ### LocalStack
 
+<!-- illustrative -->
 ```go
 import (
     "github.com/aws/aws-sdk-go-v2/aws"
@@ -399,6 +406,7 @@ store, _ := s3.New(client, s3.Config{Bucket: "my-bucket"})
 
 ### MinIO
 
+<!-- illustrative -->
 ```go
 cfg, _ := config.LoadDefaultConfig(ctx,
     config.WithRegion("us-east-1"),
@@ -416,6 +424,7 @@ store, _ := s3.New(client, s3.Config{Bucket: "my-bucket"})
 
 ### Cloudflare R2
 
+<!-- illustrative -->
 ```go
 cfg, _ := config.LoadDefaultConfig(ctx,
     config.WithRegion("auto"),
