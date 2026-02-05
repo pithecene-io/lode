@@ -33,7 +33,7 @@ The snippet verifier (`scripts/verify-snippets.sh`) has intentionally permissive
 - Bash snippets use `bash -n` syntax checking only (not execution)
 
 **Why permissive?**
-- Current runnable snippet set is mostly bash (1 snippet as of v0.4.0)
+- Current runnable snippet set is mostly bash (see inventory table below)
 - Low complexity keeps the verifier maintainable
 - Full Go execution would require careful sandboxing
 
