@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Zstd Compressor**: `NewZstdCompressor()` for higher compression ratio and faster decompression than gzip
+- N/A
 
 ### Changed
 
-- **StreamWriteRecords Parameter Order**: Reordered from `(ctx, metadata, records)` to `(ctx, records, metadata)` for ergonomic consistency with iterator-first patterns
+- N/A
 
 ### Fixed
 
@@ -23,11 +23,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- None
+
+### References
+
+- [PUBLIC_API.md](PUBLIC_API.md) — User-facing API documentation
+- [docs/contracts/](docs/contracts/) — Normative contract specifications
+
+---
+
+## [0.4.0] - 2026-02-05
+
+### Added
+
+- **Zstd Compressor**: `NewZstdCompressor()` for higher compression ratio and faster decompression than gzip
+- **Example Convention Contract**: `CONTRACT_EXAMPLES.md` defines normative callsite conventions
+- **Agent Convention Rules**: `AGENTS.md` now includes API/example convention rules with stop triggers
+
+### Changed
+
+- **StreamWriteRecords Parameter Order**: Reordered from `(ctx, metadata, records)` to `(ctx, records, metadata)` for ergonomic consistency with iterator-first patterns
+- **Example Variable Naming**: Normalized `snapshot` variable naming across all examples
+
+### Breaking Changes
+
 - **StreamWriteRecords Signature**: Parameter order changed from `StreamWriteRecords(ctx, metadata, records)` to `StreamWriteRecords(ctx, records, metadata)`. Update callsites accordingly.
 
 ### Known Limitations
 
-- N/A
+- **G3-4 (Residual Risk)**: Context cancellation cleanup behavior remains nondeterministic due to
+  timing characteristics of storage adapters. Deterministic abort paths are tested; context
+  cancellation semantics documented as best-effort. See `docs/contracts/CONTRACT_TEST_MATRIX.md` for details.
 
 ### Upgrade Notes
 
@@ -36,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### References
 
 - [PUBLIC_API.md](PUBLIC_API.md) — User-facing API documentation
+- [docs/contracts/CONTRACT_EXAMPLES.md](docs/contracts/CONTRACT_EXAMPLES.md) — Example convention contract
 - [docs/contracts/](docs/contracts/) — Normative contract specifications
 
 ---
@@ -185,7 +212,8 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/justapithecus/lode/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/justapithecus/lode/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/justapithecus/lode/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/justapithecus/lode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/justapithecus/lode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/justapithecus/lode/releases/tag/v0.1.0
