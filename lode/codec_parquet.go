@@ -69,26 +69,10 @@ func WithParquetCompression(codec ParquetCompression) ParquetOption {
 }
 
 // -----------------------------------------------------------------------------
-// Error Sentinels
-// -----------------------------------------------------------------------------
-
-// ErrSchemaViolation indicates a record does not conform to the schema.
-var ErrSchemaViolation = errSchemaViolation{}
-
-type errSchemaViolation struct{}
-
-func (errSchemaViolation) Error() string { return "parquet: schema violation" }
-
-// ErrInvalidFormat indicates the Parquet file is malformed or corrupted.
-var ErrInvalidFormat = errInvalidFormat{}
-
-type errInvalidFormat struct{}
-
-func (errInvalidFormat) Error() string { return "parquet: invalid format" }
-
-// -----------------------------------------------------------------------------
 // Parquet Codec Implementation
 // -----------------------------------------------------------------------------
+
+// Error sentinels ErrSchemaViolation and ErrInvalidFormat are defined in api.go.
 
 // parquetCodec implements Codec for Apache Parquet format.
 type parquetCodec struct {

@@ -449,3 +449,112 @@ func TestParquetCodec_LargeDataset(t *testing.T) {
 		t.Errorf("last record id = %v, want 9999", last["id"])
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Dataset-Level Tests
+// -----------------------------------------------------------------------------
+
+func TestParquetCodec_StreamWriteRecords_ReturnsErrCodecNotStreamable(t *testing.T) {
+	// Per CONTRACT_PARQUET.md: Parquet codec does NOT implement StreamingRecordCodec.
+	// StreamWriteRecords with Parquet codec MUST return ErrCodecNotStreamable.
+
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+		},
+	}
+	codec := NewParquetCodec(schema)
+
+	ds, err := NewDataset("test-parquet", NewMemoryFactory(), WithCodec(codec))
+	if err != nil {
+		t.Fatalf("NewDataset failed: %v", err)
+	}
+
+	// Create a simple iterator
+	iter := &parquetTestIterator{
+		records: []any{
+			map[string]any{"id": int64(1)},
+		},
+	}
+
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
+	if err == nil {
+		t.Fatal("StreamWriteRecords should return error for Parquet codec")
+	}
+	if !errors.Is(err, ErrCodecNotStreamable) {
+		t.Errorf("StreamWriteRecords error = %v, want ErrCodecNotStreamable", err)
+	}
+}
+
+func TestParquetCodec_DatasetWrite_Success(t *testing.T) {
+	// Per CONTRACT_PARQUET.md: Callers MUST use Dataset.Write for Parquet encoding.
+
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "name", Type: ParquetString},
+		},
+	}
+	codec := NewParquetCodec(schema)
+
+	ds, err := NewDataset("test-parquet-write", NewMemoryFactory(), WithCodec(codec))
+	if err != nil {
+		t.Fatalf("NewDataset failed: %v", err)
+	}
+
+	records := []any{
+		map[string]any{"id": int64(1), "name": "alice"},
+		map[string]any{"id": int64(2), "name": "bob"},
+	}
+
+	snapshot, err := ds.Write(t.Context(), records, Metadata{"source": "test"})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Verify manifest records codec
+	if snapshot.Manifest.Codec != "parquet" {
+		t.Errorf("Manifest.Codec = %q, want %q", snapshot.Manifest.Codec, "parquet")
+	}
+
+	// Verify row count
+	if snapshot.Manifest.RowCount != 2 {
+		t.Errorf("Manifest.RowCount = %d, want 2", snapshot.Manifest.RowCount)
+	}
+
+	// Read back and verify
+	readRecords, err := ds.Read(t.Context(), snapshot.ID)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if len(readRecords) != 2 {
+		t.Errorf("Read returned %d records, want 2", len(readRecords))
+	}
+}
+
+// parquetTestIterator is a simple RecordIterator for Parquet codec tests.
+type parquetTestIterator struct {
+	records []any
+	index   int
+	err     error
+}
+
+func (s *parquetTestIterator) Next() bool {
+	if s.err != nil || s.index >= len(s.records) {
+		return false
+	}
+	s.index++
+	return true
+}
+
+func (s *parquetTestIterator) Record() any {
+	if s.index == 0 || s.index > len(s.records) {
+		return nil
+	}
+	return s.records[s.index-1]
+}
+
+func (s *parquetTestIterator) Err() error {
+	return s.err
+}

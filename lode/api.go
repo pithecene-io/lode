@@ -371,6 +371,14 @@ var (
 
 	// ErrPartitioningNotSupported indicates StreamWriteRecords was called with partitioning configured.
 	ErrPartitioningNotSupported = errPartitioningNotSupported{}
+
+	// ErrSchemaViolation indicates a record does not conform to the Parquet schema.
+	// Returned when: missing required field, type mismatch, nil for non-nullable field,
+	// or invalid timestamp string.
+	ErrSchemaViolation = errSchemaViolation{}
+
+	// ErrInvalidFormat indicates the Parquet file is malformed or corrupted.
+	ErrInvalidFormat = errInvalidFormat{}
 )
 
 type errNotFound struct{}
@@ -412,6 +420,14 @@ type errPartitioningNotSupported struct{}
 func (errPartitioningNotSupported) Error() string {
 	return "StreamWriteRecords does not support partitioning; use Write for partitioned data"
 }
+
+type errSchemaViolation struct{}
+
+func (errSchemaViolation) Error() string { return "parquet: schema violation" }
+
+type errInvalidFormat struct{}
+
+func (errInvalidFormat) Error() string { return "parquet: invalid format" }
 
 // -----------------------------------------------------------------------------
 // Reader interface
