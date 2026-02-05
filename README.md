@@ -247,9 +247,10 @@ aws s3 mb s3://my-bucket
 
 <!-- illustrative -->
 ```go
-// Then construct dataset
+// Then construct dataset (wrap Store in factory)
 store, err := s3.New(client, s3.Config{Bucket: "my-bucket"})
-ds, err := lode.NewDataset("events", store)
+factory := func() (lode.Store, error) { return store, nil }
+ds, err := lode.NewDataset("events", factory)
 ```
 
 ### Bootstrap Helpers
@@ -259,7 +260,7 @@ If you need provisioning helpers, implement them outside core APIs:
 <!-- illustrative -->
 ```go
 // Example: ensure directory exists before constructing dataset
-func EnsureFSDataset(id, root string, opts ...lode.Option) (*lode.Dataset, error) {
+func EnsureFSDataset(id, root string, opts ...lode.Option) (lode.Dataset, error) {
     if err := os.MkdirAll(root, 0755); err != nil {
         return nil, fmt.Errorf("create storage root: %w", err)
     }

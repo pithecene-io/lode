@@ -258,7 +258,7 @@ If provisioning helpers are needed, implement them outside Lode's core APIs:
 <!-- illustrative -->
 ```go
 // Wrapper that ensures storage exists before constructing dataset
-func EnsureFSDataset(id, root string, opts ...lode.Option) (*lode.Dataset, error) {
+func EnsureFSDataset(id, root string, opts ...lode.Option) (lode.Dataset, error) {
     if err := os.MkdirAll(root, 0755); err != nil {
         return nil, fmt.Errorf("create storage root: %w", err)
     }
