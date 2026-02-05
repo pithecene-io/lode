@@ -28,14 +28,20 @@ Do NOT use `StreamWriteRecords` when:
 ## Failure Modes
 
 `StreamWriteRecords` validates configuration and input before streaming begins.
-Use `errors.Is()` to check for specific failures:
+
+**Sentinel errors** (use `errors.Is()` to check):
 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `ErrNilIterator` | Passed `nil` as iterator | Provide a valid `RecordIterator` |
 | `ErrCodecNotStreamable` | Codec doesn't support streaming | Use a streaming codec (e.g., JSONL) or use `Write` |
 | `ErrPartitioningNotSupported` | Dataset has partitioning configured | Use `Write` for partitioned data |
-| `metadata is nil` | Passed `nil` metadata | Use `lode.Metadata{}` for empty metadata |
+
+**Configuration errors** (not sentinels):
+
+| Error message | Cause | Fix |
+|---------------|-------|-----|
+| "metadata must be non-nil" | Passed `nil` metadata | Use `lode.Metadata{}` for empty metadata |
 
 ### Iterator Errors
 

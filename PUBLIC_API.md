@@ -216,12 +216,13 @@ Common errors when using streaming APIs:
 | `ErrCodecNotStreamable` | `StreamWriteRecords` | Codec doesn't support streaming | Use streaming codec (JSONL) or `Write` |
 | `ErrNilIterator` | `StreamWriteRecords` | Iterator is nil | Provide valid `RecordIterator` |
 | `ErrPartitioningNotSupported` | `StreamWriteRecords` | Partitioning configured | Use `Write` for partitioned data |
-| `metadata is nil` | Both | Nil metadata passed | Use `lode.Metadata{}` for empty |
+| "metadata must be non-nil" | Both | Nil metadata passed | Use `lode.Metadata{}` for empty |
 
 **On failure:**
 - No manifest is written (snapshot does not exist)
 - Partial data may remain in storage (best-effort cleanup)
-- Use `errors.Is()` to check for specific sentinel errors
+- Use `errors.Is()` to check sentinel errors (`ErrCodec*`, `ErrNil*`, `ErrPartitioning*`)
+- Note: metadata error is not a sentinel; check with `strings.Contains()` or handle as configuration error
 
 *Contract reference: [`CONTRACT_ERRORS.md`](docs/contracts/CONTRACT_ERRORS.md)*
 
