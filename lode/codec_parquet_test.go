@@ -540,6 +540,22 @@ func TestParquetCodec_NewParquetCodec_NegativeFieldType(t *testing.T) {
 	}
 }
 
+func TestParquetCodec_NewParquetCodec_DuplicateFieldName(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "id", Type: ParquetString}, // duplicate name
+		},
+	}
+	_, err := NewParquetCodec(schema)
+	if err == nil {
+		t.Fatal("NewParquetCodec() expected error for duplicate field name")
+	}
+	if !errors.Is(err, ErrSchemaViolation) {
+		t.Errorf("NewParquetCodec() error = %v, want ErrSchemaViolation", err)
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Numeric Overflow Protection Tests
 // -----------------------------------------------------------------------------

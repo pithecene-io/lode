@@ -88,7 +88,8 @@ type parquetCodec struct {
 // require a footer that references all row groups. Use Dataset.Write for
 // batched encoding.
 func NewParquetCodec(schema ParquetSchema, opts ...ParquetOption) (Codec, error) {
-	// Validate schema field types
+	// Validate schema field types and names
+	seen := make(map[string]bool, len(schema.Fields))
 	for _, field := range schema.Fields {
 		if field.Type < 0 || field.Type >= parquetTypeMax {
 			return nil, fmt.Errorf("%w: invalid ParquetType %d for field %q", ErrSchemaViolation, field.Type, field.Name)
@@ -96,6 +97,10 @@ func NewParquetCodec(schema ParquetSchema, opts ...ParquetOption) (Codec, error)
 		if field.Name == "" {
 			return nil, fmt.Errorf("%w: field name cannot be empty", ErrSchemaViolation)
 		}
+		if seen[field.Name] {
+			return nil, fmt.Errorf("%w: duplicate field name %q", ErrSchemaViolation, field.Name)
+		}
+		seen[field.Name] = true
 	}
 
 	c := &parquetCodec{
