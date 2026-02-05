@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.3.0-rc.1] - 2026-02-04
+## [0.3.0] - 2026-02-04
 
 ### Added
 
@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **G3-4 (Residual Risk)**: Context cancellation cleanup behavior is nondeterministic due to
   timing characteristics of storage adapters. Deterministic abort paths are tested; context
   cancellation semantics documented as best-effort. See `docs/contracts/CONTRACT_TEST_MATRIX.md` for details.
+
+### Next
+
+Post-v0.3.0 improvements planned:
+
+- **Bootstrap pattern documentation**: "Ensure storage exists before constructing dataset/reader"
+  as an explicit callsite pattern in examples and docs.
+- **Optional helper utilities**: Bootstrap helpers (e.g., `EnsureStorageExists`) may be added
+  outside core write/read semantics, in examples, docs, or a separate helpers package.
+- **Markdown snippet CI**: Lint extracted code snippets from README and PUBLIC_API.md.
 
 ### Upgrade Notes
 
@@ -175,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/justapithecus/lode/compare/v0.3.0-rc.1...HEAD
-[0.3.0-rc.1]: https://github.com/justapithecus/lode/compare/v0.2.0...v0.3.0-rc.1
+[Unreleased]: https://github.com/justapithecus/lode/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/justapithecus/lode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/justapithecus/lode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/justapithecus/lode/releases/tag/v0.1.0
