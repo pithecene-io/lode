@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- N/A
+- **Zstd Compressor Docs Prep**: Selection guidance and planned API documented (implementation in next PR)
 
 ### Fixed
 
