@@ -189,7 +189,7 @@ streaming writes of a single binary payload. `StreamWriter.Write` streams bytes,
 If `Close` is called before `Commit`, the stream is aborted and no snapshot is created.
 Streamed writes are raw-blob only: codecs are not applied and row count is `1`.
 
-`Dataset.StreamWriteRecords(ctx, metadata, records)` consumes a pull-based iterator
+`Dataset.StreamWriteRecords(ctx, records, metadata)` consumes a pull-based iterator
 of records and streams them through a streaming-capable codec. If the configured
 codec does not support streaming, `StreamWriteRecords` returns an error.
 

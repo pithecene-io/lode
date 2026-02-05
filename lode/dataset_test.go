@@ -312,7 +312,7 @@ func TestDataset_StreamWriteRecords_EmptyMetadata_ValidAndPersisted(t *testing.T
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}}}
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatalf("expected empty metadata to be valid, got error: %v", err)
 	}
@@ -641,7 +641,7 @@ func TestDataset_StreamWriteRecords_ManifestPresenceIsCommitSignal(t *testing.T)
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}, D{"id": "2"}}}
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,7 +674,7 @@ func TestDataset_StreamWriteRecords_IteratorError_NoManifestWritten(t *testing.T
 	iterErr := errors.New("iterator failure")
 	iter := &errorIterator{err: iterErr}
 
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err == nil {
 		t.Fatal("expected error from iterator, got nil")
 	}
@@ -1275,7 +1275,7 @@ func TestDataset_StreamWriteRecords_WithZstdCompression(t *testing.T) {
 	}
 	iter := &sliceIterator{records: records}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatalf("StreamWriteRecords failed: %v", err)
 	}
@@ -1358,7 +1358,7 @@ func TestDataset_StreamWriteRecords_Success(t *testing.T) {
 	}
 	iter := &sliceIterator{records: records}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{"source": "stream"}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{"source": "stream"})
 	if err != nil {
 		t.Fatalf("StreamWriteRecords failed: %v", err)
 	}
@@ -1403,7 +1403,7 @@ func TestDataset_StreamWriteRecords_NonStreamingCodec_ReturnsError(t *testing.T)
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}}}
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if !errors.Is(err, ErrCodecNotStreamable) {
 		t.Errorf("expected ErrCodecNotStreamable, got: %v", err)
 	}
@@ -1416,7 +1416,7 @@ func TestDataset_StreamWriteRecords_NoCodec_ReturnsError(t *testing.T) {
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}}}
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for no codec, got nil")
 	}
@@ -1432,7 +1432,7 @@ func TestDataset_StreamWriteRecords_NilMetadata_ReturnsError(t *testing.T) {
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}}}
-	_, err = ds.StreamWriteRecords(t.Context(), nil, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, nil)
 	if err == nil {
 		t.Fatal("expected error for nil metadata, got nil")
 	}
@@ -1447,7 +1447,7 @@ func TestDataset_StreamWriteRecords_NilIterator_ReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, nil)
+	_, err = ds.StreamWriteRecords(t.Context(), nil, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for nil iterator, got nil")
 	}
@@ -1466,7 +1466,7 @@ func TestDataset_StreamWriteRecords_WithPartitioner_ReturnsError(t *testing.T) {
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1", "day": "2024-01-01"}}}
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err == nil {
 		t.Fatal("expected error for partitioning, got nil")
 	}
@@ -1492,7 +1492,7 @@ func TestDataset_StreamWriteRecords_TimestampedRecords_ComputesMinMax(t *testing
 	}
 	iter := &sliceIterator{records: records}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1523,7 +1523,7 @@ func TestDataset_StreamWriteRecords_NonTimestampedRecords_OmitsMinMax(t *testing
 	}
 	iter := &sliceIterator{records: records}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1544,7 +1544,7 @@ func TestDataset_StreamWriteRecords_EmptyIterator(t *testing.T) {
 
 	iter := &sliceIterator{records: []any{}}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatalf("StreamWriteRecords failed: %v", err)
 	}
@@ -1563,7 +1563,7 @@ func TestDataset_StreamWriteRecords_IteratorError(t *testing.T) {
 	iterErr := errors.New("iterator failure")
 	iter := &errorIterator{err: iterErr}
 
-	_, err = ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err == nil {
 		t.Fatal("expected error from iterator, got nil")
 	}
@@ -1592,7 +1592,7 @@ func TestDataset_StreamWriteRecords_WithCompression(t *testing.T) {
 	}
 	iter := &sliceIterator{records: records}
 
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatalf("StreamWriteRecords failed: %v", err)
 	}
@@ -1628,7 +1628,7 @@ func TestDataset_StreamWriteRecords_ParentSnapshotLinked(t *testing.T) {
 
 	// Second write (StreamWriteRecords)
 	iter := &sliceIterator{records: []any{D{"id": "2"}}}
-	secondSnap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	secondSnap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1737,7 +1737,7 @@ func TestDataset_StreamWriteRecords_WithChecksum_RecordsChecksum(t *testing.T) {
 	}
 
 	iter := &sliceIterator{records: []any{D{"id": "1"}, D{"id": "2"}}}
-	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}

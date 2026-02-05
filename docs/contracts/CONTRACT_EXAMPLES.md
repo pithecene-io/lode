@@ -39,7 +39,7 @@ records := []lode.D{
     {"id": "2", "name": "bob"},
 }
 iter := NewSliceIterator(records)
-snap, err := ds.StreamWriteRecords(ctx, lode.Metadata{}, iter)
+snap, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{})
 ```
 
 When using `[]lode.D`, add a brief comment explaining the iterator backing relationship.

@@ -292,7 +292,7 @@ type Dataset interface {
 	// StreamWriteRecords consumes records via a pull-based iterator and streams them
 	// through a streaming-capable codec. Returns an error if metadata is nil or if
 	// the configured codec does not support streaming.
-	StreamWriteRecords(ctx context.Context, metadata Metadata, records RecordIterator) (*Snapshot, error)
+	StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*Snapshot, error)
 }
 
 // -----------------------------------------------------------------------------

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- N/A
+- **StreamWriteRecords Parameter Order**: Reordered from `(ctx, metadata, records)` to `(ctx, records, metadata)` for ergonomic consistency with iterator-first patterns
 
 ### Fixed
 
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- None
+- **StreamWriteRecords Signature**: Parameter order changed from `StreamWriteRecords(ctx, metadata, records)` to `StreamWriteRecords(ctx, records, metadata)`. Update callsites accordingly.
 
 ### Known Limitations
 
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade Notes
 
-- N/A
+- **StreamWriteRecords migration**: Update all `StreamWriteRecords` callsites to use the new parameter order: `ds.StreamWriteRecords(ctx, iter, metadata)` instead of `ds.StreamWriteRecords(ctx, metadata, iter)`
 
 ### References
 

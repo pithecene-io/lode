@@ -53,7 +53,7 @@ It is authoritative for any `Dataset` implementation.
 
 ### StreamWriteRecords Semantics
 
-- `StreamWriteRecords(ctx, metadata, records)` MUST return an error if metadata is nil.
+- `StreamWriteRecords(ctx, records, metadata)` MUST return an error if metadata is nil.
 - `StreamWriteRecords` MUST return an error if records iterator is nil.
 - `StreamWriteRecords` MUST consume records via a pull-based iterator.
 - `StreamWriteRecords` MUST return an error if the configured codec does not support

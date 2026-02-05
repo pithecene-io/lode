@@ -511,7 +511,7 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 	}, nil
 }
 
-func (d *dataset) StreamWriteRecords(ctx context.Context, metadata Metadata, records RecordIterator) (*Snapshot, error) {
+func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*Snapshot, error) {
 	if metadata == nil {
 		return nil, errors.New("lode: metadata must be non-nil (use empty map {} for no metadata)")
 	}

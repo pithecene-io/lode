@@ -82,10 +82,10 @@ func run() error {
 	// - Encodes through codec directly to storage
 	// - Writes manifest only after all records are processed
 	// - Returns error if iterator fails
-	snap, err := ds.StreamWriteRecords(ctx, lode.Metadata{
+	snap, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{
 		"source":      "stream_write_records_example",
 		"record_type": "user_events",
-	}, iter)
+	})
 	if err != nil {
 		return fmt.Errorf("stream write records: %w", err)
 	}
