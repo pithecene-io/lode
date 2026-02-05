@@ -24,6 +24,29 @@ Snippets that can be executed directly or extracted and compiled.
 - CI job extracts and validates runnable snippets
 - Failures block merge
 
+**Verification Strictness (Known Trade-offs):**
+
+The snippet verifier (`scripts/verify-snippets.sh`) has intentionally permissive Go validation:
+
+- Go snippets are wrapped with injected imports (`context`, `fmt`, `lode`) before compilation
+- This may produce **false positives**: snippets that pass CI but aren't truly self-contained
+- Bash snippets use `bash -n` syntax checking only (not execution)
+
+**Why permissive?**
+- Current runnable snippet set is mostly bash (see inventory table below)
+- Low complexity keeps the verifier maintainable
+- Full Go execution would require careful sandboxing
+
+**Authoritative runtime verification:**
+- `examples/*/main.go` files are the authoritative source for complete, runnable code
+- `task examples` verifies these at runtime
+- When in doubt, add runnable code to an example, not to docs
+
+**When to revisit:**
+- If runnable Go snippets become common in docs
+- If false positives cause user confusion
+- Consider: extracting snippets to temp files with full `go run` verification
+
 ### Illustrative Snippets
 
 Snippets that demonstrate API patterns but are not independently runnable.
