@@ -38,6 +38,7 @@ Plans, contracts, and research notes. Contracts define **system behavior**.
 - `contracts/CONTRACT_READ_API.md` — read API contract and adapter obligations
 - `contracts/CONTRACT_ERRORS.md` — error taxonomy and handling guidelines
 - `contracts/CONTRACT_TEST_MATRIX.md` — contract-to-test traceability and coverage gaps
+- `contracts/CONTRACT_EXAMPLES.md` — example and callsite conventions
 
 Contracts are authoritative over code.
 

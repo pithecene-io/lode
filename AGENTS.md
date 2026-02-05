@@ -115,6 +115,20 @@ Assume it is invalid and stop.
 
 ---
 
+## API and example conventions
+
+- `PUBLIC_API.md` is canonical for callsite conventions
+- Example code must not drift from `PUBLIC_API.md`
+- Write examples prefer `lode.R(...)` for inline record construction
+- `[]lode.D` is allowed only when backing an iterator (add comment explaining why)
+- Pre-v1 ergonomics changes require contract+docs+tests+examples updated together
+
+If examples diverge from these conventions, stop and ask before editing.
+
+See `docs/contracts/CONTRACT_EXAMPLES.md` for full normative specification.
+
+---
+
 ## Priority order
 
 1. Correctness
