@@ -9,8 +9,8 @@
 //   - Put: Uses atomic or multipart path based on payload size.
 //     Atomic (≤5GB): Spools to temp file, then PutObject with If-None-Match.
 //     Provides atomic no-overwrite guarantee with O(1) memory usage.
-//     Multipart (>5GB): Best-effort via preflight existence check;
-//     TOCTOU window exists—single-writer or external coordination required.
+//     Multipart (>5GB): Uses CompleteMultipartUpload with If-None-Match for
+//     atomic no-overwrite guarantee. Preflight check optimizes fail-fast behavior.
 //   - Get/Exists/Delete: Standard ErrNotFound semantics
 //   - List: Full pagination support, returns all matching keys
 //   - ReadRange: True range reads via HTTP Range header
@@ -223,12 +223,9 @@ func (s *Store) putAtomicFromFile(ctx context.Context, fullKey string, file io.R
 // putMultipartFromFile implements multipart upload for objects > 5GB.
 // Reads parts directly from file using io.SectionReader for memory efficiency.
 //
-// S3 multipart upload does not support conditional completion, so this path
-// uses a preflight existence check. This provides best-effort no-overwrite
-// protection with a TOCTOU window between check and completion.
-//
-// Per CONTRACT_STORAGE.md: single-writer or external coordination is required
-// to guarantee no-overwrite semantics on this path.
+// Uses conditional completion (If-None-Match) for atomic no-overwrite guarantee,
+// matching the atomic path. The preflight existence check is retained as an
+// optimization to fail fast before uploading parts.
 func (s *Store) putMultipartFromFile(ctx context.Context, fullKey string, file io.ReaderAt, size int64) error {
 	// Check S3 size limit (5TB max)
 	if size > maxObjectSize {
@@ -244,7 +241,8 @@ func (s *Store) putMultipartFromFile(ctx context.Context, fullKey string, file i
 		partSize = (size + maxParts - 1) / maxParts
 	}
 
-	// Preflight existence check (best-effort; TOCTOU window exists).
+	// Preflight existence check (optimization to fail fast before uploading parts).
+	// The actual atomicity guarantee comes from If-None-Match on CompleteMultipartUpload.
 	exists, err := s.exists(ctx, fullKey)
 	if err != nil {
 		return fmt.Errorf("s3: checking existence: %w", err)
@@ -312,7 +310,7 @@ func (s *Store) putMultipartFromFile(ctx context.Context, fullKey string, file i
 		offset += thisPartSize
 	}
 
-	// Complete multipart upload
+	// Complete multipart upload with conditional no-overwrite (If-None-Match)
 	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(s.bucket),
 		Key:      aws.String(fullKey),
@@ -320,9 +318,21 @@ func (s *Store) putMultipartFromFile(ctx context.Context, fullKey string, file i
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: completedParts,
 		},
+		IfNoneMatch: aws.String("*"),
 	})
 	if err != nil {
 		abortUpload()
+		// Check for conditional write failures (object already exists)
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			code := apiErr.ErrorCode()
+			// PreconditionFailed (412) - standard conditional failure
+			// ConditionalRequestConflict (409) - S3 conflict during conditional request
+			if code == "PreconditionFailed" || code == "412" ||
+				code == "ConditionalRequestConflict" || code == "409" {
+				return lode.ErrPathExists
+			}
+		}
 		return fmt.Errorf("s3: complete multipart upload: %w", err)
 	}
 
@@ -809,6 +819,13 @@ func (m *MockS3Client) CompleteMultipartUpload(_ context.Context, params *s3.Com
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Handle If-None-Match: "*" (conditional write for immutability)
+	if aws.ToString(params.IfNoneMatch) == "*" {
+		if _, exists := m.objects[key]; exists {
+			return nil, &smithyAPIError{code: "PreconditionFailed", message: "object already exists"}
+		}
+	}
 
 	upload, exists := m.uploads[uploadID]
 	if !exists {

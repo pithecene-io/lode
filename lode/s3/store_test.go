@@ -2,6 +2,7 @@ package s3
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"math"
@@ -10,6 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	s3api "github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/justapithecus/lode/lode"
 )
@@ -550,14 +554,13 @@ func TestStore_Put_AdaptivePartSizing(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Multipart TOCTOU documentation test
+// Multipart conditional completion test
 //
-// This test documents and asserts the known limitation: multipart path has a
-// TOCTOU window. Per CONTRACT_STORAGE.md, this is expected behavior and
-// single-writer or external coordination is required.
+// This test verifies that multipart uploads use conditional completion
+// (If-None-Match) to provide atomic no-overwrite guarantees.
 // -----------------------------------------------------------------------------
 
-func TestStore_Multipart_TOCTOU_Documentation(t *testing.T) {
+func TestStore_Multipart_ConditionalCompletion(t *testing.T) {
 	// Assert: maxAtomicPutSize is 5GB (the documented threshold)
 	const expectedThreshold = 5 * 1024 * 1024 * 1024
 	if maxAtomicPutSize != expectedThreshold {
@@ -567,14 +570,56 @@ func TestStore_Multipart_TOCTOU_Documentation(t *testing.T) {
 	// Assert: Atomic path uses If-None-Match (atomic)
 	// Verified by TestStore_Put_Atomic_Duplicate_ReturnsErrPathExists
 
-	// Assert: Multipart path uses preflight HeadObject (best-effort)
+	// Assert: Multipart path uses preflight + If-None-Match on completion
 	// Verified by TestStore_PutMultipartFromFile_PreExisting_ReturnsErrPathExists
+	// and TestStore_PutMultipartFromFile_ConditionalCompletion_ReturnsErrPathExists
 
-	// Document the limitation
-	t.Log("TOCTOU limitation: Between HeadObject and CompleteMultipartUpload,")
-	t.Log("a concurrent writer could create the same key. Tests verify")
-	t.Log("preflight detection works, but cannot test the race itself.")
-	t.Log("Per CONTRACT_STORAGE.md: single-writer or external coordination required.")
+	t.Log("Both atomic and multipart paths now use If-None-Match for atomic no-overwrite.")
+	t.Log("Preflight check is an optimization to fail fast before uploading parts.")
+}
+
+// TestStore_PutMultipartFromFile_ConditionalCompletion_ReturnsErrPathExists verifies
+// that even if preflight check passes, a concurrent write is detected at completion.
+// This uses a custom mock that injects the race condition deterministically.
+func TestStore_PutMultipartFromFile_ConditionalCompletion_ReturnsErrPathExists(t *testing.T) {
+	ctx := t.Context()
+
+	// Create a racing mock that injects object just before CompleteMultipartUpload is checked
+	mock := &racingMockS3Client{MockS3Client: NewMockS3Client()}
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Create temp file
+	tmpFile, err := os.CreateTemp("", "multipart-cond-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	defer func() { _ = tmpFile.Close() }()
+
+	// Write data
+	data := []byte("test multipart conditional completion")
+	if _, err := tmpFile.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tmpFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	const testKey = "conditional-race.txt"
+	mock.raceKey = testKey
+
+	// Call putMultipartFromFile - the racing mock will inject the object
+	// after all parts are uploaded but before completion is checked
+	err = store.putMultipartFromFile(ctx, testKey, tmpFile, int64(len(data)))
+
+	if err == nil {
+		t.Fatal("expected error when completing multipart upload on concurrently-created key")
+	}
+
+	// Should get ErrPathExists (translated from PreconditionFailed)
+	if !errors.Is(err, lode.ErrPathExists) {
+		t.Errorf("expected ErrPathExists, got: %v", err)
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -1011,6 +1056,29 @@ func TestStore_ReaderAt_EOF(t *testing.T) {
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected io.EOF, got: %v", err)
 	}
+}
+
+// -----------------------------------------------------------------------------
+// Test Mocks
+// -----------------------------------------------------------------------------
+
+// racingMockS3Client wraps MockS3Client and injects a race condition in
+// CompleteMultipartUpload to test conditional completion guarantees.
+type racingMockS3Client struct {
+	*MockS3Client
+	raceKey string // key to inject race condition for
+}
+
+// CompleteMultipartUpload injects a race condition before calling the parent.
+// This simulates another writer creating the object between UploadPart and completion.
+func (m *racingMockS3Client) CompleteMultipartUpload(ctx context.Context, params *s3api.CompleteMultipartUploadInput, opts ...func(*s3api.Options)) (*s3api.CompleteMultipartUploadOutput, error) {
+	// Inject race condition: create the object just before completion check
+	if m.raceKey != "" && aws.ToString(params.Key) == m.raceKey {
+		m.mu.Lock()
+		m.objects[m.raceKey] = []byte("race winner's data")
+		m.mu.Unlock()
+	}
+	return m.MockS3Client.CompleteMultipartUpload(ctx, params, opts...)
 }
 
 // -----------------------------------------------------------------------------

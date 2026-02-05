@@ -184,7 +184,7 @@ Common pitfalls when using Lode:
 - **Metadata must be non-nil** — Pass `lode.Metadata{}` for empty metadata, not `nil`.
 - **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
 - **Single-writer only** — Concurrent writers to the same dataset may corrupt history.
-- **Large uploads have TOCTOU risk** — Uploads >5GB (S3) use preflight checks; coordinate externally.
+- **Large uploads are now atomic** — Uploads >5GB (S3) use conditional completion for atomic no-overwrite.
 - **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
 - **StreamWriteRecords requires streaming codec** — Not all codecs support streaming.
 

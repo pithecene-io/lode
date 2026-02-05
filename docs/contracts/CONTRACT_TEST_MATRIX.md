@@ -136,9 +136,10 @@ Gaps are tracked with codes indicating category and priority:
 
 | Requirement | Test |
 |-------------|------|
-| ErrPathExists on duplicate | `TestStore_Put_Atomic_Duplicate_ReturnsErrPathExists` |
+| ErrPathExists on duplicate (atomic) | `TestStore_Put_Atomic_Duplicate_ReturnsErrPathExists` |
 | Multipart preflight check | `TestStore_PutMultipartFromFile_PreExisting_ReturnsErrPathExists` |
-| TOCTOU documented | `TestStore_Multipart_TOCTOU_Documentation` |
+| Multipart conditional completion | `TestStore_PutMultipartFromFile_ConditionalCompletion_ReturnsErrPathExists` |
+| Conditional completion documented | `TestStore_Multipart_ConditionalCompletion` |
 | Temp file cleanup | `TestStore_Put_TempFileCleanup_OnSuccess`, `TestStore_Put_TempFileCleanup_OnFailure` |
 
 **Get/Exists/List/Delete**: All covered ✅

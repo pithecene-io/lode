@@ -338,23 +338,18 @@ External coordination (locks, queues, leader election) is the caller's responsib
 
 *Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency*
 
-### Large Upload Caveats (TOCTOU)
+### Large Upload Guarantees
 
 For uploads exceeding the storage adapter's atomic threshold (e.g., 5GB for S3),
-the no-overwrite guarantee weakens:
+the S3 adapter now uses conditional completion (`If-None-Match` on `CompleteMultipartUpload`)
+to provide the same atomic no-overwrite guarantee as small uploads.
 
-1. Adapter performs preflight existence check → "not exists"
-2. Another writer creates the same path
-3. This writer's upload completes and may overwrite
+Both upload paths now provide atomic no-overwrite guarantees:
+- **Small uploads** (≤ 5GB): Atomic via `PutObject` with `If-None-Match`
+- **Large uploads** (> 5GB): Atomic via `CompleteMultipartUpload` with `If-None-Match`
 
-This TOCTOU (time-of-check-to-time-of-use) window cannot be closed without
-conditional multipart completion (which S3 does not support).
-
-**To preserve the no-overwrite guarantee on large uploads:**
-- Ensure single-writer semantics per object path, OR
-- Use external coordination (distributed locks, etc.)
-
-Small uploads (≤ threshold) use atomic conditional writes with no TOCTOU window.
+Preflight existence checks are retained as a fail-fast optimization to avoid
+uploading parts for objects that already exist.
 
 *Contract reference: [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Put Upload Paths, [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Storage-Level Concurrency*
 

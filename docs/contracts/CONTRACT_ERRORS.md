@@ -116,11 +116,11 @@ These indicate storage-level failures.
 | Put Path | Detection | Guarantee |
 |----------|-----------|-----------|
 | Atomic (≤ threshold) | Conditional write | Always detected |
-| Multipart (> threshold) | Preflight existence check | Best-effort (TOCTOU window) |
+| Multipart (> threshold) | Conditional completion (if supported) or preflight | Atomic (conditional) or best-effort (preflight only) |
 
-The multipart path has a TOCTOU window between preflight check and upload completion.
-Under concurrent writers without external coordination, an existing path may not be
-detected and data may be overwritten. Single-writer semantics or external coordination required.
+When the backend supports conditional multipart completion (e.g., S3 `If-None-Match`),
+both paths provide atomic no-overwrite detection. When only preflight is available,
+a TOCTOU window exists and single-writer semantics or external coordination is required.
 Threshold values are adapter-specific; consult adapter documentation.
 
 ---

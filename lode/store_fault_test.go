@@ -46,6 +46,9 @@ type faultStore struct {
 	putBlock    chan struct{} // if non-nil, Put blocks until closed
 	deleteBlock chan struct{} // if non-nil, Delete blocks until closed
 
+	// Pre-call hooks: called after recording but before blocking
+	beforePut func(path string)
+
 	// Post-call hooks: called after operation completes (before returning)
 	afterPut    func(path string, err error)
 	afterDelete func(path string, err error)
@@ -84,6 +87,14 @@ func (f *faultStore) SetPutBlock(ch chan struct{}) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.putBlock = ch
+}
+
+// SetBeforePut sets a hook called after recording but before blocking.
+// Use this for deterministic synchronization with blocking operations.
+func (f *faultStore) SetBeforePut(hook func(path string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforePut = hook
 }
 
 // SetAfterPut sets a hook called after each Put completes.
@@ -134,9 +145,15 @@ func (f *faultStore) Put(ctx context.Context, path string, r io.Reader) error {
 	injectedErr := f.putErr
 	errMatch := f.putErrMatch
 	block := f.putBlock
+	beforeHook := f.beforePut
 	hook := f.afterPut
 	f.putCalls = append(f.putCalls, path)
 	f.mu.Unlock()
+
+	// Call beforePut hook (for deterministic sync before blocking)
+	if beforeHook != nil {
+		beforeHook(path)
+	}
 
 	// Block if configured (useful for testing cancellation windows)
 	if block != nil {

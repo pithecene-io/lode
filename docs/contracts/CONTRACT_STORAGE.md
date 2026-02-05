@@ -28,12 +28,12 @@ It is authoritative for any implementation of the `Store` interface.
 #### Put Upload Paths
 
 Adapters MAY route Put through different mechanisms based on payload size.
-The no-overwrite guarantee strength depends on the path used:
+The no-overwrite guarantee strength depends on the path and backend capabilities:
 
 | Path | Trigger | Detection Mechanism | Guarantee |
 |------|---------|---------------------|-----------|
 | Atomic | payload ≤ threshold | Conditional write | **Atomic** — no TOCTOU |
-| Multipart | payload > threshold | Preflight existence check | **Best-effort** — TOCTOU window exists |
+| Multipart | payload > threshold | Conditional completion (if supported) or preflight check | **Atomic** (conditional) or **Best-effort** (preflight only) |
 
 **Atomic Path** (≤ threshold):
 - MUST use atomic conditional-create where backend supports it.
@@ -43,12 +43,13 @@ The no-overwrite guarantee strength depends on the path used:
 
 **Multipart Path** (> threshold):
 - Used when backend API limits require chunked uploads.
-- MUST perform preflight existence check before starting upload.
+- SHOULD use conditional completion (e.g., S3 `If-None-Match` on `CompleteMultipartUpload`)
+  where the backend supports it for atomic no-overwrite guarantee.
+- MAY perform preflight existence check as a fail-fast optimization.
+- If conditional completion is not supported, MUST perform preflight existence check.
 - If preflight detects existing path, MUST return `ErrPathExists`.
-- **TOCTOU window**: Between preflight check and upload completion, a concurrent
-  writer may create the same path. The adapter cannot prevent this race.
-- **Caller responsibility**: Single-writer semantics or external coordination
-  is REQUIRED to guarantee no-overwrite on this path.
+- When only preflight is available: **TOCTOU window** exists between check and completion;
+  single-writer semantics or external coordination is REQUIRED.
 
 #### Adapter Documentation Requirements
 

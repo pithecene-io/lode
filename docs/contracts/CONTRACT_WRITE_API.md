@@ -115,19 +115,17 @@ conflicts between multiple concurrent writers.
 ### Storage-Level Concurrency for Streaming Writes
 
 Streaming writes (`StreamWrite`, `StreamWriteRecords`) that produce large payloads
-may use the storage adapter's multipart/chunked upload path. On backends without
-conditional multipart completion (e.g., S3), this path has a TOCTOU window:
+may use the storage adapter's multipart/chunked upload path.
 
-1. Preflight existence check returns "not exists"
-2. Another writer creates the same path
-3. This writer's upload completes and overwrites
+**Backends with conditional completion support (e.g., S3 with `If-None-Match`):**
+- Both atomic and multipart paths provide atomic no-overwrite guarantees.
+- No additional coordination required beyond the adapter.
 
-**To preserve the no-overwrite guarantee on such backends:**
+**Backends without conditional completion support:**
+- The multipart path has a TOCTOU window between preflight check and completion.
 - Callers MUST ensure single-writer semantics per object path, OR
 - Callers MUST use external coordination (distributed locks, queues, etc.)
 
-The storage adapter's one-shot path (for small payloads) provides atomic
-no-overwrite protection where the backend supports conditional writes.
 See `CONTRACT_STORAGE.md` for adapter-specific thresholds and guarantees.
 
 ---

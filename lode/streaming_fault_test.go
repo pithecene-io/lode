@@ -330,27 +330,21 @@ func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Block Put operations for manifest only, signal when manifest Put is entered
+	// Block Put operations and signal when manifest Put is entered
 	putBlock := make(chan struct{})
 	manifestPutEntered := make(chan struct{}, 1)
 	fs.SetPutBlock(putBlock)
 
-	// Count puts before commit to detect manifest Put
-	putCountBefore := len(fs.PutCalls())
-
-	// Watch for manifest Put (will be a new Put after data file)
-	go func() {
-		for {
-			calls := fs.PutCalls()
-			// Look for a manifest Put (new Put containing "manifest")
-			for i := putCountBefore; i < len(calls); i++ {
-				if strings.Contains(calls[i], "manifest") {
-					manifestPutEntered <- struct{}{}
-					return
-				}
+	// Use beforePut hook for deterministic synchronization (no busy-spin)
+	fs.SetBeforePut(func(path string) {
+		if strings.Contains(path, "manifest") {
+			select {
+			case manifestPutEntered <- struct{}{}:
+			default:
+				// Already signaled
 			}
 		}
-	}()
+	})
 
 	// Start commit in goroutine (will block on manifest Put)
 	commitDone := make(chan error, 1)

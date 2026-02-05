@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- N/A
+- **S3 Multipart Atomic No-Overwrite**: Large uploads (>5GB) now use conditional completion (`If-None-Match` on `CompleteMultipartUpload`) for atomic no-overwrite guarantee, closing the TOCTOU window that existed in v0.2.0
 
 ### Breaking Changes
 
