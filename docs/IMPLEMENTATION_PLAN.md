@@ -39,8 +39,8 @@ Establish repo discipline and enforce boundary constraints before adding behavio
 
 ### Mini-milestones
 - [x] Guardrails exist and are visible
-- [ ] Task targets are present (build / test / lint)
-- [ ] No execution logic introduced
+- [x] Task targets are present (build / test / lint)
+- [x] No execution logic introduced
 
 ---
 
@@ -119,9 +119,9 @@ Implement the minimal, end-to-end write path with immutable snapshots.
 - Safe write semantics enforced
 
 ### Mini-milestones
-- [ ] Write → manifest → snapshot works
-- [ ] No metadata inference or defaults
-- [ ] Empty dataset behavior matches contracts
+- [x] Write → manifest → snapshot works
+- [x] No metadata inference or defaults
+- [x] Empty dataset behavior matches contracts
 
 ---
 
@@ -141,9 +141,9 @@ Make storage and format choices pluggable without changing semantics.
 - Curated layout implementations (default + hive-style + flat)
 
 ### Mini-milestones
-- [ ] Manifests record component names
-- [ ] No nil component handling
-- [ ] Layout is portable across adapters
+- [x] Manifests record component names
+- [x] No nil component handling
+- [x] Layout is portable across adapters
 
 ---
 
@@ -160,9 +160,9 @@ Provide a minimal read facade for external consumers.
 - Layout-specific dataset errors (when datasets are not modeled)
 
 ### Mini-milestones
-- [ ] Range reads are true range reads
-- [ ] Manifests are sufficient for discovery
-- [ ] No planning or query logic added
+- [x] Range reads are true range reads
+- [x] Manifests are sufficient for discovery
+- [x] No planning or query logic added
 
 ---
 
@@ -180,10 +180,10 @@ Stabilize behavior and validate invariants with tests and examples.
 - Examples for default layout and hive-style layout
 
 ### Mini-milestones
-- [ ] Tests enforce immutability
-- [ ] Examples align with contracts
-- [ ] Single-object blob example uses default bundle and explicit metadata
-- [ ] No hidden state detected
+- [x] Tests enforce immutability
+- [x] Examples align with contracts
+- [x] Single-object blob example uses default bundle and explicit metadata
+- [x] No hidden state detected
 
 ---
 
@@ -201,6 +201,9 @@ Explore new adapters or codecs without expanding the public API.
 - [x] Minimal API surface (only `s3.New` and `s3.Config` exported)
 - [x] No backend-specific conditionals
 - [x] CONTRACT_STORAGE.md compliance verified
+- [x] Zstd compressor added as an additive compression option
+- [ ] Parquet codec implemented
+- [ ] Manifest stats extensions finalized (additive)
 
 ### S3 Adapter
 
@@ -245,3 +248,25 @@ Any change that affects contract behavior must:
 1. Update the relevant `docs/contracts/CONTRACT_*.md` file.
 2. Include a compatibility note (breaking vs additive).
 3. Avoid expanding public API without explicit justification.
+
+---
+
+## Post-v0.4 Roadmap (Planned)
+
+### Priority Track A — Storage Safety Hardening
+
+- [ ] Evaluate and adopt stronger S3 conditional-write guarantees for multipart paths
+- [ ] Update storage contract/docs with backend-specific guarantee notes where needed
+- [ ] Add integration coverage for large-upload overwrite prevention paths
+
+### Priority Track B — Format and Ecosystem
+
+- [ ] Prioritize Parquet codec delivery
+- [ ] Define additive manifest stats needed for Parquet-oriented pruning workflows
+- [ ] Add/refresh examples for columnar and streaming workflows
+
+### Priority Track C — Zarr/Xarray Direction
+
+- [ ] Design reference-based path for GRIB2/NetCDF-to-Zarr workflows within Lode boundaries
+- [ ] Define docs/examples for chunk/region safety expectations
+- [ ] Evaluate native Zarr encoding path after reference-based workflow is validated
