@@ -330,19 +330,42 @@ func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Block Put operations
+	// Block Put operations for manifest only, signal when manifest Put is entered
 	putBlock := make(chan struct{})
+	manifestPutEntered := make(chan struct{}, 1)
 	fs.SetPutBlock(putBlock)
 
-	// Start commit in goroutine (will block on Put)
+	// Count puts before commit to detect manifest Put
+	putCountBefore := len(fs.PutCalls())
+
+	// Watch for manifest Put (will be a new Put after data file)
+	go func() {
+		for {
+			calls := fs.PutCalls()
+			// Look for a manifest Put (new Put containing "manifest")
+			for i := putCountBefore; i < len(calls); i++ {
+				if strings.Contains(calls[i], "manifest") {
+					manifestPutEntered <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
+
+	// Start commit in goroutine (will block on manifest Put)
 	commitDone := make(chan error, 1)
 	go func() {
 		_, err := sw.Commit(ctx)
 		commitDone <- err
 	}()
 
-	// Give commit time to start and hit the block
-	time.Sleep(50 * time.Millisecond)
+	// Wait for commit to reach the blocked manifest Put (deterministic sync)
+	select {
+	case <-manifestPutEntered:
+		// Manifest Put has been called and is now blocked
+	case <-time.After(2 * time.Second):
+		t.Fatal("commit did not reach manifest Put")
+	}
 
 	// Cancel context while Put is blocked
 	cancel()
@@ -360,8 +383,9 @@ func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
 		t.Fatal("commit did not complete after unblock")
 	}
 
-	// Use fresh context to verify state
-	freshCtx := context.Background()
+	// Use fresh context to verify state (parent context was canceled)
+	freshCtx, freshCancel := context.WithCancel(t.Context())
+	defer freshCancel()
 
 	// Verify: no snapshot visible
 	_, err = ds.Latest(freshCtx)
