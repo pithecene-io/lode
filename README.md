@@ -216,6 +216,61 @@ Reads always target a snapshot explicitly.
 
 ---
 
+## Storage Prerequisites
+
+**Ensure storage exists before constructing a dataset or reader.**
+
+Lode does not create storage infrastructure. This is intentional:
+- No hidden side effects in constructors
+- Explicit provisioning keeps control with the caller
+- Same pattern across all backends
+
+### Filesystem
+
+```bash
+# Create directory before use
+mkdir -p /data/lode
+```
+
+<!-- illustrative -->
+```go
+// Then construct dataset
+ds, err := lode.NewDataset("events", lode.NewFSFactory("/data/lode"))
+```
+
+### S3
+
+```bash
+# Create bucket before use (via AWS CLI, console, or IaC)
+aws s3 mb s3://my-bucket
+```
+
+<!-- illustrative -->
+```go
+// Then construct dataset
+store, err := s3.New(client, s3.Config{Bucket: "my-bucket"})
+ds, err := lode.NewDataset("events", store)
+```
+
+### Bootstrap Helpers
+
+If you need provisioning helpers, implement them outside core APIs:
+
+<!-- illustrative -->
+```go
+// Example: ensure directory exists before constructing dataset
+func EnsureFSDataset(id, root string, opts ...lode.Option) (*lode.Dataset, error) {
+    if err := os.MkdirAll(root, 0755); err != nil {
+        return nil, fmt.Errorf("create storage root: %w", err)
+    }
+    return lode.NewDataset(id, lode.NewFSFactory(root), opts...)
+}
+```
+
+This keeps Lode's core APIs explicit and predictable.
+
+---
+
 ## Examples
 
 | Example | Purpose | Run |

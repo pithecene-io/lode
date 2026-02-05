@@ -80,24 +80,30 @@ If no annotation is present, the snippet is assumed **illustrative** by default.
 
 | Lines | Language | Category | Description |
 |-------|----------|----------|-------------|
-| 55-57 | bash | Runnable | `go get` install command |
-| 61-84 | go | Illustrative | Write and read blob pattern |
-| 88-100 | go | Illustrative | Write structured records pattern |
-| 104-111 | go | Illustrative | StreamWrite pattern |
+| 56-58 | bash | Runnable | `go get` install command |
+| 63-86 | go | Illustrative | Write and read blob pattern |
+| 91-103 | go | Illustrative | Write structured records pattern |
+| 108-115 | go | Illustrative | StreamWrite pattern |
+| 230-233 | bash | Illustrative | mkdir for filesystem setup |
+| 236-239 | go | Illustrative | Filesystem dataset construction |
+| 243-246 | bash | Illustrative | S3 bucket creation |
+| 249-253 | go | Illustrative | S3 dataset construction |
+| 260-268 | go | Illustrative | Bootstrap helper pattern |
 
 ### PUBLIC_API.md
 
 | Lines | Language | Category | Description |
 |-------|----------|----------|-------------|
-| 33-43 | go | Illustrative | NewDataset construction |
-| 53-62 | go | Illustrative | NewReader construction |
-| 140-144 | go | Illustrative | Timestamped interface definition |
-| 151-162 | go | Illustrative | Timestamped implementation example |
-| 306-311 | go | Illustrative | errors.Is usage pattern |
-| 357-372 | go | Illustrative | AWS S3 client setup |
-| 376-398 | go | Illustrative | LocalStack client setup |
-| 402-415 | go | Illustrative | MinIO client setup |
-| 419-431 | go | Illustrative | Cloudflare R2 client setup |
+| 34-44 | go | Illustrative | NewDataset construction |
+| 54-63 | go | Illustrative | NewReader construction |
+| 141-145 | go | Illustrative | Timestamped interface definition |
+| 152-163 | go | Illustrative | Timestamped implementation example |
+| 254-262 | go | Illustrative | Bootstrap helper pattern |
+| 341-346 | go | Illustrative | errors.Is usage pattern |
+| 392-407 | go | Illustrative | AWS S3 client setup |
+| 412-434 | go | Illustrative | LocalStack client setup |
+| 438-451 | go | Illustrative | MinIO client setup |
+| 455-467 | go | Illustrative | Cloudflare R2 client setup |
 
 ### examples/blob_upload/README.md
 

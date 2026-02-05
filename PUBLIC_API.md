@@ -233,6 +233,45 @@ by key. Use `Write` for partitioned data.
 
 ---
 
+## Storage Prerequisites
+
+**Ensure storage exists before constructing a dataset or reader.**
+
+Lode does not create storage infrastructure (directories, buckets). This is intentional:
+
+- **No hidden side effects**: Constructors do not modify external state
+- **Explicit provisioning**: Callers control when and how storage is created
+- **Backend symmetry**: Same pattern for filesystem, S3, and other adapters
+
+### Required Setup
+
+| Backend | Prerequisite | Example |
+|---------|--------------|---------|
+| Filesystem | Directory must exist | `mkdir -p /data/lode` |
+| S3 | Bucket must exist | `aws s3 mb s3://my-bucket` |
+| Memory | None (in-process) | — |
+
+### Bootstrap Pattern
+
+If provisioning helpers are needed, implement them outside Lode's core APIs:
+
+<!-- illustrative -->
+```go
+// Wrapper that ensures storage exists before constructing dataset
+func EnsureFSDataset(id, root string, opts ...lode.Option) (*lode.Dataset, error) {
+    if err := os.MkdirAll(root, 0755); err != nil {
+        return nil, fmt.Errorf("create storage root: %w", err)
+    }
+    return lode.NewDataset(id, lode.NewFSFactory(root), opts...)
+}
+```
+
+This keeps Lode's constructors pure and predictable.
+
+*Contract reference: [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md)*
+
+---
+
 ## Safety Guarantees
 
 ### Commit Semantics
