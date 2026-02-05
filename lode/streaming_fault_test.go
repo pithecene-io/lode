@@ -1,0 +1,413 @@
+package lode
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// -----------------------------------------------------------------------------
+// Deterministic Streaming Failure Tests
+// -----------------------------------------------------------------------------
+//
+// These tests use the fault-injection store wrapper to verify contract guarantees
+// for streaming write failure paths WITHOUT relying on timing or network behavior.
+//
+// Key guarantees tested:
+// - No manifest on failed/canceled stream (snapshot invisibility)
+// - Cleanup attempt occurred (best-effort delete)
+// - Deterministic assertions without race conditions
+//
+// These tests address the G3-4 residual risk by providing deterministic coverage
+// of failure paths that were previously only testable via timing-dependent scenarios.
+
+// -----------------------------------------------------------------------------
+// StreamWrite Fault Tests
+// -----------------------------------------------------------------------------
+
+// TestStreamWrite_ManifestPutError_NoManifest_CleanupAttempted verifies that when
+// manifest Put fails during Commit, no manifest is written and cleanup is attempted.
+func TestStreamWrite_ManifestPutError_NoManifest_CleanupAttempted(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write some data (data file Put is in progress)
+	_, err = sw.Write([]byte("partial data"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Inject Put error ONLY for manifest paths
+	// The data file Put is already in progress and won't be affected
+	fs.SetPutError(errInjectedPut, "manifest")
+
+	// Commit should fail when writing manifest
+	_, err = sw.Commit(t.Context())
+	if err == nil {
+		t.Fatal("expected Commit to fail with manifest Put error")
+	}
+
+	// Clear error to allow Latest to work
+	fs.SetPutError(nil)
+
+	// Verify: no snapshot visible
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after failed commit, got: %v", err)
+	}
+
+	// Verify: cleanup was attempted (Delete called for data file)
+	deleteCalls := fs.DeleteCalls()
+	dataFileDeleted := false
+	for _, path := range deleteCalls {
+		if strings.Contains(path, "data") {
+			dataFileDeleted = true
+			break
+		}
+	}
+	if !dataFileDeleted {
+		t.Error("expected data file cleanup Delete after failed commit")
+	}
+}
+
+// TestStreamWrite_Abort_NoManifest_CleanupAttempted verifies that Abort leaves
+// no manifest and attempts cleanup.
+func TestStreamWrite_Abort_NoManifest_CleanupAttempted(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write data
+	_, err = sw.Write([]byte("will be aborted"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Record puts before abort
+	putsBefore := len(fs.PutCalls())
+
+	// Abort
+	err = sw.Abort(t.Context())
+	if err != nil {
+		t.Fatalf("Abort failed: %v", err)
+	}
+
+	// Verify: no manifest written (no additional Put after abort)
+	putsAfter := len(fs.PutCalls())
+	if putsAfter > putsBefore {
+		t.Errorf("expected no additional Put calls after abort, got %d new calls", putsAfter-putsBefore)
+	}
+
+	// Verify: no snapshot visible
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after abort, got: %v", err)
+	}
+
+	// Verify: cleanup was attempted
+	deleteCalls := fs.DeleteCalls()
+	if len(deleteCalls) == 0 {
+		t.Error("expected cleanup Delete call after abort")
+	}
+}
+
+// TestStreamWrite_CloseWithoutCommit_NoManifest_CleanupAttempted verifies that
+// Close without Commit behaves as Abort.
+func TestStreamWrite_CloseWithoutCommit_NoManifest_CleanupAttempted(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write data
+	_, err = sw.Write([]byte("will be abandoned"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Close without commit
+	err = sw.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Verify: no snapshot visible
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after close without commit, got: %v", err)
+	}
+
+	// Verify: cleanup was attempted
+	deleteCalls := fs.DeleteCalls()
+	if len(deleteCalls) == 0 {
+		t.Error("expected cleanup Delete call after close without commit")
+	}
+}
+
+// TestStreamWrite_CleanupErrorIgnored verifies that cleanup errors don't propagate
+// (best-effort cleanup semantics).
+func TestStreamWrite_CleanupErrorIgnored(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = sw.Write([]byte("data"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Inject Delete error to verify it's ignored
+	fs.SetDeleteError(errInjectedDelete)
+
+	// Abort should succeed even with Delete error
+	err = sw.Abort(t.Context())
+	if err != nil {
+		t.Fatalf("Abort failed despite Delete error: %v", err)
+	}
+
+	// Verify Delete was attempted
+	if len(fs.DeleteCalls()) == 0 {
+		t.Error("expected Delete call even when it fails")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// StreamWriteRecords Fault Tests
+// -----------------------------------------------------------------------------
+
+// TestStreamWriteRecords_IteratorError_NoManifest_CleanupAttempted verifies that
+// when the iterator returns an error, no manifest is written and cleanup occurs.
+func TestStreamWriteRecords_IteratorError_NoManifest_CleanupAttempted(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an iterator that fails after yielding some records
+	iter := &failingIterator{
+		records:   []any{D{"id": "1"}, D{"id": "2"}},
+		failAfter: 1,
+		err:       errors.New("iterator failure"),
+	}
+
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
+	if err == nil {
+		t.Fatal("expected error from failing iterator")
+	}
+
+	// Verify: no snapshot visible
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after iterator error, got: %v", err)
+	}
+
+	// Verify: cleanup was attempted
+	deleteCalls := fs.DeleteCalls()
+	if len(deleteCalls) == 0 {
+		t.Error("expected cleanup Delete call after iterator error")
+	}
+}
+
+// TestStreamWriteRecords_ManifestPutError_NoManifest verifies that when Put fails
+// during manifest write, the snapshot remains invisible.
+func TestStreamWriteRecords_ManifestPutError_NoManifest(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create iterator with records
+	iter := &sliceIterator{records: []any{D{"id": "1"}, D{"id": "2"}}}
+
+	// Inject Put error ONLY for manifest paths (data file Put succeeds)
+	fs.SetPutError(errInjectedPut, "manifest")
+
+	_, err = ds.StreamWriteRecords(t.Context(), iter, Metadata{})
+	if err == nil {
+		t.Fatal("expected error from manifest Put failure")
+	}
+
+	// Clear error and verify no snapshot visible
+	fs.SetPutError(nil)
+	_, err = ds.Latest(t.Context())
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after manifest Put error, got: %v", err)
+	}
+
+	// Verify cleanup was attempted (data file Delete should be called)
+	deleteCalls := fs.DeleteCalls()
+	dataFileDeleted := false
+	for _, path := range deleteCalls {
+		if strings.Contains(path, "data") {
+			dataFileDeleted = true
+			break
+		}
+	}
+	if !dataFileDeleted {
+		t.Error("expected data file cleanup Delete after manifest Put error")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Context Cancellation Tests (Deterministic)
+// -----------------------------------------------------------------------------
+//
+// Note: Simple context cancellation without blocking is timing-dependent and
+// not deterministically testable with in-memory stores. The tests below use
+// blocking to create deterministic cancellation windows.
+//
+// This is the G3-4 residual risk in action: context cancellation semantics are
+// timing-sensitive and adapter-dependent. The blocked Put test provides
+// deterministic coverage; real-world cancellation behavior depends on adapter.
+
+// TestStreamWrite_BlockedPut_ContextCancel_NoManifest tests that context
+// cancellation during a blocked Put leaves no manifest.
+func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
+	inner := NewMemory()
+	fs := newFaultStore(inner)
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a cancellable context with timeout for safety
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	sw, err := ds.StreamWrite(ctx, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write data
+	_, err = sw.Write([]byte("data"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Block Put operations
+	putBlock := make(chan struct{})
+	fs.SetPutBlock(putBlock)
+
+	// Start commit in goroutine (will block on Put)
+	commitDone := make(chan error, 1)
+	go func() {
+		_, err := sw.Commit(ctx)
+		commitDone <- err
+	}()
+
+	// Give commit time to start and hit the block
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context while Put is blocked
+	cancel()
+
+	// Unblock Put (it should see canceled context)
+	close(putBlock)
+
+	// Wait for commit to complete
+	select {
+	case err = <-commitDone:
+		if err == nil {
+			t.Fatal("expected error from blocked commit with canceled context")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("commit did not complete after unblock")
+	}
+
+	// Use fresh context to verify state
+	freshCtx := context.Background()
+
+	// Verify: no snapshot visible
+	_, err = ds.Latest(freshCtx)
+	if !errors.Is(err, ErrNoSnapshots) {
+		t.Errorf("expected ErrNoSnapshots after blocked+canceled Put, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Test Helpers
+// -----------------------------------------------------------------------------
+
+// failingIterator yields records then fails with an error.
+type failingIterator struct {
+	records   []any
+	failAfter int
+	err       error
+	index     int
+	failed    bool
+}
+
+func (f *failingIterator) Next() bool {
+	if f.failed {
+		return false
+	}
+	if f.index >= len(f.records) {
+		return false
+	}
+	if f.index >= f.failAfter {
+		f.failed = true
+		return false
+	}
+	f.index++
+	return true
+}
+
+func (f *failingIterator) Record() any {
+	if f.index == 0 || f.index > len(f.records) {
+		return nil
+	}
+	return f.records[f.index-1]
+}
+
+func (f *failingIterator) Err() error {
+	if f.failed {
+		return f.err
+	}
+	return nil
+}
