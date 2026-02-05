@@ -35,6 +35,11 @@ tasks:
       - go run ./examples/blob_upload
       - go run ./examples/manifest_driven
 
+  snippets:
+    desc: Verify runnable markdown snippets
+    cmds:
+      - ./scripts/verify-snippets.sh
+
   s3:up:
     desc: Start S3-compatible test services (LocalStack + MinIO)
     cmds:
