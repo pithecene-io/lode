@@ -31,6 +31,14 @@ const (
 	parquetTypeMax // sentinel for validation
 )
 
+// int32 bounds for overflow checks (avoids dependency on math.MinInt32/MaxInt32
+// which were added in Go 1.17).
+const (
+	minInt32     = -1 << 31  // -2147483648
+	maxInt32     = 1<<31 - 1 // 2147483647
+	maxSafeInt64 = 1 << 53   // max integer exactly representable in float64
+)
+
 // ParquetField defines a single field in a Parquet schema.
 type ParquetField struct {
 	Name     string
@@ -294,14 +302,14 @@ func (c *parquetCodec) convertToParquetValue(val any, field ParquetField, index 
 	case ParquetInt32:
 		switch v := val.(type) {
 		case int:
-			if v < math.MinInt32 || v > math.MaxInt32 {
+			if v < minInt32 || v > maxInt32 {
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: value %d overflows int32", ErrSchemaViolation, index, field.Name, v)
 			}
 			return parquet.Int32Value(int32(v)), nil
 		case int32:
 			return parquet.Int32Value(v), nil
 		case int64:
-			if v < math.MinInt32 || v > math.MaxInt32 {
+			if v < minInt32 || v > maxInt32 {
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: value %d overflows int32", ErrSchemaViolation, index, field.Name, v)
 			}
 			return parquet.Int32Value(int32(v)), nil
@@ -309,7 +317,7 @@ func (c *parquetCodec) convertToParquetValue(val any, field ParquetField, index 
 			if math.Trunc(v) != v {
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: float64 %v is not an integer", ErrSchemaViolation, index, field.Name, v)
 			}
-			if v < math.MinInt32 || v > math.MaxInt32 {
+			if v < minInt32 || v > maxInt32 {
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: value %v overflows int32", ErrSchemaViolation, index, field.Name, v)
 			}
 			return parquet.Int32Value(int32(v)), nil
@@ -330,7 +338,7 @@ func (c *parquetCodec) convertToParquetValue(val any, field ParquetField, index 
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: float64 %v is not an integer", ErrSchemaViolation, index, field.Name, v)
 			}
 			// float64 can represent integers up to 2^53 exactly
-			if v < -9007199254740992 || v > 9007199254740992 {
+			if v < -maxSafeInt64 || v > maxSafeInt64 {
 				return parquet.Value{}, fmt.Errorf("%w: record %d field %q: value %v exceeds safe integer range for float64", ErrSchemaViolation, index, field.Name, v)
 			}
 			return parquet.Int64Value(int64(v)), nil
