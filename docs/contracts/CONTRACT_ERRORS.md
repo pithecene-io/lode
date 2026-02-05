@@ -181,6 +181,36 @@ These indicate invalid use of streaming write APIs.
 
 ---
 
+### 8. Parquet Codec Errors
+
+These indicate Parquet-specific encoding or decoding failures.
+
+| Error | Source | Meaning |
+|-------|--------|---------|
+| `lode.ErrSchemaViolation` | Parquet codec | Record does not conform to schema |
+| `lode.ErrInvalidFormat` | Parquet codec | Parquet file is malformed or corrupted |
+
+**ErrSchemaViolation Triggers**:
+- Missing required (non-nullable) field in record
+- Type mismatch after coercion attempts (e.g., string for int field)
+- Nil value for non-nullable field
+- Invalid timestamp string (not RFC3339 format)
+
+**ErrInvalidFormat Triggers**:
+- Empty file
+- Invalid Parquet magic bytes
+- Corrupted footer or metadata
+- Truncated file
+
+**Behavior**:
+- `Encode` returns `ErrSchemaViolation` for record validation failures.
+- `Decode` returns `ErrInvalidFormat` for invalid Parquet files.
+- Both errors wrap underlying errors when available.
+
+See [CONTRACT_PARQUET.md](CONTRACT_PARQUET.md) for complete Parquet codec semantics.
+
+---
+
 ## Error Handling Guidelines
 
 ### Retry-Safe Errors
