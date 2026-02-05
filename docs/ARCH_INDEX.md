@@ -36,6 +36,7 @@ Plans, contracts, and research notes. Contracts define **system behavior**.
 - `contracts/CONTRACT_LAYOUT.md` — layout, partitioning, and component rules
 - `contracts/CONTRACT_ITERATION.md` — object iterator lifecycle semantics
 - `contracts/CONTRACT_COMPOSITION.md` — store composition determinism
+- `contracts/CONTRACT_PARQUET.md` — Parquet codec semantics and schema rules
 - `contracts/CONTRACT_READ_API.md` — read API contract and adapter obligations
 - `contracts/CONTRACT_ERRORS.md` — error taxonomy and handling guidelines
 - `contracts/CONTRACT_TEST_MATRIX.md` — contract-to-test traceability and coverage gaps
