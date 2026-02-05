@@ -241,7 +241,7 @@ The following invariants are now **deterministically tested** via fault injectio
 **Deterministic test infrastructure**: `lode/store_fault_test.go` provides a fault-injection
 store wrapper with error injection, call observation, and blocking for synchronization.
 
-### Residual Risk: STORE-CTX-CANCEL (Narrowed)
+### Residual Risk: STORE-CTX-CANCEL (Addressed)
 
 **Context cancellation cleanup timing is adapter-dependent.**
 
@@ -250,6 +250,8 @@ store wrapper with error injection, call observation, and blocking for synchroni
 | Core invariant: no manifest on cancel | ✅ Deterministically tested with blocked Put |
 | Cleanup attempt on cancel | ✅ Deterministically tested with blocked Put |
 | Actual cleanup completion | ⚠️ Timing-dependent (adapter-specific) |
+| FS adapter timing | ✅ Integration tests in `lode/adapter_timing_test.go` |
+| S3 adapter timing | ✅ Integration tests in `lode/s3/integration_test.go` (gated) |
 
 **Why timing matters:**
 - In-memory stores complete synchronously before cancellation takes effect
@@ -258,10 +260,11 @@ store wrapper with error injection, call observation, and blocking for synchroni
 
 **Mitigation:**
 - Core invariants are tested deterministically via `TestStreamWrite_BlockedPut_ContextCancel_NoManifest`
-- Adapter-specific timing tests belong in integration test suites (PR 20)
+- FS adapter timing verified via `TestFSAdapter_StreamWrite_ContextCancel_NoSnapshot`
+- S3 adapter timing verified via `TestLocalStack_StreamWrite_ContextCancel_NoSnapshot` (requires `LODE_S3_TESTS=1`)
 - Cleanup is documented as best-effort per CONTRACT_ERRORS.md
 
-**Status**: Core invariants covered. Adapter timing remains as narrowly-scoped residual risk.
+**Status**: Core invariants covered. Adapter-specific timing tests exercise real behavior without asserting on inherently nondeterministic outcomes.
 
 ---
 
