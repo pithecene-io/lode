@@ -66,6 +66,10 @@ func run() error {
 
 	// Create a record iterator
 	// In real usage, this could read from a file, database cursor, or channel
+	//
+	// Note: []lode.D is used here (instead of lode.R) because the slice backs
+	// the iterator. Per CONTRACT_EXAMPLES.md, []lode.D is appropriate when
+	// records are consumed via iterator rather than passed directly to Write.
 	records := []lode.D{
 		{"id": 1, "event": "signup", "user": "alice"},
 		{"id": 2, "event": "login", "user": "alice"},
@@ -82,7 +86,7 @@ func run() error {
 	// - Encodes through codec directly to storage
 	// - Writes manifest only after all records are processed
 	// - Returns error if iterator fails
-	snap, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{
+	snapshot, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{
 		"source":      "stream_write_records_example",
 		"record_type": "user_events",
 	})
@@ -90,11 +94,11 @@ func run() error {
 		return fmt.Errorf("stream write records: %w", err)
 	}
 
-	fmt.Printf("Created snapshot: %s\n", snap.ID)
-	fmt.Printf("Row count: %d\n", snap.Manifest.RowCount)
-	fmt.Printf("Codec: %s\n", snap.Manifest.Codec)
+	fmt.Printf("Created snapshot: %s\n", snapshot.ID)
+	fmt.Printf("Row count: %d\n", snapshot.Manifest.RowCount)
+	fmt.Printf("Codec: %s\n", snapshot.Manifest.Codec)
 	fmt.Printf("Files:\n")
-	for _, f := range snap.Manifest.Files {
+	for _, f := range snapshot.Manifest.Files {
 		fmt.Printf("  - %s (%d bytes)\n", f.Path, f.SizeBytes)
 	}
 	fmt.Println()
@@ -104,7 +108,7 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== VERIFY ===")
 
-	readRecords, err := ds.Read(ctx, snap.ID)
+	readRecords, err := ds.Read(ctx, snapshot.ID)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
 	}

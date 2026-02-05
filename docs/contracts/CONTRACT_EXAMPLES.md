@@ -23,7 +23,7 @@ records := lode.R(
     lode.D{"id": "1", "name": "alice"},
     lode.D{"id": "2", "name": "bob"},
 )
-snap, err := ds.Write(ctx, records, lode.Metadata{})
+snapshot, err := ds.Write(ctx, records, lode.Metadata{})
 ```
 
 **Why:** `R(...)` is ergonomic, reads naturally, and builds `[]any` directly.
@@ -39,7 +39,7 @@ records := []lode.D{
     {"id": "2", "name": "bob"},
 }
 iter := NewSliceIterator(records)
-snap, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{})
+snapshot, err := ds.StreamWriteRecords(ctx, iter, lode.Metadata{})
 ```
 
 When using `[]lode.D`, add a brief comment explaining the iterator backing relationship.
@@ -49,7 +49,7 @@ When using `[]lode.D`, add a brief comment explaining the iterator backing relat
 For raw blob writes (no codec), use `[]any{blobData}`:
 
 ```go
-snap, err := ds.Write(ctx, []any{blobData}, lode.Metadata{})
+snapshot, err := ds.Write(ctx, []any{blobData}, lode.Metadata{})
 ```
 
 ---
@@ -61,7 +61,7 @@ snap, err := ds.Write(ctx, []any{blobData}, lode.Metadata{})
 | `records` | Slice of records for Write or iterator backing |
 | `iter` | RecordIterator instance |
 | `metadata` | Metadata map (`lode.Metadata{}`) |
-| `snap` | Snapshot result from write operations |
+| `snapshot` | Snapshot result from write operations |
 | `ds` | Dataset instance |
 | `ctx` | Context |
 
