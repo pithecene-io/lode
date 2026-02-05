@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/aws/smithy-go v1.24.0
 	github.com/json-iterator/go v1.1.12
+	github.com/klauspost/compress v1.18.3
 )
 
 require (

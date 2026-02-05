@@ -1176,6 +1176,127 @@ func TestDataset_StreamWrite_WithGzipCompression(t *testing.T) {
 	}
 }
 
+func TestDataset_StreamWrite_WithZstdCompression(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(), WithCompressor(NewZstdCompressor()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte("compressible data that should be zstd compressed")
+	_, err = sw.Write(data)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	snap, err := sw.Commit(t.Context())
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify manifest indicates zstd compression
+	if snap.Manifest.Compressor != "zstd" {
+		t.Errorf("expected compressor 'zstd', got %q", snap.Manifest.Compressor)
+	}
+
+	// Verify file path ends with .zst
+	if len(snap.Manifest.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(snap.Manifest.Files))
+	}
+	if !strings.HasSuffix(snap.Manifest.Files[0].Path, ".zst") {
+		t.Errorf("expected .zst extension, got %s", snap.Manifest.Files[0].Path)
+	}
+
+	// Verify data can be read back correctly
+	readData, err := ds.Read(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	readBytes, ok := readData[0].([]byte)
+	if !ok {
+		t.Fatalf("expected []byte, got %T", readData[0])
+	}
+	if string(readBytes) != string(data) {
+		t.Errorf("expected %q, got %q", data, readBytes)
+	}
+}
+
+func TestDataset_Write_WithZstdCompression(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(),
+		WithCodec(NewJSONLCodec()),
+		WithCompressor(NewZstdCompressor()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		D{"id": "1", "data": "compressible zstd content"},
+		D{"id": "2", "data": "more compressible zstd content"},
+	}
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Verify manifest indicates zstd compression
+	if snap.Manifest.Compressor != "zstd" {
+		t.Errorf("expected compressor 'zstd', got %q", snap.Manifest.Compressor)
+	}
+	if !strings.HasSuffix(snap.Manifest.Files[0].Path, ".zst") {
+		t.Errorf("expected .zst extension, got %s", snap.Manifest.Files[0].Path)
+	}
+
+	// Verify data can be read back
+	readData, err := ds.Read(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if len(readData) != 2 {
+		t.Errorf("expected 2 records, got %d", len(readData))
+	}
+}
+
+func TestDataset_StreamWriteRecords_WithZstdCompression(t *testing.T) {
+	ds, err := NewDataset("test-ds", NewMemoryFactory(),
+		WithCodec(NewJSONLCodec()),
+		WithCompressor(NewZstdCompressor()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		D{"id": "1", "data": "some zstd compressible content"},
+		D{"id": "2", "data": "more zstd compressible content"},
+	}
+	iter := &sliceIterator{records: records}
+
+	snap, err := ds.StreamWriteRecords(t.Context(), Metadata{}, iter)
+	if err != nil {
+		t.Fatalf("StreamWriteRecords failed: %v", err)
+	}
+
+	if snap.Manifest.Compressor != "zstd" {
+		t.Errorf("expected compressor 'zstd', got %q", snap.Manifest.Compressor)
+	}
+	if !strings.HasSuffix(snap.Manifest.Files[0].Path, ".zst") {
+		t.Errorf("expected .zst extension, got %s", snap.Manifest.Files[0].Path)
+	}
+
+	// Verify data can be read back
+	readData, err := ds.Read(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if len(readData) != 2 {
+		t.Errorf("expected 2 records, got %d", len(readData))
+	}
+}
+
 func TestDataset_StreamWrite_MultipleWrites(t *testing.T) {
 	ds, err := NewDataset("test-ds", NewMemoryFactory())
 	if err != nil {

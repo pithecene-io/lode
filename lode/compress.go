@@ -3,6 +3,8 @@ package lode
 import (
 	"compress/gzip"
 	"io"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // -----------------------------------------------------------------------------
@@ -33,6 +35,41 @@ func (g *gzipCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
 
 func (g *gzipCompressor) Decompress(r io.Reader) (io.ReadCloser, error) {
 	return gzip.NewReader(r)
+}
+
+// -----------------------------------------------------------------------------
+// Zstd Compressor
+// -----------------------------------------------------------------------------
+
+// zstdCompressor implements Compressor using zstd compression.
+type zstdCompressor struct{}
+
+// NewZstdCompressor creates a zstd compressor.
+//
+// Files are compressed using Zstandard format with .zst extension.
+// Zstd provides higher compression ratios and faster decompression than gzip.
+func NewZstdCompressor() Compressor {
+	return &zstdCompressor{}
+}
+
+func (z *zstdCompressor) Name() string {
+	return "zstd"
+}
+
+func (z *zstdCompressor) Extension() string {
+	return ".zst"
+}
+
+func (z *zstdCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
+	return zstd.NewWriter(w)
+}
+
+func (z *zstdCompressor) Decompress(r io.Reader) (io.ReadCloser, error) {
+	decoder, err := zstd.NewReader(r)
+	if err != nil {
+		return nil, err
+	}
+	return decoder.IOReadCloser(), nil
 }
 
 // -----------------------------------------------------------------------------
