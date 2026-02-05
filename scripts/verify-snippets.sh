@@ -141,8 +141,8 @@ verify_file() {
             next
         }
         in_fence && /^```$/ {
-            # Base64 encode to preserve newlines
-            cmd = "echo " shquote(content) " | base64 -w0"
+            # Base64 encode to preserve newlines (portable: pipe through tr to remove newlines)
+            cmd = "printf %s " shquote(content) " | base64 | tr -d " shquote("\n")
             cmd | getline encoded
             close(cmd)
             print start ":" lang ":" encoded
@@ -167,7 +167,8 @@ verify_file() {
 
         ((CHECKED++)) || true
         local content
-        content=$(echo "$encoded_content" | base64 -d 2>/dev/null || echo "")
+        # Portable base64 decode: try -d (GNU), then -D (BSD/macOS)
+        content=$(echo "$encoded_content" | base64 -d 2>/dev/null || echo "$encoded_content" | base64 -D 2>/dev/null || echo "")
 
         case "$lang" in
             bash|sh)
