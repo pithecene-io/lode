@@ -173,6 +173,16 @@ All covered ✅
 | Raw blob + partitioner rejected | `TestNewDataset_RawBlobWithPartitioner_ReturnsError` |
 | Hive layout keys | `TestNewHiveLayout_WithKeys_Success` |
 
+**Compression**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Gzip round-trip | `TestDataset_StreamWrite_WithGzipCompression` |
+| Zstd round-trip (Write) | `TestDataset_Write_WithZstdCompression` |
+| Zstd round-trip (StreamWrite) | `TestDataset_StreamWrite_WithZstdCompression` |
+| Zstd round-trip (StreamWriteRecords) | `TestDataset_StreamWriteRecords_WithZstdCompression` |
+| Compressor mismatch error | `TestDataset_Read_CompressorMismatch_ReturnsError` |
+
 ---
 
 ### CONTRACT_READ_API.md — Read API
