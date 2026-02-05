@@ -3,12 +3,15 @@
 This example demonstrates `StreamWriteRecords` for streaming large record sets
 without loading all data into memory.
 
-## What This Proves
+## What This Demonstrates
 
 1. **Pull-based streaming**: Records are pulled from an iterator one at a time
 2. **Memory efficiency**: Only one record in memory at a time (iterator controls pace)
-3. **Commit semantics**: Manifest written only after all records succeed
+3. **Atomic completion**: Either all records are written and manifest created, or nothing
 4. **Metadata explicitness**: Metadata must be non-nil (empty `{}` is valid)
+
+Note: Commit visibility (snapshot invisible before manifest) is documented behavior but
+not explicitly demonstrated here. See `manifest_driven` example for visibility semantics.
 
 ## When to Use StreamWriteRecords
 
