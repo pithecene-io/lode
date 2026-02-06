@@ -34,7 +34,7 @@ func TestNewVolume_ZeroTotalLength_ReturnsError(t *testing.T) {
 }
 
 func TestNewVolume_NilStore_ReturnsError(t *testing.T) {
-	factory := func() (Store, error) { return nil, nil }
+	factory := func() (Store, error) { return nil, nil } //nolint:nilnil // intentionally testing nil store guard
 	_, err := NewVolume("test-vol", factory, 1024)
 	if err == nil {
 		t.Fatal("expected error for nil store")

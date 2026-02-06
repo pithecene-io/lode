@@ -376,7 +376,7 @@ func (v *volume) loadSnapshot(ctx context.Context, id VolumeSnapshotID, manifest
 		}
 		return nil, fmt.Errorf("lode: failed to get volume manifest: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	var manifest VolumeManifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
