@@ -99,6 +99,19 @@ It is authoritative for any `Dataset` implementation.
 
 ## Concurrency
 
+Snapshot history for a Dataset is linear.
+
+### Dataset Write Concurrency Matrix
+
+| Pattern | Writers | Snapshots | History | v0.6 Status | Future |
+|---------|---------|-----------|---------|-------------|--------|
+| Single writer | 1 process | 1 per Write | Linear (guaranteed) | ✅ Supported | — |
+| Multi-process, serialized | N processes, external coordination | N (one per writer) | Linear (caller-enforced) | ✅ Supported (caller owns coordination) | CAS built into Lode |
+| Multi-process, uncoordinated | N processes, no coordination | N (one per writer) | **May fork** (undefined) | ⚠️ Unsafe | CAS eliminates forking |
+| Parallel staging, single commit | 1 process, N goroutines | 1 (all shards merged) | Linear (guaranteed) | ❌ Not available | Transaction API |
+
+### v0.6 Behavior
+
 Lode does not implement concurrent multi-writer conflict resolution.
 
 **Single writer or external coordination required.**
@@ -111,6 +124,23 @@ Lode does not implement concurrent multi-writer conflict resolution.
 
 Lode guarantees safety within a single writer but does not detect or resolve
 conflicts between multiple concurrent writers.
+
+### Future Direction (not v0.6)
+
+**Multi-process CAS (optimistic concurrency):**
+- Commit detects stale parent (another writer committed since Latest was read)
+  and returns a conflict error.
+- Callers retry: re-read Latest, re-write manifest with correct parent.
+  Data files are already written (immutable orphans) — retry cost is one
+  manifest write.
+- Each writer produces its own snapshot; history remains linear via CAS.
+
+**Parallel staging (transaction API):**
+- Multiple goroutines stage data files concurrently within a single
+  write transaction.
+- A single atomic Commit produces one snapshot with all data files.
+- Parallelizes the internal write pipeline without changing the model.
+- Single process only; does not address multi-process concurrency.
 
 ### Storage-Level Concurrency for Streaming Writes
 

@@ -315,29 +315,70 @@ without blurring Lode's scope boundary.
 
 ## v0.6 Execution Plan (Volume Implementation)
 
-### PR1 — Volume Contract Finalization
-- [ ] Finalize `CONTRACT_VOLUME.md` as authoritative for v0.6 (remove draft language)
-- [ ] Add explicit error sentinel for missing-range reads
-- [ ] Align `CONTRACT_ERRORS.md` with new Volume error taxonomy
+### Design Decisions (Resolved)
 
-### PR2 — Public API Surface (Volume)
-- [ ] Document `Volume` constructor and core methods in `PUBLIC_API.md`
-- [ ] Add Volume section to examples index (planned)
-- [ ] Ensure Dataset/Volume boundary text is explicit and consistent
+| ID | Decision | Resolution |
+|----|----------|------------|
+| DD-1 | SegmentRef naming | Reader `SegmentRef` → `SnapshotRef`. Volume gets `SegmentRef`. |
+| DD-2 | Manifest model | Cumulative. Each snapshot is self-contained. |
+| DD-3 | Storage layout | Fixed internal layout. Layouts are Dataset-specific. |
+| DD-4 | Staged data lifecycle | Direct to final path. Manifest = visibility. No Abort API. |
+| DD-5 | Resume semantics | Explicit/caller-driven. No uncommitted data discovery. |
+| DD-6 | VolumeOption | `WithVolumeChecksum` only for v0.6. |
+| DD-7 | Type naming | `Snapshot` → `DatasetSnapshot`, `SnapshotID` → `DatasetSnapshotID`. Volume gets symmetric types. |
+| DD-8 | Overlap validation | Strict on full cumulative manifest. Supersession explored later. |
 
-### PR3 — Manifest + Model Types
-- [ ] Define Volume manifest schema and types (`volume_id`, `total_length`, segments)
-- [ ] Validate manifest invariants and explicit range coverage
+Additional resolved items:
+- Empty commits (no new segments) are invalid
+- No segment count limit for v0.6
+- `ErrOverlappingSegments` sentinel added
+- S3 validation deferred to post-v0.6
+- Unix nanosecond IDs (consistent with Dataset)
+- Future roadmap: CAS (multi-process) + parallel staging (single-process)
 
-### PR4 — Core Implementation (FS + Memory)
-- [ ] Implement Volume staging + commit path with manifest-driven visibility
-- [ ] Implement range reads with explicit missing-range error
-- [ ] Maintain immutability: no mutation of committed data
+### PR1 — Contract Finalization and Design Decisions
+- [ ] Finalize `CONTRACT_VOLUME.md` as authoritative (remove draft, apply DD-1–DD-8)
+- [ ] Add concurrency matrices to `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
+- [ ] Add `ErrOverlappingSegments` to `CONTRACT_ERRORS.md`
+- [ ] Add Layout scope note to `CONTRACT_LAYOUT.md` (Dataset-specific)
+- [ ] Update `PUBLIC_API.md` Volume section with finalized API surface
+- [ ] Update `IMPLEMENTATION_PLAN.md` with resolved decisions
 
-### PR5 — Tests (Correctness + Resume)
-- [ ] Deterministic tests for partial ranges, missing-range errors, and resume
-- [ ] Integration coverage for FS and memory adapters
+### PR2 — Volume Types + Dataset Rename
+- [ ] Rename `Snapshot` → `DatasetSnapshot`, `SnapshotID` → `DatasetSnapshotID` in `api.go`
+- [ ] Rename `SegmentRef` → `SnapshotRef` in Reader API
+- [ ] Add Volume types: `VolumeID`, `VolumeSnapshotID`, `SegmentRef`, `VolumeManifest`, `VolumeSnapshot`
+- [ ] Add sentinels: `ErrRangeMissing`, `ErrOverlappingSegments`
+- [ ] Add `VolumeOption` type with `WithVolumeChecksum`
+- [ ] Cascade renames through all code, tests, and examples
 
-### PR6 — Examples + Docs
-- [ ] Add a runnable Volume example demonstrating sparse ranges
-- [ ] Update README/PUBLIC_API to include Volume example references
+### PR3 — Core Volume Implementation (Stage + Commit + ReadAt)
+- [ ] `NewVolume` constructor with validation
+- [ ] `StageWriteAt`: write data to final path, return `SegmentRef`
+- [ ] `Commit`: validate, build cumulative manifest, write to store
+- [ ] `ReadAt`: resolve range from manifest, read from store
+- [ ] `Latest` / `Snapshots` / `Snapshot` for history access
+- [ ] Fixed layout: `volumes/<id>/snapshots/<snap>/manifest.json`, `volumes/<id>/data/<offset>-<length>.bin`
+- [ ] Overlap validation (sort + sweep on full cumulative set)
+- [ ] Works with fsStore and memoryStore
+
+### PR4 — Comprehensive Test Suite
+- [ ] Sparse write patterns, multi-snapshot progression
+- [ ] Resume pattern: new Volume instance, load latest, continue staging
+- [ ] Edge cases: zero-length read, boundary reads, offset validation
+- [ ] Missing range errors, overlap rejection
+- [ ] Checksum validation when configured
+- [ ] FS and memory store coverage
+- [ ] Manifest round-trip (serialize → deserialize → validate)
+
+### PR5 — Example: Sparse Volume Ranges
+- [ ] Runnable `examples/volume_sparse/` demonstrating stage → commit → read
+- [ ] Demonstrates `ErrRangeMissing` for uncommitted ranges
+- [ ] Demonstrates incremental commits and completeness
+- [ ] Follows `CONTRACT_EXAMPLES.md` conventions
+
+### PR6 — Documentation Finalization + Release Prep
+- [ ] Remove all "planned"/"draft" language from shipped Volume features
+- [ ] Update README with Volume overview
+- [ ] Update `CONTRACT_TEST_MATRIX.md` with Volume coverage
+- [ ] Final cross-reference validation across all docs

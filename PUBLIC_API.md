@@ -68,16 +68,38 @@ reader, _ := lode.NewReader(
 `NewVolume(id, storeFactory, totalLength, opts...)` creates a sparse, range-addressable
 byte space with manifest-driven commit semantics.
 
-**Status**: planned for v0.6 (not in v0.5).
+Volume is a coequal persistence paradigm alongside Dataset. Dataset builds
+complete objects before committing; Volume commits truth incrementally via
+sparse byte ranges.
 
-<!-- planned -->
+<!-- illustrative -->
 ```go
 vol, _ := lode.NewVolume(
     "archive",
     lode.NewFSFactory("/data"),
     10<<30, // 10 GB total length
 )
+
+// Stage a byte range
+seg, _ := vol.StageWriteAt(ctx, 0, bytes.NewReader(chunk))
+
+// Commit staged segments into an immutable snapshot
+snapshot, _ := vol.Commit(ctx, []lode.SegmentRef{seg}, lode.Metadata{"source": "peer-1"})
+
+// Read committed range
+data, _ := vol.ReadAt(ctx, snapshot.ID, 0, int64(len(chunk)))
+
+// Get latest snapshot (for resume)
+latest, _ := vol.Latest(ctx)
 ```
+
+Volume uses a fixed internal storage layout (`volumes/<id>/...`). The
+`Layout` abstraction is Dataset-specific and does not apply to Volume.
+
+**Volume options:**
+- `WithVolumeChecksum(c)` — opt-in integrity checksums on staged segments
+
+*Contract reference: [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md)*
 
 ---
 
@@ -425,15 +447,19 @@ manifest references them.
 
 ### Single-Writer Requirement
 
-**Lode does not implement concurrent multi-writer conflict resolution.**
+**Lode does not implement concurrent multi-writer conflict resolution (v0.6).**
 
-Callers MUST ensure at most one writer is active per dataset at any time.
-Concurrent writes from multiple processes may produce inconsistent history
-(e.g., two snapshots with the same parent).
+Callers MUST ensure at most one writer is active per dataset or volume at any
+time. Concurrent writes from multiple processes may produce inconsistent
+history (e.g., two snapshots with the same parent).
 
 External coordination (locks, queues, leader election) is the caller's responsibility.
 
-*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency*
+See the concurrency matrices in `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
+for a full breakdown of supported patterns, unsafe patterns, and future direction
+(CAS-based optimistic concurrency, parallel staging transaction API).
+
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency, [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md) §Concurrency*
 
 ### Large Upload Guarantees
 
@@ -503,7 +529,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | Sentinel | Meaning | Typical Source |
 |----------|---------|----------------|
 | `ErrNotFound` | Object/path does not exist | Storage, Reader |
-| `ErrNoSnapshots` | Dataset has no committed snapshots | Dataset |
+| `ErrNoSnapshots` | Dataset or Volume has no committed snapshots | Dataset, Volume |
 | `ErrNoManifests` | Storage has objects but no valid manifests | Reader |
 | `ErrPathExists` | Write to existing path (immutability violation) | Storage |
 | `ErrInvalidPath` | Path escapes root or has invalid parameters | Storage |
@@ -515,6 +541,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | `ErrPartitioningNotSupported` | StreamWriteRecords with partitioning | Dataset |
 | `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
 | `ErrRangeMissing` | Volume ReadAt range not fully committed | Volume |
+| `ErrOverlappingSegments` | Committed segments overlap in cumulative manifest | Volume |
 | `ErrSchemaViolation` | Record doesn't conform to Parquet schema | Parquet Codec |
 | `ErrInvalidFormat` | Malformed or corrupted Parquet file | Parquet Codec |
 

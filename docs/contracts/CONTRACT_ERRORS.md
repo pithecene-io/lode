@@ -23,7 +23,7 @@ These indicate a requested resource does not exist.
 |-------|--------|---------|
 | `lode.ErrNotFound` | Storage | Object path does not exist |
 | `lode.ErrNotFound` | Read API | Dataset or segment not found (no manifests) |
-| `lode.ErrNoSnapshots` | Dataset | Dataset exists but has no committed snapshots |
+| `lode.ErrNoSnapshots` | Dataset, Volume | Dataset or Volume exists but has no committed snapshots |
 | `lode.ErrNoManifests` | Read API | Storage contains objects but no valid manifests |
 
 **Behavior**:
@@ -211,19 +211,33 @@ See [CONTRACT_PARQUET.md](CONTRACT_PARQUET.md) for complete Parquet codec semant
 
 ---
 
-### 9. Volume Range Errors
+### 9. Volume Errors
 
-These indicate missing committed ranges in Volume reads.
+These indicate Volume-specific failures.
 
 | Error | Source | Meaning |
 |-------|--------|---------|
 | `lode.ErrRangeMissing` | Volume.ReadAt | Requested range is not fully committed |
+| `lode.ErrOverlappingSegments` | Volume.Commit | Committed segments overlap in the cumulative manifest |
 
-**Behavior**:
+**ErrRangeMissing Behavior**:
 - `ReadAt` returns `ErrRangeMissing` if any sub-range is uncommitted.
 - Partial data MUST NOT be returned for committed read paths.
 
-See [CONTRACT_VOLUME.md](CONTRACT_VOLUME.md) for Volume semantics.
+**ErrOverlappingSegments Behavior**:
+- `Commit` validates the full cumulative segment set (existing + new segments).
+- If any segments overlap, `Commit` returns `ErrOverlappingSegments`.
+- Overlap is defined as two segments whose byte ranges `[offset, offset+length)`
+  intersect.
+
+**Other Volume Error Behavior**:
+- `Commit` with empty segment list returns an error.
+- `Commit` with nil metadata returns an error.
+- `Volume.Latest` returns `ErrNoSnapshots` when no snapshots exist.
+- `Volume.Snapshot` returns `ErrNotFound` when snapshot ID doesn't exist.
+- `NewVolume` with nil factory, empty ID, or non-positive totalLength returns an error.
+
+See [CONTRACT_VOLUME.md](CONTRACT_VOLUME.md) for full Volume semantics.
 
 ---
 
@@ -237,6 +251,7 @@ See [CONTRACT_VOLUME.md](CONTRACT_VOLUME.md) for Volume semantics.
 - `ErrDatasetsNotModeled` — reconfigure with different layout.
 - `ManifestValidationError` — data corruption, investigate source.
 - `ErrPathExists` — logic error in caller (double-write attempt).
+- `ErrOverlappingSegments` — logic error in caller (overlapping byte ranges).
 - Component mismatch — reconfigure dataset or use matching snapshot.
 
 ### Fatal Errors
