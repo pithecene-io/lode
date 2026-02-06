@@ -57,7 +57,7 @@ func run() error {
 	}
 
 	// Create reader with default layout
-	reader, err := lode.NewReader(storeFactory)
+	reader, err := lode.NewDatasetReader(storeFactory)
 	if err != nil {
 		return fmt.Errorf("failed to create reader: %w", err)
 	}
@@ -130,18 +130,18 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== STEP 3: Manifest-driven metadata ===")
 
-	// List segments
-	segments, err := reader.ListSegments(ctx, "committed-ds", "", lode.SegmentListOptions{})
+	// List manifests
+	manifests, err := reader.ListManifests(ctx, "committed-ds", "", lode.ManifestListOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list segments: %w", err)
+		return fmt.Errorf("failed to list manifests: %w", err)
 	}
-	fmt.Printf("Segments in 'committed-ds': %d segment(s)\n", len(segments))
-	for _, seg := range segments {
-		fmt.Printf("  - %s\n", seg.ID)
+	fmt.Printf("Manifests in 'committed-ds': %d manifest(s)\n", len(manifests))
+	for _, ref := range manifests {
+		fmt.Printf("  - %s\n", ref.ID)
 	}
 
 	// Get manifest metadata
-	loadedManifest, err := reader.GetManifest(ctx, "committed-ds", segments[0])
+	loadedManifest, err := reader.GetManifest(ctx, "committed-ds", manifests[0])
 	if err != nil {
 		return fmt.Errorf("failed to get manifest: %w", err)
 	}

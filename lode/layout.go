@@ -17,12 +17,12 @@ type layout interface {
 	segmentsPrefixForPartition(dataset DatasetID, partition string) string
 	isManifest(p string) bool
 	parseDatasetID(manifestPath string) DatasetID
-	parseSegmentID(manifestPath string) SnapshotID
+	parseSegmentID(manifestPath string) DatasetSnapshotID
 	parsePartitionFromManifest(manifestPath string) string
 	extractPartitionPath(filePath string) string
-	manifestPath(dataset DatasetID, segment SnapshotID) string
-	manifestPathInPartition(dataset DatasetID, segment SnapshotID, partition string) string
-	dataFilePath(dataset DatasetID, segment SnapshotID, partition, filename string) string
+	manifestPath(dataset DatasetID, segment DatasetSnapshotID) string
+	manifestPathInPartition(dataset DatasetID, segment DatasetSnapshotID, partition string) string
+	dataFilePath(dataset DatasetID, segment DatasetSnapshotID, partition, filename string) string
 
 	// Partitioning (unified with layout)
 	partitioner() partitioner
@@ -76,11 +76,11 @@ func (l *defaultLayout) segmentsPrefixForPartition(dataset DatasetID, _ string) 
 	return l.segmentsPrefix(dataset)
 }
 
-func (l *defaultLayout) manifestPath(dataset DatasetID, segment SnapshotID) string {
+func (l *defaultLayout) manifestPath(dataset DatasetID, segment DatasetSnapshotID) string {
 	return path.Join(datasetsDir, string(dataset), snapshotsDir, string(segment), manifestFile)
 }
 
-func (l *defaultLayout) manifestPathInPartition(dataset DatasetID, segment SnapshotID, _ string) string {
+func (l *defaultLayout) manifestPathInPartition(dataset DatasetID, segment DatasetSnapshotID, _ string) string {
 	return l.manifestPath(dataset, segment)
 }
 
@@ -104,12 +104,12 @@ func (l *defaultLayout) parseDatasetID(manifestPath string) DatasetID {
 	return DatasetID(parts[1])
 }
 
-func (l *defaultLayout) parseSegmentID(manifestPath string) SnapshotID {
+func (l *defaultLayout) parseSegmentID(manifestPath string) DatasetSnapshotID {
 	if !l.isManifest(manifestPath) {
 		return ""
 	}
 	parts := strings.Split(manifestPath, "/")
-	return SnapshotID(parts[3])
+	return DatasetSnapshotID(parts[3])
 }
 
 func (l *defaultLayout) parsePartitionFromManifest(_ string) string {
@@ -120,7 +120,7 @@ func (l *defaultLayout) extractPartitionPath(_ string) string {
 	return "" // Default layout doesn't support partitions
 }
 
-func (l *defaultLayout) dataFilePath(dataset DatasetID, segment SnapshotID, _, filename string) string {
+func (l *defaultLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, _, filename string) string {
 	return path.Join(datasetsDir, string(dataset), snapshotsDir, string(segment), dataDir, filename)
 }
 
@@ -178,11 +178,11 @@ func (l *hiveLayout) segmentsPrefixForPartition(dataset DatasetID, partition str
 	return path.Join(datasetsDir, string(dataset), partitionsDir, partition, segmentsDir) + "/"
 }
 
-func (l *hiveLayout) manifestPath(dataset DatasetID, segment SnapshotID) string {
+func (l *hiveLayout) manifestPath(dataset DatasetID, segment DatasetSnapshotID) string {
 	return path.Join(datasetsDir, string(dataset), segmentsDir, string(segment), manifestFile)
 }
 
-func (l *hiveLayout) manifestPathInPartition(dataset DatasetID, segment SnapshotID, partition string) string {
+func (l *hiveLayout) manifestPathInPartition(dataset DatasetID, segment DatasetSnapshotID, partition string) string {
 	if partition == "" {
 		return l.manifestPath(dataset, segment)
 	}
@@ -216,14 +216,14 @@ func (l *hiveLayout) parseDatasetID(manifestPath string) DatasetID {
 	return DatasetID(parts[1])
 }
 
-func (l *hiveLayout) parseSegmentID(manifestPath string) SnapshotID {
+func (l *hiveLayout) parseSegmentID(manifestPath string) DatasetSnapshotID {
 	if !l.isManifest(manifestPath) {
 		return ""
 	}
 	parts := strings.Split(manifestPath, "/")
 	for i := 2; i < len(parts)-2; i++ {
 		if parts[i] == segmentsDir {
-			return SnapshotID(parts[i+1])
+			return DatasetSnapshotID(parts[i+1])
 		}
 	}
 	return ""
@@ -288,7 +288,7 @@ func (l *hiveLayout) extractPartitionPath(filePath string) string {
 	return strings.Join(parts[partitionsIdx+1:segmentsIdx], "/")
 }
 
-func (l *hiveLayout) dataFilePath(dataset DatasetID, segment SnapshotID, partition, filename string) string {
+func (l *hiveLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, partition, filename string) string {
 	if partition == "" {
 		return path.Join(datasetsDir, string(dataset), segmentsDir, string(segment), dataDir, filename)
 	}
@@ -337,11 +337,11 @@ func (l *flatLayout) segmentsPrefixForPartition(dataset DatasetID, _ string) str
 	return l.segmentsPrefix(dataset)
 }
 
-func (l *flatLayout) manifestPath(dataset DatasetID, segment SnapshotID) string {
+func (l *flatLayout) manifestPath(dataset DatasetID, segment DatasetSnapshotID) string {
 	return path.Join(string(dataset), string(segment), manifestFile)
 }
 
-func (l *flatLayout) manifestPathInPartition(dataset DatasetID, segment SnapshotID, _ string) string {
+func (l *flatLayout) manifestPathInPartition(dataset DatasetID, segment DatasetSnapshotID, _ string) string {
 	return l.manifestPath(dataset, segment)
 }
 
@@ -361,12 +361,12 @@ func (l *flatLayout) parseDatasetID(manifestPath string) DatasetID {
 	return DatasetID(parts[0])
 }
 
-func (l *flatLayout) parseSegmentID(manifestPath string) SnapshotID {
+func (l *flatLayout) parseSegmentID(manifestPath string) DatasetSnapshotID {
 	if !l.isManifest(manifestPath) {
 		return ""
 	}
 	parts := strings.Split(manifestPath, "/")
-	return SnapshotID(parts[1])
+	return DatasetSnapshotID(parts[1])
 }
 
 func (l *flatLayout) parsePartitionFromManifest(_ string) string {
@@ -377,7 +377,7 @@ func (l *flatLayout) extractPartitionPath(_ string) string {
 	return ""
 }
 
-func (l *flatLayout) dataFilePath(dataset DatasetID, segment SnapshotID, _, filename string) string {
+func (l *flatLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, _, filename string) string {
 	return path.Join(string(dataset), string(segment), dataDir, filename)
 }
 

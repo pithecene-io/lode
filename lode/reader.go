@@ -22,20 +22,20 @@ type readerConfig struct {
 // Reader Implementation
 // -----------------------------------------------------------------------------
 
-// reader implements the Reader interface.
+// reader implements the DatasetReader interface.
 type reader struct {
 	store  Store
 	layout layout
 }
 
-// NewReader creates a reader with documented defaults.
+// NewDatasetReader creates a DatasetReader with documented defaults.
 //
 // Default behavior:
 //   - Layout: NewDefaultLayout()
 //
 // Use option functions to override defaults:
 //   - WithLayout(l) to use a different layout
-func NewReader(factory StoreFactory, opts ...Option) (Reader, error) {
+func NewDatasetReader(factory StoreFactory, opts ...Option) (DatasetReader, error) {
 	if factory == nil {
 		return nil, errors.New("lode: store factory is required")
 	}
@@ -107,22 +107,22 @@ func (r *reader) ListDatasets(ctx context.Context, opts DatasetListOptions) ([]D
 }
 
 func (r *reader) ListPartitions(ctx context.Context, dataset DatasetID, opts PartitionListOptions) ([]PartitionRef, error) {
-	segments, err := r.ListSegments(ctx, dataset, "", SegmentListOptions{})
+	refs, err := r.ListManifests(ctx, dataset, "", ManifestListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(segments) == 0 {
+	if len(refs) == 0 {
 		return nil, nil
 	}
 
 	seen := make(map[string]bool)
 	var partitions []PartitionRef
 
-	for _, seg := range segments {
-		manifest, err := r.GetManifest(ctx, dataset, seg)
+	for _, ref := range refs {
+		manifest, err := r.GetManifest(ctx, dataset, ref)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load manifest for segment %s: %w", seg.ID, err)
+			return nil, fmt.Errorf("failed to load manifest for snapshot %s: %w", ref.ID, err)
 		}
 
 		for _, f := range manifest.Files {
@@ -142,15 +142,15 @@ func (r *reader) ListPartitions(ctx context.Context, dataset DatasetID, opts Par
 	return partitions, nil
 }
 
-func (r *reader) ListSegments(ctx context.Context, dataset DatasetID, partition string, opts SegmentListOptions) ([]SegmentRef, error) {
+func (r *reader) ListManifests(ctx context.Context, dataset DatasetID, partition string, opts ManifestListOptions) ([]ManifestRef, error) {
 	prefix := r.layout.segmentsPrefixForPartition(dataset, partition)
 	paths, err := r.store.List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	var segments []SegmentRef
-	seen := make(map[SnapshotID]bool)
+	var refs []ManifestRef
+	seen := make(map[DatasetSnapshotID]bool)
 	hasAnyManifest := false
 
 	for _, p := range paths {
@@ -159,8 +159,8 @@ func (r *reader) ListSegments(ctx context.Context, dataset DatasetID, partition 
 		}
 		hasAnyManifest = true
 
-		segmentID := r.layout.parseSegmentID(p)
-		if segmentID == "" || seen[segmentID] {
+		snapshotID := r.layout.parseSegmentID(p)
+		if snapshotID == "" || seen[snapshotID] {
 			continue
 		}
 
@@ -174,18 +174,18 @@ func (r *reader) ListSegments(ctx context.Context, dataset DatasetID, partition 
 
 		// Apply partition filter if specified
 		if partition != "" && manifestPartition == "" {
-			if !r.segmentContainsPartition(manifest, partition) {
+			if !r.manifestContainsPartition(manifest, partition) {
 				continue
 			}
 		}
 
-		seen[segmentID] = true
-		segments = append(segments, SegmentRef{
-			ID:        segmentID,
+		seen[snapshotID] = true
+		refs = append(refs, ManifestRef{
+			ID:        snapshotID,
 			Partition: manifestPartition,
 		})
 
-		if opts.Limit > 0 && len(segments) >= opts.Limit {
+		if opts.Limit > 0 && len(refs) >= opts.Limit {
 			break
 		}
 	}
@@ -194,11 +194,11 @@ func (r *reader) ListSegments(ctx context.Context, dataset DatasetID, partition 
 		return nil, ErrNotFound
 	}
 
-	return segments, nil
+	return refs, nil
 }
 
-func (r *reader) GetManifest(ctx context.Context, dataset DatasetID, seg SegmentRef) (*Manifest, error) {
-	manifestPath := r.layout.manifestPathInPartition(dataset, seg.ID, seg.Partition)
+func (r *reader) GetManifest(ctx context.Context, dataset DatasetID, ref ManifestRef) (*Manifest, error) {
+	manifestPath := r.layout.manifestPathInPartition(dataset, ref.ID, ref.Partition)
 	return r.loadManifest(ctx, manifestPath)
 }
 
@@ -229,7 +229,7 @@ func (r *reader) loadManifest(ctx context.Context, manifestPath string) (*Manife
 	return &manifest, nil
 }
 
-func (r *reader) segmentContainsPartition(m *Manifest, partition string) bool {
+func (r *reader) manifestContainsPartition(m *Manifest, partition string) bool {
 	for _, f := range m.Files {
 		partPath := r.layout.extractPartitionPath(f.Path)
 		if partPath == partition || strings.HasPrefix(partPath, partition+"/") {

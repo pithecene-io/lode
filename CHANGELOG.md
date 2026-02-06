@@ -9,7 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **Volume Type Definitions**: `VolumeID`, `VolumeSnapshotID`, `BlockRef`, `VolumeManifest`, `VolumeSnapshot`, `VolumeOption`, `WithVolumeChecksum` — type scaffolding for the Volume persistence paradigm (no implementation yet)
+- **Volume Error Sentinels**: `ErrRangeMissing`, `ErrOverlappingBlocks` for future Volume write validation
+
+### Changed
+
+- **Dataset Rename Pass (DD-1/DD-7)**: Public API types renamed for clarity now that Volume types coexist:
+  - `SnapshotID` → `DatasetSnapshotID`
+  - `Snapshot` → `DatasetSnapshot`
+  - `Reader` → `DatasetReader`
+  - `NewReader` → `NewDatasetReader`
+  - `SegmentRef` → `ManifestRef`
+  - `SegmentListOptions` → `ManifestListOptions`
+  - `ListSegments` → `ListManifests`
+  - `ErrOptionNotValidForReader` → `ErrOptionNotValidForDatasetReader`
+
+### Breaking Changes
+
+- **Public API renames**: All types and functions listed above are renamed without compatibility aliases. This is intentional — the renames disambiguate Dataset-specific types from the new Volume type definitions.
+
+### Upgrade Notes
+
+- **Search-and-replace migration**: The renames are mechanical. Apply these replacements across your codebase:
+  - `lode.NewReader(` → `lode.NewDatasetReader(`
+  - `lode.Reader` → `lode.DatasetReader`
+  - `lode.SnapshotID` → `lode.DatasetSnapshotID`
+  - `lode.Snapshot` → `lode.DatasetSnapshot`
+  - `lode.SegmentRef` → `lode.ManifestRef`
+  - `lode.SegmentListOptions` → `lode.ManifestListOptions`
+  - `.ListSegments(` → `.ListManifests(`
+  - `lode.ErrOptionNotValidForReader` → `lode.ErrOptionNotValidForDatasetReader`
+- **No behavior changes intended**: All existing functionality is preserved under the new names.
 
 ---
 

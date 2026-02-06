@@ -14,7 +14,7 @@ import (
 // G2: Manifest validation tests
 // -----------------------------------------------------------------------------
 
-func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -32,18 +32,18 @@ func TestReader_GetManifest_InvalidManifest_MissingSchemaName(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -61,18 +61,18 @@ func TestReader_GetManifest_InvalidManifest_MissingFormatVersion(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -90,18 +90,18 @@ func TestReader_GetManifest_InvalidManifest_NilMetadata(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_MissingDatasetID(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingDatasetID(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -121,18 +121,18 @@ func TestReader_GetManifest_InvalidManifest_MissingDatasetID(t *testing.T) {
 	data, _ := json.Marshal(manifest)
 	_ = store.Put(ctx, "datasets/test-ds/snapshots/snap-1/manifest.json", bytes.NewReader(data))
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_MissingSnapshotID(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingSnapshotID(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -150,19 +150,19 @@ func TestReader_GetManifest_InvalidManifest_MissingSnapshotID(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Use empty SegmentRef since manifest has no ID
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: ""})
+	// Use empty ManifestRef since manifest has no ID
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: ""})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_ZeroCreatedAt(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_ZeroCreatedAt(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -180,18 +180,18 @@ func TestReader_GetManifest_InvalidManifest_ZeroCreatedAt(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_NilFiles(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_NilFiles(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -209,18 +209,18 @@ func TestReader_GetManifest_InvalidManifest_NilFiles(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_NegativeRowCount(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_NegativeRowCount(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -238,18 +238,18 @@ func TestReader_GetManifest_InvalidManifest_NegativeRowCount(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_MissingCompressor(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingCompressor(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -267,18 +267,18 @@ func TestReader_GetManifest_InvalidManifest_MissingCompressor(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_MissingPartitioner(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_MissingPartitioner(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -296,18 +296,18 @@ func TestReader_GetManifest_InvalidManifest_MissingPartitioner(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_EmptyFilePath(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_EmptyFilePath(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -327,18 +327,18 @@ func TestReader_GetManifest_InvalidManifest_EmptyFilePath(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_GetManifest_InvalidManifest_NegativeFileSize(t *testing.T) {
+func TestDatasetReader_GetManifest_InvalidManifest_NegativeFileSize(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -358,18 +358,18 @@ func TestReader_GetManifest_InvalidManifest_NegativeFileSize(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.GetManifest(ctx, "test-ds", SegmentRef{ID: "snap-1"})
+	_, err = reader.GetManifest(ctx, "test-ds", ManifestRef{ID: "snap-1"})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
+func TestDatasetReader_ListManifests_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -381,18 +381,18 @@ func TestReader_ListSegments_InvalidManifest_WithPartitionFilter_ReturnsError(t 
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = reader.ListSegments(ctx, "test-ds", "some-partition", SegmentListOptions{})
+	_, err = reader.ListManifests(ctx, "test-ds", "some-partition", ManifestListOptions{})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
 }
 
-func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
+func TestDatasetReader_ListManifests_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -404,14 +404,14 @@ func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Per CONTRACT_READ_API.md, invalid manifests must return an error
 	// even when no partition filter is specified
-	_, err = reader.ListSegments(ctx, "test-ds", "", SegmentListOptions{})
+	_, err = reader.ListManifests(ctx, "test-ds", "", ManifestListOptions{})
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("expected ErrManifestInvalid, got: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestReader_ListSegments_InvalidManifest_WithoutPartitionFilter_ReturnsError
 // G3: ErrNoManifests test
 // -----------------------------------------------------------------------------
 
-func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
+func TestDatasetReader_ListDatasets_ErrNoManifests(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -431,7 +431,7 @@ func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,11 +442,11 @@ func TestReader_ListDatasets_ErrNoManifests(t *testing.T) {
 	}
 }
 
-func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
+func TestDatasetReader_ListDatasets_EmptyStorage(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestReader_ListDatasets_EmptyStorage(t *testing.T) {
 	}
 }
 
-func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
+func TestDatasetReader_ListDatasets_WithValidManifest(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
@@ -478,7 +478,7 @@ func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
 	}
 	writeManifest(ctx, t, store, manifest)
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,11 +496,11 @@ func TestReader_ListDatasets_WithValidManifest(t *testing.T) {
 // G4: Layout-specific tests
 // -----------------------------------------------------------------------------
 
-func TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.T) {
+func TestDatasetReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
-	reader, err := NewReader(NewMemoryFactoryFrom(store), WithLayout(NewFlatLayout()))
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store), WithLayout(NewFlatLayout()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +511,7 @@ func TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled(t *testing.
 	}
 }
 
-func TestReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *testing.T) {
+func TestDatasetReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *testing.T) {
 	ctx := t.Context()
 
 	tmpDir, err := os.MkdirTemp("", "lode-test-*")
@@ -520,7 +520,7 @@ func TestReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *testing.T)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	reader, err := NewReader(NewFSFactory(tmpDir))
+	reader, err := NewDatasetReader(NewFSFactory(tmpDir))
 	if err != nil {
 		t.Fatal(err)
 	}

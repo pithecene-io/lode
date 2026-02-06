@@ -89,9 +89,9 @@ func TestWithHiveLayout_WithKeys_Success(t *testing.T) {
 
 func TestWithHiveLayout_WithReader_Success(t *testing.T) {
 	// Fluent API - single error check
-	reader, err := NewReader(NewMemoryFactory(), WithHiveLayout("day"))
+	reader, err := NewDatasetReader(NewMemoryFactory(), WithHiveLayout("day"))
 	if err != nil {
-		t.Fatalf("NewReader with WithHiveLayout failed: %v", err)
+		t.Fatalf("NewDatasetReader with WithHiveLayout failed: %v", err)
 	}
 	if reader == nil {
 		t.Fatal("expected non-nil reader")
@@ -141,11 +141,11 @@ func TestNewDataset_NilCompressor_ReturnsError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// G2-12: NewReader nil factory rejection
+// G2-12: NewDatasetReader nil factory rejection
 // -----------------------------------------------------------------------------
 
-func TestNewReader_NilFactory_ReturnsError(t *testing.T) {
-	_, err := NewReader(nil)
+func TestNewDatasetReader_NilFactory_ReturnsError(t *testing.T) {
+	_, err := NewDatasetReader(nil)
 	if err == nil {
 		t.Fatal("expected error for nil factory, got nil")
 	}
@@ -154,12 +154,12 @@ func TestNewReader_NilFactory_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestNewReader_FactoryReturnsNil_ReturnsError(t *testing.T) {
+func TestNewDatasetReader_FactoryReturnsNil_ReturnsError(t *testing.T) {
 	nilFactory := func() (Store, error) {
 		return nil, nil //nolint:nilnil // intentionally testing nil store with nil error
 	}
 
-	_, err := NewReader(nilFactory)
+	_, err := NewDatasetReader(nilFactory)
 	if err == nil {
 		t.Fatal("expected error for factory returning nil, got nil")
 	}
@@ -168,8 +168,8 @@ func TestNewReader_FactoryReturnsNil_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestNewReader_NilLayout_ReturnsError(t *testing.T) {
-	_, err := NewReader(NewMemoryFactory(), WithLayout(nil))
+func TestNewDatasetReader_NilLayout_ReturnsError(t *testing.T) {
+	_, err := NewDatasetReader(NewMemoryFactory(), WithLayout(nil))
 	if err == nil {
 		t.Fatal("expected error for nil layout, got nil")
 	}
@@ -695,9 +695,9 @@ func TestDataset_StreamWriteRecords_IteratorError_NoManifestWritten(t *testing.T
 // Option validation tests
 // -----------------------------------------------------------------------------
 
-func TestReader_WithCompressor_ReturnsError(t *testing.T) {
+func TestDatasetReader_WithCompressor_ReturnsError(t *testing.T) {
 	// WithCompressor is a dataset-only option
-	_, err := NewReader(NewMemoryFactory(), WithCompressor(NewNoOpCompressor()))
+	_, err := NewDatasetReader(NewMemoryFactory(), WithCompressor(NewNoOpCompressor()))
 	if err == nil {
 		t.Fatal("expected error for WithCompressor on reader, got nil")
 	}
@@ -706,9 +706,9 @@ func TestReader_WithCompressor_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestReader_WithCodec_ReturnsError(t *testing.T) {
+func TestDatasetReader_WithCodec_ReturnsError(t *testing.T) {
 	// WithCodec is a dataset-only option
-	_, err := NewReader(NewMemoryFactory(), WithCodec(&testCodec{}))
+	_, err := NewDatasetReader(NewMemoryFactory(), WithCodec(&testCodec{}))
 	if err == nil {
 		t.Fatal("expected error for WithCodec on reader, got nil")
 	}
@@ -717,9 +717,9 @@ func TestReader_WithCodec_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestReader_WithChecksum_ReturnsError(t *testing.T) {
+func TestDatasetReader_WithChecksum_ReturnsError(t *testing.T) {
 	// WithChecksum is a dataset-only option
-	_, err := NewReader(NewMemoryFactory(), WithChecksum(NewMD5Checksum()))
+	_, err := NewDatasetReader(NewMemoryFactory(), WithChecksum(NewMD5Checksum()))
 	if err == nil {
 		t.Fatal("expected error for WithChecksum on reader, got nil")
 	}

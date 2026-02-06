@@ -105,12 +105,12 @@ func run() error {
 	fmt.Println()
 
 	// -------------------------------------------------------------------------
-	// LIST: Discover datasets, segments, and partitions
+	// LIST: Discover datasets, manifests, and partitions
 	// -------------------------------------------------------------------------
 	fmt.Println("=== LIST ===")
 
-	// Create reader with HiveLayout
-	reader, err := lode.NewReader(
+	// Create DatasetReader with HiveLayout
+	reader, err := lode.NewDatasetReader(
 		storeFactory,
 		lode.WithHiveLayout("day"),
 	)
@@ -125,14 +125,14 @@ func run() error {
 	}
 	fmt.Printf("Datasets found: %v\n", datasets)
 
-	// List segments in the dataset
-	segments, err := reader.ListSegments(ctx, "events", "", lode.SegmentListOptions{})
+	// List manifests in the dataset
+	manifests, err := reader.ListManifests(ctx, "events", "", lode.ManifestListOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list segments: %w", err)
+		return fmt.Errorf("failed to list manifests: %w", err)
 	}
-	fmt.Printf("Segments in 'events': %d segment(s)\n", len(segments))
-	for _, seg := range segments {
-		fmt.Printf("  - %s (partition: %s)\n", seg.ID, seg.Partition)
+	fmt.Printf("Manifests in 'events': %d manifest(s)\n", len(manifests))
+	for _, ref := range manifests {
+		fmt.Printf("  - %s (partition: %s)\n", ref.ID, ref.Partition)
 	}
 
 	// List partitions
@@ -151,8 +151,8 @@ func run() error {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== READ ===")
 
-	// Get manifest for the first segment
-	manifest, err := reader.GetManifest(ctx, "events", segments[0])
+	// Get manifest for the first snapshot
+	manifest, err := reader.GetManifest(ctx, "events", manifests[0])
 	if err != nil {
 		return fmt.Errorf("failed to get manifest: %w", err)
 	}
@@ -161,7 +161,7 @@ func run() error {
 	fmt.Printf("Partitioner: %s\n", manifest.Partitioner)
 
 	// Read data through the dataset
-	readRecords, err := ds.Read(ctx, segments[0].ID)
+	readRecords, err := ds.Read(ctx, manifests[0].ID)
 	if err != nil {
 		return fmt.Errorf("failed to read: %w", err)
 	}

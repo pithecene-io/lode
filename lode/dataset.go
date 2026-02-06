@@ -37,12 +37,12 @@ type Option interface {
 	applyReader(*readerConfig) error
 }
 
-// ErrOptionNotValidForReader indicates an option was used with NewReader
+// ErrOptionNotValidForDatasetReader indicates an option was used with NewDatasetReader
 // that only applies to NewDataset.
-var ErrOptionNotValidForReader = errors.New("option not valid for reader")
+var ErrOptionNotValidForDatasetReader = errors.New("option not valid for reader")
 
 // ErrOptionNotValidForDataset indicates an option was used with NewDataset
-// that only applies to NewReader.
+// that only applies to NewDatasetReader.
 var ErrOptionNotValidForDataset = errors.New("option not valid for dataset")
 
 // layoutOption implements Option for WithLayout.
@@ -123,7 +123,7 @@ func (o *compressorOption) applyDataset(cfg *datasetConfig) error {
 }
 
 func (o *compressorOption) applyReader(*readerConfig) error {
-	return fmt.Errorf("WithCompressor: %w", ErrOptionNotValidForReader)
+	return fmt.Errorf("WithCompressor: %w", ErrOptionNotValidForDatasetReader)
 }
 
 // codecOption implements Option for WithCodec (dataset-only).
@@ -148,7 +148,7 @@ func (o *codecOption) applyDataset(cfg *datasetConfig) error {
 }
 
 func (o *codecOption) applyReader(*readerConfig) error {
-	return fmt.Errorf("WithCodec: %w", ErrOptionNotValidForReader)
+	return fmt.Errorf("WithCodec: %w", ErrOptionNotValidForDatasetReader)
 }
 
 // checksumOption implements Option for WithChecksum (dataset-only).
@@ -172,7 +172,7 @@ func (o *checksumOption) applyDataset(cfg *datasetConfig) error {
 }
 
 func (o *checksumOption) applyReader(*readerConfig) error {
-	return fmt.Errorf("WithChecksum: %w", ErrOptionNotValidForReader)
+	return fmt.Errorf("WithChecksum: %w", ErrOptionNotValidForDatasetReader)
 }
 
 // -----------------------------------------------------------------------------
@@ -251,12 +251,12 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
-func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Snapshot, error) {
+func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*DatasetSnapshot, error) {
 	if metadata == nil {
 		return nil, errors.New("lode: metadata must be non-nil (use empty map {} for no metadata)")
 	}
 
-	var parentID SnapshotID
+	var parentID DatasetSnapshotID
 	latest, err := d.Latest(ctx)
 	if err != nil && !errors.Is(err, ErrNoSnapshots) {
 		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
@@ -265,7 +265,7 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Sn
 		parentID = latest.ID
 	}
 
-	snapshotID := SnapshotID(generateID())
+	snapshotID := DatasetSnapshotID(generateID())
 
 	var files []FileRef
 	var rowCount int64
@@ -341,13 +341,13 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Sn
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 
-	return &Snapshot{
+	return &DatasetSnapshot{
 		ID:       snapshotID,
 		Manifest: manifest,
 	}, nil
 }
 
-func (d *dataset) Snapshot(ctx context.Context, id SnapshotID) (*Snapshot, error) {
+func (d *dataset) Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetSnapshot, error) {
 	manifestPath := d.layout.manifestPath(d.id, id)
 
 	rc, err := d.store.Get(ctx, manifestPath)
@@ -364,10 +364,10 @@ func (d *dataset) Snapshot(ctx context.Context, id SnapshotID) (*Snapshot, error
 		return nil, fmt.Errorf("lode: failed to decode manifest: %w", err)
 	}
 
-	return &Snapshot{ID: id, Manifest: &manifest}, nil
+	return &DatasetSnapshot{ID: id, Manifest: &manifest}, nil
 }
 
-func (d *dataset) Snapshots(ctx context.Context) ([]*Snapshot, error) {
+func (d *dataset) Snapshots(ctx context.Context) ([]*DatasetSnapshot, error) {
 	prefix := d.layout.segmentsPrefix(d.id)
 
 	paths, err := d.store.List(ctx, prefix)
@@ -375,8 +375,8 @@ func (d *dataset) Snapshots(ctx context.Context) ([]*Snapshot, error) {
 		return nil, fmt.Errorf("lode: failed to list snapshots: %w", err)
 	}
 
-	seen := make(map[SnapshotID]bool)
-	var snapshots []*Snapshot
+	seen := make(map[DatasetSnapshotID]bool)
+	var snapshots []*DatasetSnapshot
 
 	for _, p := range paths {
 		if !d.layout.isManifest(p) {
@@ -403,7 +403,7 @@ func (d *dataset) Snapshots(ctx context.Context) ([]*Snapshot, error) {
 	return snapshots, nil
 }
 
-func (d *dataset) Read(ctx context.Context, id SnapshotID) ([]any, error) {
+func (d *dataset) Read(ctx context.Context, id DatasetSnapshotID) ([]any, error) {
 	snapshot, err := d.Snapshot(ctx, id)
 	if err != nil {
 		return nil, err
@@ -436,7 +436,7 @@ func (d *dataset) Read(ctx context.Context, id SnapshotID) ([]any, error) {
 	return allRecords, nil
 }
 
-func (d *dataset) Latest(ctx context.Context) (*Snapshot, error) {
+func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 	snapshots, err := d.Snapshots(ctx)
 	if err != nil {
 		return nil, err
@@ -456,7 +456,7 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 	}
 
 	// Determine parent snapshot
-	var parentID SnapshotID
+	var parentID DatasetSnapshotID
 	latest, err := d.Latest(ctx)
 	if err != nil && !errors.Is(err, ErrNoSnapshots) {
 		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
@@ -465,7 +465,7 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 		parentID = latest.ID
 	}
 
-	snapshotID := SnapshotID(generateID())
+	snapshotID := DatasetSnapshotID(generateID())
 	fileName := "blob" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, "", fileName)
 
@@ -511,7 +511,7 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 	}, nil
 }
 
-func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*Snapshot, error) {
+func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*DatasetSnapshot, error) {
 	if metadata == nil {
 		return nil, errors.New("lode: metadata must be non-nil (use empty map {} for no metadata)")
 	}
@@ -532,7 +532,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 	}
 
 	// Determine parent snapshot
-	var parentID SnapshotID
+	var parentID DatasetSnapshotID
 	latest, err := d.Latest(ctx)
 	if err != nil && !errors.Is(err, ErrNoSnapshots) {
 		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
@@ -541,7 +541,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		parentID = latest.ID
 	}
 
-	snapshotID := SnapshotID(generateID())
+	snapshotID := DatasetSnapshotID(generateID())
 	fileName := "data" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, "", fileName)
 
@@ -686,7 +686,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 
-	return &Snapshot{
+	return &DatasetSnapshot{
 		ID:       snapshotID,
 		Manifest: manifest,
 	}, nil
@@ -707,7 +707,7 @@ func (d *dataset) partitionRecords(records []any) (map[string][]any, error) {
 	return partitions, nil
 }
 
-func (d *dataset) writeRawBlob(ctx context.Context, snapshotID SnapshotID, data []byte) (FileRef, error) {
+func (d *dataset) writeRawBlob(ctx context.Context, snapshotID DatasetSnapshotID, data []byte) (FileRef, error) {
 	fileName := "blob" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, "", fileName)
 
@@ -746,7 +746,7 @@ func (d *dataset) writeRawBlob(ctx context.Context, snapshotID SnapshotID, data 
 	return fileRef, nil
 }
 
-func (d *dataset) writeDataFile(ctx context.Context, snapshotID SnapshotID, partKey string, records []any) (FileRef, error) {
+func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotID, partKey string, records []any) (FileRef, error) {
 	fileName := "data" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, partKey, fileName)
 
@@ -821,7 +821,7 @@ func (d *dataset) readDataFile(ctx context.Context, filePath string) ([]any, err
 	return d.codec.Decode(decompReader)
 }
 
-func (d *dataset) writeManifests(ctx context.Context, snapshotID SnapshotID, manifest *Manifest, partitionKeys []string) error {
+func (d *dataset) writeManifests(ctx context.Context, snapshotID DatasetSnapshotID, manifest *Manifest, partitionKeys []string) error {
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
@@ -895,7 +895,7 @@ func (d *dataset) validateComponentsMatch(m *Manifest) error {
 	return nil
 }
 
-func (d *dataset) loadSnapshotFromPath(ctx context.Context, id SnapshotID, manifestPath string) (*Snapshot, error) {
+func (d *dataset) loadSnapshotFromPath(ctx context.Context, id DatasetSnapshotID, manifestPath string) (*DatasetSnapshot, error) {
 	rc, err := d.store.Get(ctx, manifestPath)
 	if err != nil {
 		return nil, err
@@ -907,10 +907,10 @@ func (d *dataset) loadSnapshotFromPath(ctx context.Context, id SnapshotID, manif
 		return nil, fmt.Errorf("failed to decode manifest: %w", err)
 	}
 
-	return &Snapshot{ID: id, Manifest: &manifest}, nil
+	return &DatasetSnapshot{ID: id, Manifest: &manifest}, nil
 }
 
-func (d *dataset) findSnapshotByID(ctx context.Context, id SnapshotID) (*Snapshot, error) {
+func (d *dataset) findSnapshotByID(ctx context.Context, id DatasetSnapshotID) (*DatasetSnapshot, error) {
 	prefix := d.layout.segmentsPrefix(d.id)
 	paths, err := d.store.List(ctx, prefix)
 	if err != nil {
@@ -974,8 +974,8 @@ type streamWriter struct {
 	ds          *dataset
 	ctx         context.Context
 	metadata    Metadata
-	snapshotID  SnapshotID
-	parentID    SnapshotID
+	snapshotID  DatasetSnapshotID
+	parentID    DatasetSnapshotID
 	filePath    string
 	pipeWriter  *io.PipeWriter
 	compWriter  io.WriteCloser
@@ -1024,7 +1024,7 @@ func (sw *streamWriter) drainPutDone() error {
 	return sw.putErr
 }
 
-func (sw *streamWriter) Commit(ctx context.Context) (*Snapshot, error) {
+func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 	sw.mu.Lock()
 	if sw.committed {
 		sw.mu.Unlock()
@@ -1097,7 +1097,7 @@ func (sw *streamWriter) Commit(ctx context.Context) (*Snapshot, error) {
 	sw.committed = true
 	sw.mu.Unlock()
 
-	return &Snapshot{
+	return &DatasetSnapshot{
 		ID:       sw.snapshotID,
 		Manifest: manifest,
 	}, nil

@@ -39,16 +39,16 @@ Gaps are tracked with codes indicating category and priority:
 
 | Field | Test |
 |-------|------|
-| SchemaName | `TestReader_GetManifest_InvalidManifest_MissingSchemaName` |
-| FormatVersion | `TestReader_GetManifest_InvalidManifest_MissingFormatVersion` |
-| DatasetID | `TestReader_GetManifest_InvalidManifest_MissingDatasetID` |
-| SnapshotID | `TestReader_GetManifest_InvalidManifest_MissingSnapshotID` |
-| CreatedAt | `TestReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
-| Metadata (non-nil) | `TestReader_GetManifest_InvalidManifest_NilMetadata` |
-| Files (non-nil) | `TestReader_GetManifest_InvalidManifest_NilFiles` |
-| RowCount (≥0) | `TestReader_GetManifest_InvalidManifest_NegativeRowCount` |
-| Compressor | `TestReader_GetManifest_InvalidManifest_MissingCompressor` |
-| Partitioner | `TestReader_GetManifest_InvalidManifest_MissingPartitioner` |
+| SchemaName | `TestDatasetReader_GetManifest_InvalidManifest_MissingSchemaName` |
+| FormatVersion | `TestDatasetReader_GetManifest_InvalidManifest_MissingFormatVersion` |
+| DatasetID | `TestDatasetReader_GetManifest_InvalidManifest_MissingDatasetID` |
+| SnapshotID | `TestDatasetReader_GetManifest_InvalidManifest_MissingSnapshotID` |
+| CreatedAt | `TestDatasetReader_GetManifest_InvalidManifest_ZeroCreatedAt` |
+| Metadata (non-nil) | `TestDatasetReader_GetManifest_InvalidManifest_NilMetadata` |
+| Files (non-nil) | `TestDatasetReader_GetManifest_InvalidManifest_NilFiles` |
+| RowCount (≥0) | `TestDatasetReader_GetManifest_InvalidManifest_NegativeRowCount` |
+| Compressor | `TestDatasetReader_GetManifest_InvalidManifest_MissingCompressor` |
+| Partitioner | `TestDatasetReader_GetManifest_InvalidManifest_MissingPartitioner` |
 
 **Manifest Optional Fields**: All covered ✅
 
@@ -176,7 +176,7 @@ All covered ✅
 
 | Requirement | Test |
 |-------------|------|
-| nil layout rejected | `TestNewDataset_NilLayout_ReturnsError`, `TestNewReader_NilLayout_ReturnsError` |
+| nil layout rejected | `TestNewDataset_NilLayout_ReturnsError`, `TestNewDatasetReader_NilLayout_ReturnsError` |
 | nil compressor rejected | `TestNewDataset_NilCompressor_ReturnsError` |
 | Raw blob + partitioner rejected | `TestNewDataset_RawBlobWithPartitioner_ReturnsError` |
 | Hive layout keys | `TestNewHiveLayout_WithKeys_Success` |
@@ -199,10 +199,10 @@ All covered ✅
 
 | Requirement | Test |
 |-------------|------|
-| ListDatasets layout error | `TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled` |
-| ListDatasets empty storage | `TestReader_ListDatasets_EmptyStorage` |
-| ErrNoManifests | `TestReader_ListDatasets_ErrNoManifests` |
-| Manifest validation errors | Multiple `TestReader_GetManifest_InvalidManifest_*` tests |
+| ListDatasets layout error | `TestDatasetReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled` |
+| ListDatasets empty storage | `TestDatasetReader_ListDatasets_EmptyStorage` |
+| ErrNoManifests | `TestDatasetReader_ListDatasets_ErrNoManifests` |
+| Manifest validation errors | Multiple `TestDatasetReader_GetManifest_InvalidManifest_*` tests |
 
 ---
 
@@ -214,10 +214,10 @@ All error sentinels covered ✅
 |----------|------|
 | ErrNotFound | Multiple tests |
 | ErrNoSnapshots | `TestDataset_Latest_EmptyDataset_ReturnsErrNoSnapshots` |
-| ErrNoManifests | `TestReader_ListDatasets_ErrNoManifests` |
+| ErrNoManifests | `TestDatasetReader_ListDatasets_ErrNoManifests` |
 | ErrPathExists | Multiple store tests |
 | ErrInvalidPath | Multiple store tests |
-| ErrDatasetsNotModeled | `TestReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled` |
+| ErrDatasetsNotModeled | `TestDatasetReader_ListDatasets_FlatLayout_ReturnsErrDatasetsNotModeled` |
 | ErrManifestInvalid | Multiple validation tests |
 | ErrCodecConfigured | `TestDataset_StreamWrite_WithCodec_ReturnsError` |
 | ErrCodecNotStreamable | `TestDataset_StreamWriteRecords_NonStreamingCodec_ReturnsError` |

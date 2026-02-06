@@ -19,8 +19,8 @@ import (
 // DatasetID uniquely identifies a dataset and is stable for its lifetime.
 type DatasetID string
 
-// SnapshotID uniquely identifies an immutable snapshot within a dataset.
-type SnapshotID string
+// DatasetSnapshotID uniquely identifies an immutable snapshot within a dataset.
+type DatasetSnapshotID string
 
 // Metadata holds user-defined key-value pairs stored with a snapshot.
 type Metadata map[string]any
@@ -66,7 +66,7 @@ type Manifest struct {
 	DatasetID DatasetID `json:"dataset_id"`
 
 	// SnapshotID uniquely identifies this snapshot.
-	SnapshotID SnapshotID `json:"snapshot_id"`
+	SnapshotID DatasetSnapshotID `json:"snapshot_id"`
 
 	// CreatedAt records when the snapshot was committed.
 	CreatedAt time.Time `json:"created_at"`
@@ -78,7 +78,7 @@ type Manifest struct {
 	Files []FileRef `json:"files"`
 
 	// ParentSnapshotID optionally references the previous snapshot.
-	ParentSnapshotID SnapshotID `json:"parent_snapshot_id,omitempty"`
+	ParentSnapshotID DatasetSnapshotID `json:"parent_snapshot_id,omitempty"`
 
 	// RowCount is the total number of data units in this snapshot.
 	RowCount int64 `json:"row_count"`
@@ -119,13 +119,13 @@ type FileRef struct {
 }
 
 // -----------------------------------------------------------------------------
-// Snapshot
+// DatasetSnapshot
 // -----------------------------------------------------------------------------
 
-// Snapshot represents an immutable point-in-time view of a dataset.
-type Snapshot struct {
+// DatasetSnapshot represents an immutable point-in-time view of a dataset.
+type DatasetSnapshot struct {
 	// ID uniquely identifies this snapshot.
-	ID SnapshotID
+	ID DatasetSnapshotID
 
 	// Manifest describes the snapshot's contents.
 	Manifest *Manifest
@@ -271,19 +271,19 @@ type Dataset interface {
 	ID() DatasetID
 
 	// Write commits new data and metadata as an immutable snapshot.
-	Write(ctx context.Context, data []any, metadata Metadata) (*Snapshot, error)
+	Write(ctx context.Context, data []any, metadata Metadata) (*DatasetSnapshot, error)
 
 	// Snapshot retrieves a specific snapshot by ID.
-	Snapshot(ctx context.Context, id SnapshotID) (*Snapshot, error)
+	Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetSnapshot, error)
 
 	// Snapshots lists all committed snapshots.
-	Snapshots(ctx context.Context) ([]*Snapshot, error)
+	Snapshots(ctx context.Context) ([]*DatasetSnapshot, error)
 
 	// Read retrieves all data units from a specific snapshot.
-	Read(ctx context.Context, id SnapshotID) ([]any, error)
+	Read(ctx context.Context, id DatasetSnapshotID) ([]any, error)
 
 	// Latest returns the most recently committed snapshot.
-	Latest(ctx context.Context) (*Snapshot, error)
+	Latest(ctx context.Context) (*DatasetSnapshot, error)
 
 	// StreamWrite returns a StreamWriter for single-pass streaming of a binary payload.
 	// Returns an error if metadata is nil or if a codec is configured.
@@ -292,7 +292,7 @@ type Dataset interface {
 	// StreamWriteRecords consumes records via a pull-based iterator and streams them
 	// through a streaming-capable codec. Returns an error if metadata is nil or if
 	// the configured codec does not support streaming.
-	StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*Snapshot, error)
+	StreamWriteRecords(ctx context.Context, records RecordIterator, metadata Metadata) (*DatasetSnapshot, error)
 }
 
 // -----------------------------------------------------------------------------
@@ -310,7 +310,7 @@ type StreamWriter interface {
 
 	// Commit finalizes the stream and writes the manifest.
 	// Returns the new snapshot on success.
-	Commit(ctx context.Context) (*Snapshot, error)
+	Commit(ctx context.Context) (*DatasetSnapshot, error)
 
 	// Abort discards the stream without creating a snapshot.
 	// Attempts best-effort cleanup of partial objects.
@@ -348,7 +348,7 @@ var (
 	// ErrNotFound indicates a requested resource does not exist.
 	ErrNotFound = errNotFound{}
 
-	// ErrNoSnapshots indicates a dataset has no committed snapshots.
+	// ErrNoSnapshots indicates a dataset or volume has no committed snapshots.
 	ErrNoSnapshots = errNoSnapshots{}
 
 	// ErrPathExists indicates an attempt to write to an existing path.
@@ -430,15 +430,15 @@ type errInvalidFormat struct{}
 func (errInvalidFormat) Error() string { return "parquet: invalid format" }
 
 // -----------------------------------------------------------------------------
-// Reader interface
+// DatasetReader interface
 // -----------------------------------------------------------------------------
 
-// SegmentRef references an immutable segment (snapshot) within a dataset.
-type SegmentRef struct {
-	// ID is the segment/snapshot identifier.
-	ID SnapshotID
+// ManifestRef references a committed manifest (snapshot) within a dataset.
+type ManifestRef struct {
+	// ID is the snapshot identifier.
+	ID DatasetSnapshotID
 
-	// Partition is the partition path where this segment's manifest resides.
+	// Partition is the partition path where this manifest resides.
 	// For partition-first layouts (e.g., HiveLayout), this is populated during
 	// discovery. Empty for segment-first layouts (e.g., DefaultLayout).
 	Partition string
@@ -450,13 +450,13 @@ type PartitionRef struct {
 	Path string
 }
 
-// ObjectRef references a data object within a segment.
+// ObjectRef references a data object within a dataset manifest.
 type ObjectRef struct {
 	// Dataset is the dataset containing this object.
 	Dataset DatasetID
 
-	// Segment is the segment containing this object.
-	Segment SegmentRef
+	// Manifest is the manifest containing this object.
+	Manifest ManifestRef
 
 	// Path is the full storage key for the object.
 	Path string
@@ -476,34 +476,34 @@ type PartitionListOptions struct {
 	Limit int
 }
 
-// SegmentListOptions controls segment listing.
-type SegmentListOptions struct {
+// ManifestListOptions controls manifest listing.
+type ManifestListOptions struct {
 	// Limit is the maximum number of results to return.
 	// Zero means no limit.
 	Limit int
 }
 
-// Reader provides read operations over stored datasets.
+// DatasetReader provides read operations over stored datasets.
 //
-// Reader is a façade over storage and layout that performs no interpretation.
+// DatasetReader is a façade over storage and layout that performs no interpretation.
 // Per CONTRACT_READ_API.md: "Lode's read API exposes stored facts, not interpretations.
 // Planning and meaning belong to consumers."
-type Reader interface {
+type DatasetReader interface {
 	// ListDatasets returns all dataset IDs found in storage.
 	// Returns ErrDatasetsNotModeled if the layout doesn't support dataset enumeration.
 	ListDatasets(ctx context.Context, opts DatasetListOptions) ([]DatasetID, error)
 
-	// ListPartitions returns partition paths found across all committed segments.
+	// ListPartitions returns partition paths found across all committed manifests.
 	// Returns ErrNotFound if the dataset does not exist.
 	ListPartitions(ctx context.Context, dataset DatasetID, opts PartitionListOptions) ([]PartitionRef, error)
 
-	// ListSegments returns committed segments (snapshots) within a dataset.
+	// ListManifests returns committed manifests (snapshots) within a dataset.
 	// Returns ErrNotFound if the dataset does not exist.
-	ListSegments(ctx context.Context, dataset DatasetID, partition string, opts SegmentListOptions) ([]SegmentRef, error)
+	ListManifests(ctx context.Context, dataset DatasetID, partition string, opts ManifestListOptions) ([]ManifestRef, error)
 
-	// GetManifest loads the manifest for a specific segment.
-	// Returns ErrNotFound if the dataset or segment does not exist.
-	GetManifest(ctx context.Context, dataset DatasetID, seg SegmentRef) (*Manifest, error)
+	// GetManifest loads the manifest for a specific snapshot.
+	// Returns ErrNotFound if the dataset or snapshot does not exist.
+	GetManifest(ctx context.Context, dataset DatasetID, ref ManifestRef) (*Manifest, error)
 
 	// OpenObject returns a reader for a data object.
 	// The caller must close the reader when done.
@@ -521,3 +521,107 @@ var ErrDatasetsNotModeled = errDatasetsNotModeled{}
 type errDatasetsNotModeled struct{}
 
 func (errDatasetsNotModeled) Error() string { return "datasets not modeled by this layout" }
+
+// -----------------------------------------------------------------------------
+// Volume types
+// -----------------------------------------------------------------------------
+
+// VolumeID uniquely identifies a volume.
+type VolumeID string
+
+// VolumeSnapshotID uniquely identifies an immutable volume snapshot.
+type VolumeSnapshotID string
+
+// BlockRef references a staged or committed byte block within a volume.
+type BlockRef struct {
+	// Offset is the byte offset within the volume's address space.
+	Offset int64 `json:"offset"`
+
+	// Length is the block size in bytes.
+	Length int64 `json:"length"`
+
+	// Path is the storage path for the block data.
+	Path string `json:"path"`
+
+	// Checksum is an optional integrity hash.
+	Checksum string `json:"checksum,omitempty"`
+}
+
+// VolumeManifest describes the committed state of a volume snapshot.
+//
+// Manifests are cumulative: each contains the full set of committed blocks
+// across all prior commits, not just the blocks added in the current commit.
+type VolumeManifest struct {
+	// SchemaName identifies the manifest schema.
+	SchemaName string `json:"schema_name"`
+
+	// FormatVersion identifies the manifest schema version.
+	FormatVersion string `json:"format_version"`
+
+	// VolumeID identifies the volume this manifest belongs to.
+	VolumeID VolumeID `json:"volume_id"`
+
+	// SnapshotID uniquely identifies this volume snapshot.
+	SnapshotID VolumeSnapshotID `json:"snapshot_id"`
+
+	// CreatedAt records when the snapshot was committed.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Metadata contains user-provided key-value pairs.
+	Metadata Metadata `json:"metadata"`
+
+	// TotalLength is the volume's total byte address space.
+	TotalLength int64 `json:"total_length"`
+
+	// Blocks lists all committed blocks (cumulative).
+	Blocks []BlockRef `json:"blocks"`
+
+	// ParentSnapshotID optionally references the previous volume snapshot.
+	ParentSnapshotID VolumeSnapshotID `json:"parent_snapshot_id,omitempty"`
+
+	// ChecksumAlgorithm records the checksum algorithm used.
+	ChecksumAlgorithm string `json:"checksum_algorithm,omitempty"`
+}
+
+// VolumeSnapshot represents an immutable point-in-time view of a volume.
+type VolumeSnapshot struct {
+	// ID uniquely identifies this volume snapshot.
+	ID VolumeSnapshotID
+
+	// Manifest describes the snapshot's committed blocks.
+	Manifest *VolumeManifest
+}
+
+// VolumeOption configures volume construction.
+type VolumeOption func(*volumeConfig)
+
+// volumeConfig holds the resolved configuration for a volume.
+type volumeConfig struct {
+	checksum Checksum
+}
+
+// WithVolumeChecksum configures integrity checksums on staged blocks.
+// Reuses the existing Checksum interface.
+func WithVolumeChecksum(c Checksum) VolumeOption {
+	return func(cfg *volumeConfig) {
+		cfg.checksum = c
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Volume errors
+// -----------------------------------------------------------------------------
+
+// ErrRangeMissing indicates a requested byte range is not fully committed.
+var ErrRangeMissing = errRangeMissing{}
+
+type errRangeMissing struct{}
+
+func (errRangeMissing) Error() string { return "range missing: requested range is not fully committed" }
+
+// ErrOverlappingBlocks indicates committed blocks overlap in the cumulative manifest.
+var ErrOverlappingBlocks = errOverlappingBlocks{}
+
+type errOverlappingBlocks struct{}
+
+func (errOverlappingBlocks) Error() string { return "overlapping blocks in cumulative manifest" }

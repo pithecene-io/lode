@@ -99,7 +99,7 @@ func run() error {
 	fmt.Printf("S3 prefix: %s\n", prefix)
 	fmt.Printf("Files in manifest: %d\n", len(snapshot.Manifest.Files))
 
-	reader, err := lode.NewReader(storeFactory)
+	reader, err := lode.NewDatasetReader(storeFactory)
 	if err != nil {
 		return fmt.Errorf("failed to create reader: %w", err)
 	}
