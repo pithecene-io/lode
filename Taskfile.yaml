@@ -35,6 +35,7 @@ tasks:
       - go run ./examples/blob_upload
       - go run ./examples/manifest_driven
       - go run ./examples/stream_write_records
+      - go run ./examples/parquet
 
   snippets:
     desc: Verify runnable markdown snippets

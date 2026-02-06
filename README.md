@@ -281,6 +281,7 @@ This keeps Lode's core APIs explicit and predictable.
 | [`blob_upload`](examples/blob_upload) | Raw blob write/read (no codec, default bundle) | `go run ./examples/blob_upload` |
 | [`manifest_driven`](examples/manifest_driven) | Demonstrates manifest-as-commit-signal | `go run ./examples/manifest_driven` |
 | [`stream_write_records`](examples/stream_write_records) | Streaming record writes with iterator | `go run ./examples/stream_write_records` |
+| [`parquet`](examples/parquet) | Parquet codec with schema-typed fields | `go run ./examples/parquet` |
 | [`s3_experimental`](examples/s3_experimental) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3_experimental` |
 
 Each example is self-contained and runnable. See the example source for detailed comments.
