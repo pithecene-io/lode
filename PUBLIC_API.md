@@ -239,7 +239,7 @@ _, err := ds.StreamWriteRecords(ctx, iter, metadata)
 |--------------|--------|
 | Parquet + `NewNoOpCompressor()` | ✅ Correct: Parquet handles compression internally |
 | Parquet + `NewGzipCompressor()` | ❌ Wasteful: double compression, minimal benefit |
-| Parquet + `WithParquetCompression(Snappy)` | ✅ Correct: uses Parquet's internal Snappy |
+| Parquet + `WithParquetCompression(lode.ParquetCompressionSnappy)` | ✅ Correct: uses Parquet's internal Snappy |
 
 ### Error Handling
 
