@@ -625,3 +625,44 @@ var ErrOverlappingBlocks = errOverlappingBlocks{}
 type errOverlappingBlocks struct{}
 
 func (errOverlappingBlocks) Error() string { return "overlapping blocks in cumulative manifest" }
+
+// -----------------------------------------------------------------------------
+// Volume interfaces
+// -----------------------------------------------------------------------------
+
+// VolumeWriter defines the write surface for a volume.
+type VolumeWriter interface {
+	// StageWriteAt writes data at an offset and returns a block handle.
+	// Staged data is not visible until Commit is called.
+	StageWriteAt(ctx context.Context, offset int64, r io.Reader) (BlockRef, error)
+
+	// Commit records the provided blocks into a new immutable snapshot.
+	// The resulting manifest is cumulative: it includes all previously committed
+	// blocks plus the new blocks. Commit MUST include at least one new block.
+	Commit(ctx context.Context, blocks []BlockRef, metadata Metadata) (*VolumeSnapshot, error)
+}
+
+// VolumeReader defines the read surface for a volume.
+type VolumeReader interface {
+	// ReadAt reads a fully committed range from a snapshot.
+	// Returns ErrRangeMissing if any sub-range is uncommitted.
+	ReadAt(ctx context.Context, snapshotID VolumeSnapshotID, offset, length int64) ([]byte, error)
+
+	// Latest returns the most recently committed snapshot.
+	// Returns ErrNoSnapshots if no snapshots exist.
+	Latest(ctx context.Context) (*VolumeSnapshot, error)
+
+	// Snapshots lists all committed snapshots.
+	Snapshots(ctx context.Context) ([]*VolumeSnapshot, error)
+
+	// Snapshot retrieves a specific snapshot by ID.
+	// Returns ErrNotFound if the snapshot does not exist.
+	Snapshot(ctx context.Context, id VolumeSnapshotID) (*VolumeSnapshot, error)
+}
+
+// Volume composes the full read/write surface for a sparse byte space.
+type Volume interface {
+	VolumeWriter
+	VolumeReader
+	ID() VolumeID
+}
