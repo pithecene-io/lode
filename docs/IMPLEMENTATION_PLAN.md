@@ -337,40 +337,40 @@ Additional resolved items:
 - Future roadmap: CAS (multi-process) + parallel staging (single-process)
 
 ### PR1 — Contract Finalization and Design Decisions
-- [ ] Finalize `CONTRACT_VOLUME.md` as authoritative (remove draft, apply DD-1–DD-8)
-- [ ] Add concurrency matrices to `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
-- [ ] Add `ErrOverlappingBlocks` to `CONTRACT_ERRORS.md`
-- [ ] Add Layout scope note to `CONTRACT_LAYOUT.md` (Dataset-specific)
-- [ ] Update `PUBLIC_API.md` Volume section with finalized API surface
-- [ ] Update `IMPLEMENTATION_PLAN.md` with resolved decisions
+- [x] Finalize `CONTRACT_VOLUME.md` as authoritative (remove draft, apply DD-1–DD-8)
+- [x] Add concurrency matrices to `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
+- [x] Add `ErrOverlappingBlocks` to `CONTRACT_ERRORS.md`
+- [x] Add Layout scope note to `CONTRACT_LAYOUT.md` (Dataset-specific)
+- [x] Update `PUBLIC_API.md` Volume section with finalized API surface
+- [x] Update `IMPLEMENTATION_PLAN.md` with resolved decisions
 
 ### PR2 — Volume Types + Dataset Rename
-- [ ] Rename `Snapshot` → `DatasetSnapshot`, `SnapshotID` → `DatasetSnapshotID` in `api.go`
-- [ ] Rename `Reader` → `DatasetReader`, `NewReader` → `NewDatasetReader`
-- [ ] Rename `SegmentRef` → `ManifestRef`, `ListSegments` → `ListManifests` in DatasetReader API
-- [ ] Add Volume types: `VolumeID`, `VolumeSnapshotID`, `BlockRef`, `VolumeManifest`, `VolumeSnapshot`
-- [ ] Add sentinels: `ErrRangeMissing`, `ErrOverlappingBlocks`
-- [ ] Add `VolumeOption` type with `WithVolumeChecksum`
-- [ ] Cascade renames through all code, tests, and examples
+- [x] Rename `Snapshot` → `DatasetSnapshot`, `SnapshotID` → `DatasetSnapshotID` in `api.go`
+- [x] Rename `Reader` → `DatasetReader`, `NewReader` → `NewDatasetReader`
+- [x] Rename `SegmentRef` → `ManifestRef`, `ListSegments` → `ListManifests` in DatasetReader API
+- [x] Add Volume types: `VolumeID`, `VolumeSnapshotID`, `BlockRef`, `VolumeManifest`, `VolumeSnapshot`
+- [x] Add sentinels: `ErrRangeMissing`, `ErrOverlappingBlocks`
+- [x] Add `VolumeOption` type with `WithVolumeChecksum`
+- [x] Cascade renames through all code, tests, and examples
 
 ### PR3 — Core Volume Implementation (Stage + Commit + ReadAt)
-- [ ] `NewVolume` constructor with validation
-- [ ] `StageWriteAt`: write data to final path, return `BlockRef`
-- [ ] `Commit`: validate, build cumulative manifest, write to store
-- [ ] `ReadAt`: resolve range from manifest, read from store
-- [ ] `Latest` / `Snapshots` / `Snapshot` for history access
-- [ ] Fixed layout: `volumes/<id>/snapshots/<snap>/manifest.json`, `volumes/<id>/data/<offset>-<length>.bin`
-- [ ] Overlap validation (sort + sweep on full cumulative block set)
-- [ ] Works with fsStore and memoryStore
+- [x] `NewVolume` constructor with validation
+- [x] `StageWriteAt`: write data to final path, return `BlockRef`
+- [x] `Commit`: validate, build cumulative manifest, write to store
+- [x] `ReadAt`: resolve range from manifest, read from store
+- [x] `Latest` / `Snapshots` / `Snapshot` for history access
+- [x] Fixed layout: `volumes/<id>/snapshots/<snap>/manifest.json`, `volumes/<id>/data/<offset>-<length>.bin`
+- [x] Overlap validation (sort + sweep on full cumulative block set)
+- [x] Works with fsStore and memoryStore
 
 ### PR4 — Comprehensive Test Suite
-- [ ] Sparse write patterns, multi-snapshot progression
-- [ ] Resume pattern: new Volume instance, load latest, continue staging
-- [ ] Edge cases: zero-length read, boundary reads, offset validation
-- [ ] Missing range errors, overlap rejection
-- [ ] Checksum validation when configured
-- [ ] FS and memory store coverage
-- [ ] Manifest round-trip (serialize → deserialize → validate)
+- [x] Sparse write patterns, multi-snapshot progression
+- [x] Resume pattern: new Volume instance, load latest, continue staging
+- [x] Edge cases: zero-length read, boundary reads, offset validation
+- [x] Missing range errors, overlap rejection
+- [x] Checksum validation when configured
+- [x] FS and memory store coverage
+- [x] Manifest round-trip (serialize → deserialize → validate)
 
 ### PR5 — Example: Sparse Volume Ranges
 - [x] Runnable `examples/volume_sparse/` demonstrating stage → commit → read

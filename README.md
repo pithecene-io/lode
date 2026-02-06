@@ -202,8 +202,7 @@ Common pitfalls when using Lode:
 
 - **Metadata must be non-nil** — Pass `lode.Metadata{}` for empty metadata, not `nil`.
 - **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
-- **Single-writer only** — Concurrent writers to the same dataset may corrupt history.
-- **Large uploads are now atomic** — Uploads >5GB (S3) use conditional completion for atomic no-overwrite.
+- **Single-writer only** — Concurrent writers to the same dataset or volume may corrupt history.
 - **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
 - **StreamWriteRecords requires streaming codec** — Not all codecs support streaming.
 
@@ -237,7 +236,7 @@ Reads always target a snapshot explicitly.
 
 ## Storage Prerequisites
 
-**Ensure storage exists before constructing a dataset or reader.**
+**Ensure storage exists before constructing a dataset, volume, or reader.**
 
 Lode does not create storage infrastructure. This is intentional:
 - No hidden side effects in constructors
