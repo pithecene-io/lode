@@ -627,18 +627,29 @@ func TestVolume_DensePacking_Adjacent(t *testing.T) {
 }
 
 func TestVolume_Snapshots_SortedByCreatedAt(t *testing.T) {
-	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 100)
+	store := NewMemory()
+	factory := NewMemoryFactoryFrom(store)
+	ctx := t.Context()
 
-	blk1 := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
-	snap1 := commitBlocks(t, vol, []BlockRef{blk1}, Metadata{})
+	// Write manifests with explicit, well-separated timestamps to avoid
+	// sort.Slice non-determinism when timestamps are equal.
+	t0 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i, snapID := range []VolumeSnapshotID{"snap-c", "snap-a", "snap-b"} {
+		m := &VolumeManifest{
+			SchemaName:    volumeManifestSchemaName,
+			FormatVersion: volumeManifestFormatVersion,
+			VolumeID:      "test-vol",
+			SnapshotID:    snapID,
+			CreatedAt:     t0.Add(time.Duration(i) * time.Hour),
+			Metadata:      Metadata{},
+			TotalLength:   100,
+			Blocks:        []BlockRef{},
+		}
+		writeVolumeManifest(ctx, t, store, m)
+	}
 
-	blk2 := stageBlock(t, vol, 10, bytes.Repeat([]byte("B"), 10))
-	snap2 := commitBlocks(t, vol, []BlockRef{blk2}, Metadata{})
-
-	blk3 := stageBlock(t, vol, 20, bytes.Repeat([]byte("C"), 10))
-	snap3 := commitBlocks(t, vol, []BlockRef{blk3}, Metadata{})
-
-	snaps, err := vol.Snapshots(t.Context())
+	vol := newTestVolume(t, "test-vol", factory, 100)
+	snaps, err := vol.Snapshots(ctx)
 	if err != nil {
 		t.Fatalf("Snapshots failed: %v", err)
 	}
@@ -646,15 +657,18 @@ func TestVolume_Snapshots_SortedByCreatedAt(t *testing.T) {
 		t.Fatalf("expected 3 snapshots, got %d", len(snaps))
 	}
 
-	// Verify order matches commit order (sorted by CreatedAt).
-	if snaps[0].ID != snap1.ID {
-		t.Errorf("expected first snapshot %s, got %s", snap1.ID, snaps[0].ID)
+	// Verify non-decreasing CreatedAt order (the actual sorting invariant).
+	for i := 1; i < len(snaps); i++ {
+		if snaps[i].Manifest.CreatedAt.Before(snaps[i-1].Manifest.CreatedAt) {
+			t.Errorf("snapshot[%d] (%s) has earlier timestamp than snapshot[%d] (%s)",
+				i, snaps[i].Manifest.CreatedAt, i-1, snaps[i-1].Manifest.CreatedAt)
+		}
 	}
-	if snaps[1].ID != snap2.ID {
-		t.Errorf("expected second snapshot %s, got %s", snap2.ID, snaps[1].ID)
-	}
-	if snaps[2].ID != snap3.ID {
-		t.Errorf("expected third snapshot %s, got %s", snap3.ID, snaps[2].ID)
+
+	// With distinct timestamps, order should be: snap-c (t0), snap-a (t0+1h), snap-b (t0+2h).
+	if snaps[0].ID != "snap-c" || snaps[1].ID != "snap-a" || snaps[2].ID != "snap-b" {
+		t.Errorf("expected order [snap-c, snap-a, snap-b], got [%s, %s, %s]",
+			snaps[0].ID, snaps[1].ID, snaps[2].ID)
 	}
 }
 
