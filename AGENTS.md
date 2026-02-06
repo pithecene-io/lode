@@ -115,6 +115,14 @@ Assume it is invalid and stop.
 
 ---
 
+## Go code style
+
+- Prefer `any` over `interface{}`
+- Exceptions: When implementing interfaces from external packages that use `interface{}`
+- Use `//nolint:` comments with explanation when suppressing linters
+
+---
+
 ## Declarative style (critical)
 
 Code in this repository should prefer declarative patterns over imperative control flow.
