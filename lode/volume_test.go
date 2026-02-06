@@ -33,6 +33,14 @@ func TestNewVolume_ZeroTotalLength_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestNewVolume_NilStore_ReturnsError(t *testing.T) {
+	factory := func() (Store, error) { return nil, nil }
+	_, err := NewVolume("test-vol", factory, 1024)
+	if err == nil {
+		t.Fatal("expected error for nil store")
+	}
+}
+
 func TestNewVolume_EmptyID_ReturnsError(t *testing.T) {
 	_, err := NewVolume("", NewMemoryFactory(), 1024)
 	if err == nil {
@@ -205,6 +213,19 @@ func TestVolume_Commit_NilMetadata_ReturnsError(t *testing.T) {
 	_, err = vol.Commit(ctx, []BlockRef{blk}, nil)
 	if err == nil {
 		t.Fatal("expected error for nil metadata")
+	}
+}
+
+func TestVolume_Commit_EmptyBlockPath_ReturnsError(t *testing.T) {
+	vol, err := NewVolume("test-vol", NewMemoryFactory(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// A BlockRef with an empty path should be rejected.
+	_, err = vol.Commit(t.Context(), []BlockRef{{Offset: 0, Length: 10, Path: ""}}, Metadata{})
+	if err == nil {
+		t.Fatal("expected error for empty block path")
 	}
 }
 

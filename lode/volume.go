@@ -42,6 +42,9 @@ func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts .
 	if err != nil {
 		return nil, fmt.Errorf("lode: failed to create store: %w", err)
 	}
+	if store == nil {
+		return nil, fmt.Errorf("lode: store factory returned nil store")
+	}
 
 	cfg := &volumeConfig{}
 	for _, opt := range opts {
@@ -148,8 +151,11 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 	cumulativeBlocks = append(cumulativeBlocks, existingBlocks...)
 	cumulativeBlocks = append(cumulativeBlocks, blocks...)
 
-	// Validate all blocks are within bounds.
-	for _, b := range cumulativeBlocks {
+	// Validate all new blocks have required fields and are within bounds.
+	for _, b := range blocks {
+		if b.Path == "" {
+			return nil, fmt.Errorf("lode: block path must not be empty (offset=%d, length=%d)", b.Offset, b.Length)
+		}
 		if b.Offset < 0 {
 			return nil, fmt.Errorf("lode: block offset must be non-negative (offset=%d)", b.Offset)
 		}
@@ -452,6 +458,16 @@ func validateVolumeManifest(m *VolumeManifest) error {
 				Message: "is required",
 			}
 		}
+		if b.Offset+b.Length > m.TotalLength {
+			return &manifestValidationError{
+				Field:   fmt.Sprintf("blocks[%d]", i),
+				Message: fmt.Sprintf("exceeds total_length (offset=%d, length=%d, total_length=%d)", b.Offset, b.Length, m.TotalLength),
+			}
+		}
+	}
+
+	if err := validateNoOverlaps(m.Blocks); err != nil {
+		return &manifestValidationError{Field: "blocks", Message: "contain overlapping ranges"}
 	}
 
 	return nil
