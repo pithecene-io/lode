@@ -115,6 +115,43 @@ Assume it is invalid and stop.
 
 ---
 
+## Declarative style (critical)
+
+Code in this repository should prefer declarative patterns over imperative control flow.
+
+### Preferred patterns
+
+- **Data-first shapes**: Define behavior via data structures (tables, maps, slices) rather than branching logic.
+- **Table-driven logic**: Use lookup tables for type dispatch, validation rules, and error mapping.
+- **Iterators and helpers**: Extract iteration patterns into reusable helpers; avoid inline loops with complex bodies.
+- **Named helpers**: Extract small, single-purpose functions with clear names instead of inline blocks.
+- **Explicit validation passes**: Validate inputs in a dedicated pass before processing, not scattered inline.
+
+### Anti-patterns to avoid
+
+- Long switch/if chains that could be a map lookup
+- Deep nesting (prefer ≤2 levels unless it improves clarity)
+- Inline anonymous functions with complex logic
+- Mixing validation, transformation, and I/O in a single function
+- Repeated patterns that should be a helper
+
+### Refactoring rules
+
+Style refactors are allowed when:
+- Behavior is unchanged (tests remain green without modification)
+- Changes are localized (one file or small group of related files)
+- The PR is clearly marked "refactor only"
+
+Style refactors must NOT:
+- Change API surface
+- Modify error messages (may break error matching)
+- Introduce new abstractions or types
+- Combine with feature or bugfix changes
+
+If a style change starts to feel like a design change, **stop and ask**.
+
+---
+
 ## API and example conventions
 
 - `PUBLIC_API.md` is canonical for callsite conventions
