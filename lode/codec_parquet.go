@@ -242,6 +242,8 @@ func (c *parquetCodec) getCompressionOption() parquet.WriterOption {
 }
 
 // getFieldByName returns the ParquetField for a given field name.
+// Returns zero-value ParquetField if name is not found; schema validation
+// during construction guarantees all fieldOrder entries exist in the map.
 func (c *parquetCodec) getFieldByName(name string) ParquetField {
 	return c.fieldsByName[name]
 }
