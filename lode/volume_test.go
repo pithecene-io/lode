@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -1197,5 +1198,105 @@ func TestVolume_StageWriteAt_PutError_ReturnsError(t *testing.T) {
 	_, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("data")))
 	if err == nil {
 		t.Fatal("expected error when store Put fails")
+	}
+}
+
+// =============================================================================
+// Integer overflow safety tests
+// =============================================================================
+
+func TestVolume_StageWriteAt_OverflowOffset_ReturnsError(t *testing.T) {
+	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 1024)
+
+	// offset + length would overflow int64 if computed naively.
+	_, err := vol.StageWriteAt(t.Context(), math.MaxInt64, bytes.NewReader([]byte("A")))
+	if err == nil {
+		t.Fatal("expected error for offset that would overflow, got nil")
+	}
+}
+
+func TestVolume_ReadAt_OverflowOffset_ReturnsError(t *testing.T) {
+	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 1024)
+	ctx := t.Context()
+
+	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 1024))
+	snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+	// offset + length would overflow int64.
+	_, err := vol.ReadAt(ctx, snap.ID, math.MaxInt64-5, 10)
+	if err == nil {
+		t.Fatal("expected error for read offset that would overflow, got nil")
+	}
+}
+
+func TestVolume_Commit_OverflowBlockRef_ReturnsError(t *testing.T) {
+	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 1024)
+
+	// Craft a BlockRef where Offset + Length overflows int64.
+	overflowBlock := BlockRef{
+		Offset: math.MaxInt64 - 5,
+		Length: 10,
+		Path:   volumeBlockPath("test-vol", math.MaxInt64-5, 10),
+	}
+
+	_, err := vol.Commit(t.Context(), []BlockRef{overflowBlock}, Metadata{})
+	if err == nil {
+		t.Fatal("expected error for block ref that would overflow, got nil")
+	}
+}
+
+func TestVolume_ValidateManifest_OverflowBlock_ReturnsError(t *testing.T) {
+	m := validVolumeManifest("test-vol", 1024)
+	m.Blocks = []BlockRef{
+		{Offset: math.MaxInt64 - 5, Length: 10, Path: "some/path.bin"},
+	}
+
+	err := validateVolumeManifest(m)
+	if err == nil {
+		t.Fatal("expected manifest validation error for block that would overflow, got nil")
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_OverflowPrevEnd_Detected(t *testing.T) {
+	// Two blocks where prevEnd = Offset + Length would overflow.
+	// Block 1 starts near MaxInt64; block 2 starts at offset 0.
+	// Naive prevEnd would wrap to a small number and miss the overlap.
+	blocks := []BlockRef{
+		{Offset: 0, Length: 100, Path: "a.bin"},
+		{Offset: math.MaxInt64 - 10, Length: 20, Path: "b.bin"},
+	}
+
+	// These blocks don't actually overlap (they're far apart),
+	// so this should pass. The key is that it doesn't panic or give
+	// wrong results due to overflow in the prevEnd calculation.
+	err := validateNoOverlaps(blocks)
+	if err != nil {
+		t.Fatalf("expected no overlap for non-overlapping blocks, got: %v", err)
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_AdjacentAtHighOffset(t *testing.T) {
+	// Adjacent blocks at high offsets where Offset + Length approaches MaxInt64.
+	blocks := []BlockRef{
+		{Offset: math.MaxInt64 - 20, Length: 10, Path: "a.bin"},
+		{Offset: math.MaxInt64 - 10, Length: 10, Path: "b.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if err != nil {
+		t.Fatalf("expected no overlap for adjacent blocks at high offset, got: %v", err)
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_OverlapAtHighOffset(t *testing.T) {
+	// Overlapping blocks at high offsets where naive arithmetic overflows.
+	blocks := []BlockRef{
+		{Offset: math.MaxInt64 - 20, Length: 15, Path: "a.bin"},
+		{Offset: math.MaxInt64 - 10, Length: 10, Path: "b.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if !errors.Is(err, ErrOverlappingBlocks) {
+		t.Fatalf("expected ErrOverlappingBlocks for overlapping blocks at high offset, got: %v", err)
 	}
 }
