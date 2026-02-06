@@ -40,7 +40,8 @@ A stable identifier for a committed Volume snapshot.
 
 ### SegmentRef
 
-An immutable reference to a committed segment (offset, length, object path).
+A reference to staged data eligible for commit (offset, length, object path).
+It is not committed until included in a snapshot manifest.
 
 ### Volume Manifest
 
@@ -82,6 +83,7 @@ Rules:
 - Unverified or uncommitted ranges MUST NOT appear in committed manifests.
 - Commit visibility is manifest-driven, same as Dataset.
 - Snapshots are immutable once committed.
+- Overlapping committed ranges within a single snapshot are invalid input.
 
 ---
 
@@ -95,6 +97,7 @@ Required behavior:
 - If any sub-range is missing, return an explicit missing-range error.
 - No zero-fill fallback.
 - No partial-success ambiguity for committed read paths.
+- Reads against a snapshot MUST reflect exactly the manifest state at commit time.
 
 ---
 
@@ -145,6 +148,8 @@ coordination.
 Concurrent writers MAY produce conflicting parent relationships or overlapping
 intent; Lode does not resolve these conflicts automatically.
 
+Snapshot history for a Volume is linear.
+
 ---
 
 ## Adapter Obligations
@@ -178,3 +183,23 @@ it belongs to `Volume`, not `Dataset`.
 - Inferring committed ranges not present in the manifest.
 - Treating staged/unverified data as committed truth.
 - Implicit background compaction or mutation of committed segments.
+
+---
+
+## Completeness
+
+A Volume is considered complete when the union of committed ranges covers
+the full address space `[0..N)`. Completeness is derived from committed ranges,
+not stored as a separate flag.
+
+---
+
+## Invariants
+
+The following invariants MUST hold:
+
+1. A snapshot’s manifest is the sole authority for read visibility.
+2. No data may be readable unless referenced by a committed snapshot.
+3. All committed segments are immutable.
+4. Snapshot history for a Volume is linear.
+5. Completeness is derived solely from committed ranges.
