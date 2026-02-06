@@ -223,6 +223,117 @@ All error sentinels covered ✅
 | ErrCodecNotStreamable | `TestDataset_StreamWriteRecords_NonStreamingCodec_ReturnsError` |
 | ErrNilIterator | `TestDataset_StreamWriteRecords_NilIterator_ReturnsError` |
 | ErrPartitioningNotSupported | `TestDataset_StreamWriteRecords_WithPartitioner_ReturnsError` |
+| ErrRangeMissing | `TestVolume_ReadAt_MissingRange_ReturnsErrRangeMissing`, `TestVolume_ReadAt_GapAtStart_ReturnsErrRangeMissing`, `TestVolume_ReadAt_GapInMiddle_ReturnsErrRangeMissing` |
+| ErrOverlappingBlocks | `TestVolume_Commit_OverlappingBlocks_ReturnsErrOverlappingBlocks`, `TestVolume_Commit_ContainedBlock_Overlap`, `TestVolume_Commit_SameStartOffset_Overlap`, `TestVolume_Commit_OverlapWithExisting_Rejected`, `TestVolume_Commit_ThreeBlockOverlap` |
+
+---
+
+### CONTRACT_VOLUME.md — Volume Persistence
+
+**Construction**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Valid construction | `TestNewVolume_Success` |
+| nil factory rejected | `TestNewVolume_NilFactory_ReturnsError` |
+| Zero length rejected | `TestNewVolume_ZeroTotalLength_ReturnsError` |
+| nil store rejected | `TestNewVolume_NilStore_ReturnsError` |
+| Empty ID rejected | `TestNewVolume_EmptyID_ReturnsError` |
+
+**StageWriteAt**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Negative offset rejected | `TestVolume_StageWriteAt_NegativeOffset_ReturnsError` |
+| Exceeds bounds rejected | `TestVolume_StageWriteAt_ExceedsBounds_ReturnsError` |
+| Empty reader rejected | `TestVolume_StageWriteAt_EmptyReader_ReturnsError` |
+| Exact fit accepted | `TestVolume_StageWriteAt_ExactFit` |
+| Path layout correct | `TestVolume_StageWriteAt_PathLayout` |
+| Checksum computed | `TestVolume_StageWriteAt_WithChecksum` |
+
+**Commit**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| End-to-end round-trip | `TestVolume_StageCommitReadAt_EndToEnd` |
+| Cumulative manifest | `TestVolume_CumulativeManifest` |
+| nil metadata rejected | `TestVolume_Commit_NilMetadata_ReturnsError` |
+| Empty metadata accepted | `TestVolume_Commit_EmptyMetadata_Succeeds` |
+| Empty blocks rejected | `TestVolume_Commit_EmptyBlocks_ReturnsError` |
+| Empty block path rejected | `TestVolume_Commit_EmptyBlockPath_ReturnsError` |
+| Duplicate blocks rejected | `TestVolume_Commit_DuplicateBlocks_ReturnsError` |
+| Block exceeds bounds rejected | `TestVolume_Commit_BlockExceedsBounds_ReturnsError` |
+| Negative block offset rejected | `TestVolume_Commit_NegativeBlockOffset_ReturnsError` |
+| Zero block length rejected | `TestVolume_Commit_ZeroBlockLength_ReturnsError` |
+| Path mismatch rejected | `TestVolume_Commit_PathMismatch_ReturnsError` |
+| Three-snapshot progression | `TestVolume_ThreeSnapshots_CumulativeProgression` |
+| Checksum persisted | `TestVolume_Commit_WithChecksum_AlgorithmPersisted` |
+| No checksum → no algorithm | `TestVolume_Commit_WithoutChecksum_NoAlgorithm` |
+| Manifest round-trip | `TestVolume_ManifestRoundTrip_AllFieldsPreserved` |
+| Manifest Put error → no snapshot | `TestVolume_Commit_ManifestPutError_NoSnapshot` |
+
+**Overlap Detection**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Overlapping blocks rejected | `TestVolume_Commit_OverlappingBlocks_ReturnsErrOverlappingBlocks` |
+| Adjacent blocks valid | `TestVolume_Commit_AdjacentBlocks_Valid` |
+| Contained block overlap | `TestVolume_Commit_ContainedBlock_Overlap` |
+| Same start offset overlap | `TestVolume_Commit_SameStartOffset_Overlap` |
+| Overlap with existing rejected | `TestVolume_Commit_OverlapWithExisting_Rejected` |
+| Three-block overlap | `TestVolume_Commit_ThreeBlockOverlap` |
+
+**ReadAt**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Spanning blocks | `TestVolume_ReadAt_SpanningBlocks` |
+| Missing range → ErrRangeMissing | `TestVolume_ReadAt_MissingRange_ReturnsErrRangeMissing` |
+| Exact block boundary | `TestVolume_ReadAt_ExactBlockBoundary` |
+| Within single block | `TestVolume_ReadAt_WithinSingleBlock` |
+| Full volume | `TestVolume_ReadAt_FullVolume` |
+| Gap at start → ErrRangeMissing | `TestVolume_ReadAt_GapAtStart_ReturnsErrRangeMissing` |
+| Gap in middle → ErrRangeMissing | `TestVolume_ReadAt_GapInMiddle_ReturnsErrRangeMissing` |
+| Negative offset rejected | `TestVolume_ReadAt_NegativeOffset_ReturnsError` |
+| Zero length rejected | `TestVolume_ReadAt_ZeroLength_ReturnsError` |
+| Sparse blocks with gaps | `TestVolume_SparseBlocks_WithGaps` |
+| Dense packing adjacent | `TestVolume_DensePacking_Adjacent` |
+
+**Snapshot Queries**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Latest empty → ErrNoSnapshots | `TestVolume_Latest_EmptyVolume_ReturnsErrNoSnapshots` |
+| Snapshot not found → ErrNotFound | `TestVolume_Snapshot_NotFound_ReturnsErrNotFound` |
+| Snapshots sorted by created_at | `TestVolume_Snapshots_SortedByCreatedAt` |
+| ID accessor | `TestVolume_ID_ReturnsVolumeID` |
+
+**Manifest Validation**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| Missing schema_name | `TestVolume_Snapshot_InvalidManifest_MissingSchemaName` |
+| Missing volume_id | `TestVolume_Snapshot_InvalidManifest_MissingVolumeID` |
+| Missing snapshot_id | `TestVolume_Snapshot_InvalidManifest_MissingSnapshotID` |
+| Zero created_at | `TestVolume_Snapshot_InvalidManifest_ZeroCreatedAt` |
+| nil metadata | `TestVolume_Snapshot_InvalidManifest_NilMetadata` |
+| nil blocks | `TestVolume_Snapshot_InvalidManifest_NilBlocks` |
+| Negative total_length | `TestVolume_Snapshot_InvalidManifest_NegativeTotalLength` |
+| Volume ID mismatch | `TestVolume_Snapshot_VolumeIDMismatch_ReturnsError` |
+| Total length mismatch | `TestVolume_Snapshot_TotalLengthMismatch_ReturnsError` |
+
+**Resume**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| New instance loads latest | `TestVolume_Resume_NewInstance_LoadsLatest` |
+| Continue staging after resume | `TestVolume_Resume_ContinueStaging` |
+
+**FS Integration**: All covered ✅
+
+| Requirement | Test |
+|-------------|------|
+| FS store round-trip | `TestVolume_FSStore_StageCommitReadAt` |
 
 ---
 

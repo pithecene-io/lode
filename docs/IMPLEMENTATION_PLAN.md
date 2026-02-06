@@ -373,13 +373,13 @@ Additional resolved items:
 - [ ] Manifest round-trip (serialize → deserialize → validate)
 
 ### PR5 — Example: Sparse Volume Ranges
-- [ ] Runnable `examples/volume_sparse/` demonstrating stage → commit → read
-- [ ] Demonstrates `ErrRangeMissing` for uncommitted ranges
-- [ ] Demonstrates incremental commits and completeness
-- [ ] Follows `CONTRACT_EXAMPLES.md` conventions
+- [x] Runnable `examples/volume_sparse/` demonstrating stage → commit → read
+- [x] Demonstrates `ErrRangeMissing` for uncommitted ranges
+- [x] Demonstrates incremental commits and completeness
+- [x] Follows `CONTRACT_EXAMPLES.md` conventions
 
 ### PR6 — Documentation Finalization + Release Prep
-- [ ] Remove all "planned"/"draft" language from shipped Volume features
-- [ ] Update README with Volume overview
-- [ ] Update `CONTRACT_TEST_MATRIX.md` with Volume coverage
-- [ ] Final cross-reference validation across all docs
+- [x] Remove all "planned"/"draft" language from shipped Volume features
+- [x] Update README with Volume overview
+- [x] Update `CONTRACT_TEST_MATRIX.md` with Volume coverage
+- [x] Final cross-reference validation across all docs

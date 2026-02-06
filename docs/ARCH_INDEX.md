@@ -29,7 +29,7 @@ Do not update for internal refactors.
 Plans, contracts, and research notes. Contracts define **system behavior**.
 
 - `IMPLEMENTATION_PLAN.md` — contract-first, phased implementation plan
-- `VOLUME_DIRECTION.md` — product direction for future Dataset + Volume dual-paradigm model
+- `VOLUME_DIRECTION.md` — product direction for the Dataset + Volume dual-paradigm model
 - `contracts/CONTRACT_CORE.md` — core model invariants and immutability
 - `contracts/CONTRACT_WRITE_API.md` — write API semantics and errors
 - `contracts/CONTRACT_STORAGE.md` — storage adapter obligations
@@ -41,7 +41,7 @@ Plans, contracts, and research notes. Contracts define **system behavior**.
 - `contracts/CONTRACT_ERRORS.md` — error taxonomy and handling guidelines
 - `contracts/CONTRACT_TEST_MATRIX.md` — contract-to-test traceability and coverage gaps
 - `contracts/CONTRACT_EXAMPLES.md` — example and callsite conventions
-- `contracts/CONTRACT_VOLUME.md` — draft contract for future Volume persistence model
+- `contracts/CONTRACT_VOLUME.md` — contract for Volume persistence model
 
 Contracts are authoritative over code.
 
@@ -72,6 +72,9 @@ Example usage and integration references.
 - `hive_layout/` — partition-first layout with Hive partitioner
 - `manifest_driven/` — manifest-driven discovery demonstration
 - `blob_upload/` — raw blob write/read with default bundle
+- `stream_write_records/` — streaming record writes with iterator
+- `parquet/` — Parquet codec with schema-typed fields
+- `volume_sparse/` — sparse Volume: stage, commit, read with gaps
 - `s3_experimental/` — S3 adapter example (name retained for continuity)
 
 ---

@@ -1,6 +1,6 @@
 # VOLUME_DIRECTION.md — Dataset + Volume Product Direction
 
-This document records product intent for a future dual-paradigm Lode model.
+This document records product intent for the dual-paradigm Lode model.
 It is design framing, not an API contract.
 
 ---
@@ -39,7 +39,7 @@ Mental model: complete structured collections of named objects.
 Key invariant:
 - A committed Dataset snapshot is complete and authoritative.
 
-### Volume (future)
+### Volume (v0.6.0)
 
 Mental model: a logical byte address space `[0..N)` that may be sparsely
 materialized and committed over time.

@@ -1,14 +1,12 @@
 # Lode
 
-**Database-like discipline for object storage.**
+**Structured persistence for object storage.**
 
 Lode is an embeddable Go persistence framework that brings snapshots,
-metadata, and safe write semantics to object storage systems like
-filesystems and S3—without running a database.
-
-It is not a storage engine.
-It is not a query engine.
-It is a way to make object storage *reliable, inspectable, and hard to misuse*.
+metadata, and safe write semantics to object storage—without running a
+database. It offers two coequal persistence paradigms: **Datasets** for
+structured collections of named objects, and **Volumes** for sparse,
+resumable byte-range storage.
 
 ---
 
@@ -35,13 +33,19 @@ Lode formalizes the parts that should be formalized and refuses to do the rest.
 
 Lode is built around a small set of invariants:
 
-- **Datasets are immutable**
-- **Writes produce snapshots**
-- **Snapshots reference manifests**
-- **Manifests describe data files and metadata**
+**Dataset** (structured collections):
+- **Datasets are immutable** — writes produce snapshots
+- **Snapshots reference manifests** that describe data files and metadata
+- **Storage, format, compression, and partitioning are orthogonal**
+
+**Volume** (sparse byte ranges):
+- **Volumes are sparse, resumable byte address spaces**
+- **Volume commits track which byte ranges exist** — gaps are explicit, never zero-filled
+- **Each commit produces a cumulative manifest** covering all committed blocks
+
+**Shared invariants:**
 - **Manifest presence is the commit signal** — a snapshot is visible only after its manifest is persisted
 - **Metadata is explicit, persisted, and self-describing (never inferred)**
-- **Storage, format, compression, and partitioning are orthogonal**
 - **Single-writer semantics required** — Lode does not resolve concurrent writer conflicts
 
 If you know the snapshot ID, you know exactly what data you are reading.
@@ -114,6 +118,21 @@ sw.Write([]byte("... large data ..."))
 snap, _ := sw.Commit(ctx)
 ```
 
+### Write sparse byte ranges (Volume)
+
+<!-- illustrative: shows API pattern; see examples/ for runnable code -->
+```go
+// Volume: sparse, resumable byte-range persistence
+vol, _ := lode.NewVolume("disk-image", lode.NewFSFactory("/tmp/lode-demo"), 1024)
+
+// Stage a byte range and commit
+blk, _ := vol.StageWriteAt(ctx, 0, bytes.NewReader(data))
+snap, _ := vol.Commit(ctx, []lode.BlockRef{blk}, lode.Metadata{"step": "boot"})
+
+// Read it back
+result, _ := vol.ReadAt(ctx, snap.ID, 0, len(data))
+```
+
 See [`examples/`](#examples) for complete runnable code.
 
 ---
@@ -125,11 +144,13 @@ See [`examples/`](#examples) for complete runnable code.
 | `Write` | In-memory data, small batches | ✅ Optional | ✅ Supported |
 | `StreamWrite` | Large binary payloads (GB+) | ❌ Raw only | ❌ Not supported |
 | `StreamWriteRecords` | Large record streams | ✅ Required (streaming) | ❌ Not supported |
+| `Volume.StageWriteAt` + `Commit` | Sparse byte ranges, resumable | ❌ Raw only | ❌ Not applicable |
 
 **Decision flow:**
 1. Is the data already in memory? → Use `Write`
 2. Is it a large binary blob (no structure)? → Use `StreamWrite`
 3. Is it a large stream of records? → Use `StreamWriteRecords` with a streaming codec
+4. Is it a sparse/resumable byte address space? → Use `Volume`
 
 ---
 
@@ -282,6 +303,7 @@ This keeps Lode's core APIs explicit and predictable.
 | [`manifest_driven`](examples/manifest_driven) | Demonstrates manifest-as-commit-signal | `go run ./examples/manifest_driven` |
 | [`stream_write_records`](examples/stream_write_records) | Streaming record writes with iterator | `go run ./examples/stream_write_records` |
 | [`parquet`](examples/parquet) | Parquet codec with schema-typed fields | `go run ./examples/parquet` |
+| [`volume_sparse`](examples/volume_sparse) | Sparse Volume: stage, commit, read with gaps | `go run ./examples/volume_sparse` |
 | [`s3_experimental`](examples/s3_experimental) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3_experimental` |
 
 Each example is self-contained and runnable. See the example source for detailed comments.
@@ -290,11 +312,11 @@ Each example is self-contained and runnable. See the example source for detailed
 
 ## Status
 
-Lode is currently **pre-v0** and under active design.
-APIs may change until invariants stabilize.
+Lode is at **v0.5.0** and under active development.
+APIs are stabilizing; some changes are possible before v1.0.
 
 If you are evaluating Lode, focus on:
-- snapshot semantics
+- snapshot semantics (Dataset and Volume)
 - metadata visibility
 - API clarity
 
