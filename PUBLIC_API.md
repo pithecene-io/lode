@@ -392,7 +392,7 @@ Common errors when using streaming APIs:
 
 ## Storage Prerequisites
 
-**Ensure storage exists before constructing a dataset or reader.**
+**Ensure storage exists before constructing a dataset, volume, or reader.**
 
 Lode does not create storage infrastructure (directories, buckets). This is intentional:
 

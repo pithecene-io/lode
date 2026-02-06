@@ -236,7 +236,7 @@ Reads always target a snapshot explicitly.
 
 ## Storage Prerequisites
 
-**Ensure storage exists before constructing a dataset or reader.**
+**Ensure storage exists before constructing a dataset, volume, or reader.**
 
 Lode does not create storage infrastructure. This is intentional:
 - No hidden side effects in constructors
