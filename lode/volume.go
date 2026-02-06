@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"sort"
 	"strings"
@@ -76,6 +77,11 @@ func volumeManifestPath(id VolumeID, snapID VolumeSnapshotID) string {
 
 func volumeBlockPath(id VolumeID, offset, length int64) string {
 	return path.Join("volumes", string(id), "data", fmt.Sprintf("%d-%d.bin", offset, length))
+}
+
+// volumeDataPrefix returns "volumes/<id>/data/" for path validation.
+func volumeDataPrefix(id VolumeID) string {
+	return path.Join("volumes", string(id), "data") + "/"
 }
 
 // -----------------------------------------------------------------------------
@@ -152,9 +158,13 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 	cumulativeBlocks = append(cumulativeBlocks, blocks...)
 
 	// Validate all new blocks have required fields and are within bounds.
+	dataPrefix := volumeDataPrefix(v.id)
 	for _, b := range blocks {
 		if b.Path == "" {
 			return nil, fmt.Errorf("lode: block path must not be empty (offset=%d, length=%d)", b.Offset, b.Length)
+		}
+		if !strings.HasPrefix(b.Path, dataPrefix) {
+			return nil, fmt.Errorf("lode: block path %q does not match volume layout (expected prefix %q)", b.Path, dataPrefix)
 		}
 		if b.Offset < 0 {
 			return nil, fmt.Errorf("lode: block offset must be non-negative (offset=%d)", b.Offset)
@@ -259,7 +269,10 @@ func (v *volume) ReadAt(ctx context.Context, snapshotID VolumeSnapshotID, offset
 		return nil, err
 	}
 
-	result := make([]byte, length)
+	if length > math.MaxInt {
+		return nil, fmt.Errorf("lode: read length %d exceeds maximum allocation size", length)
+	}
+	result := make([]byte, int(length))
 	for _, b := range covering {
 		// Compute the intersection of [offset, offset+length) and [b.Offset, b.Offset+b.Length).
 		readStart := max(offset, b.Offset)
@@ -385,6 +398,10 @@ func (v *volume) loadSnapshot(ctx context.Context, id VolumeSnapshotID, manifest
 
 	if err := validateVolumeManifest(&manifest); err != nil {
 		return nil, err
+	}
+
+	if manifest.TotalLength != v.totalLength {
+		return nil, fmt.Errorf("lode: manifest total_length %d does not match volume total_length %d", manifest.TotalLength, v.totalLength)
 	}
 
 	return &VolumeSnapshot{
