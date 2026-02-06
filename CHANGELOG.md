@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Public API renames**: All types and functions listed above are renamed without compatibility aliases. This is intentional — v0.6.0 introduces the Volume paradigm alongside Dataset, and the renames disambiguate the two.
+- **Public API renames**: All types and functions listed above are renamed without compatibility aliases. This is intentional — the renames disambiguate Dataset-specific types from the new Volume type definitions.
 
 ### Upgrade Notes
 
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `lode.SegmentListOptions` → `lode.ManifestListOptions`
   - `.ListSegments(` → `.ListManifests(`
   - `lode.ErrOptionNotValidForReader` → `lode.ErrOptionNotValidForDatasetReader`
-- **No behavior changes**: All existing functionality is preserved under the new names. Tests pass without modification beyond renames.
+- **No behavior changes intended**: All existing functionality is preserved under the new names.
 
 ---
 
