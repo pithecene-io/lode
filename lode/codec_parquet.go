@@ -78,10 +78,30 @@ func WithParquetCompression(codec ParquetCompression) ParquetOption {
 
 // parquetCodec implements Codec for Apache Parquet format.
 type parquetCodec struct {
-	schema      ParquetSchema
-	compression ParquetCompression
-	pqSchema    *parquet.Schema
-	fieldOrder  []string // ordered field names matching schema columns
+	schema       ParquetSchema
+	compression  ParquetCompression
+	pqSchema     *parquet.Schema
+	fieldOrder   []string                // ordered field names matching schema columns
+	fieldsByName map[string]ParquetField // field lookup by name
+}
+
+// validateSchema validates a ParquetSchema and builds a field lookup map.
+// Returns an error if the schema contains invalid types, empty names, or duplicates.
+func validateSchema(schema ParquetSchema) (map[string]ParquetField, error) {
+	fieldsByName := make(map[string]ParquetField, len(schema.Fields))
+	for _, field := range schema.Fields {
+		if field.Type < 0 || field.Type >= parquetTypeMax {
+			return nil, fmt.Errorf("%w: invalid ParquetType %d for field %q", ErrSchemaViolation, field.Type, field.Name)
+		}
+		if field.Name == "" {
+			return nil, fmt.Errorf("%w: field name cannot be empty", ErrSchemaViolation)
+		}
+		if _, exists := fieldsByName[field.Name]; exists {
+			return nil, fmt.Errorf("%w: duplicate field name %q", ErrSchemaViolation, field.Name)
+		}
+		fieldsByName[field.Name] = field
+	}
+	return fieldsByName, nil
 }
 
 // NewParquetCodec creates a Parquet codec with the given schema.
@@ -95,24 +115,15 @@ type parquetCodec struct {
 // require a footer that references all row groups. Use Dataset.Write for
 // batched encoding.
 func NewParquetCodec(schema ParquetSchema, opts ...ParquetOption) (Codec, error) {
-	// Validate schema field types and names
-	seen := make(map[string]bool, len(schema.Fields))
-	for _, field := range schema.Fields {
-		if field.Type < 0 || field.Type >= parquetTypeMax {
-			return nil, fmt.Errorf("%w: invalid ParquetType %d for field %q", ErrSchemaViolation, field.Type, field.Name)
-		}
-		if field.Name == "" {
-			return nil, fmt.Errorf("%w: field name cannot be empty", ErrSchemaViolation)
-		}
-		if seen[field.Name] {
-			return nil, fmt.Errorf("%w: duplicate field name %q", ErrSchemaViolation, field.Name)
-		}
-		seen[field.Name] = true
+	fieldsByName, err := validateSchema(schema)
+	if err != nil {
+		return nil, err
 	}
 
 	c := &parquetCodec{
-		schema:      schema,
-		compression: ParquetCompressionSnappy,
+		schema:       schema,
+		compression:  ParquetCompressionSnappy,
+		fieldsByName: fieldsByName,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -232,12 +243,7 @@ func (c *parquetCodec) getCompressionOption() parquet.WriterOption {
 
 // getFieldByName returns the ParquetField for a given field name.
 func (c *parquetCodec) getFieldByName(name string) ParquetField {
-	for _, f := range c.schema.Fields {
-		if f.Name == name {
-			return f
-		}
-	}
-	return ParquetField{}
+	return c.fieldsByName[name]
 }
 
 // recordToRow converts a map record to a parquet Row.
