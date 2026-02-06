@@ -109,11 +109,14 @@ func run() error {
 
 	// Sector 1 [256, 512) was never committed — reading it must fail.
 	_, err = vol.ReadAt(ctx, snap1.ID, 256, 256)
-	if errors.Is(err, lode.ErrRangeMissing) {
+	switch {
+	case errors.Is(err, lode.ErrRangeMissing):
 		fmt.Printf("ReadAt [256, 512) returned ErrRangeMissing (expected)\n")
 		fmt.Printf("  Sparse volumes explicitly track which ranges are committed.\n")
 		fmt.Printf("  Gaps are detected, not silently zero-filled.\n\n")
-	} else {
+	case err == nil:
+		return fmt.Errorf("expected ErrRangeMissing for gap, but ReadAt succeeded")
+	default:
 		return fmt.Errorf("expected ErrRangeMissing for gap, got: %w", err)
 	}
 
