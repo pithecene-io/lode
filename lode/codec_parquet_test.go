@@ -264,27 +264,6 @@ func TestParquetCodec_NotMapRecord_Error(t *testing.T) {
 	}
 }
 
-func TestParquetCodec_Decode_InvalidFormat(t *testing.T) {
-	codec, err := NewParquetCodec(ParquetSchema{
-		Fields: []ParquetField{{Name: "id", Type: ParquetInt64}},
-	})
-	if err != nil {
-		t.Fatalf("NewParquetCodec() error = %v", err)
-	}
-
-	// Empty data
-	_, err = codec.Decode(bytes.NewReader([]byte{}))
-	if !errors.Is(err, ErrInvalidFormat) {
-		t.Errorf("Decode(empty) error = %v, want ErrInvalidFormat", err)
-	}
-
-	// Invalid data
-	_, err = codec.Decode(bytes.NewReader([]byte("not parquet data")))
-	if !errors.Is(err, ErrInvalidFormat) {
-		t.Errorf("Decode(garbage) error = %v, want ErrInvalidFormat", err)
-	}
-}
-
 func TestParquetCodec_ExtraFieldsIgnored(t *testing.T) {
 	schema := ParquetSchema{
 		Fields: []ParquetField{
@@ -809,8 +788,7 @@ func TestParquetCodec_InvalidTimestampString_Error(t *testing.T) {
 	}
 }
 
-func TestParquetCodec_Decode_ErrorsIsErrInvalidFormat(t *testing.T) {
-	// Verify that errors.Is correctly identifies ErrInvalidFormat
+func TestParquetCodec_Decode_InvalidFormat(t *testing.T) {
 	codec, err := NewParquetCodec(ParquetSchema{
 		Fields: []ParquetField{{Name: "id", Type: ParquetInt64}},
 	})
@@ -824,7 +802,7 @@ func TestParquetCodec_Decode_ErrorsIsErrInvalidFormat(t *testing.T) {
 	}{
 		{"empty", []byte{}},
 		{"garbage", []byte("not parquet data at all")},
-		{"truncated magic", []byte("PAR")},
+		{"truncated_magic", []byte("PAR")},
 	}
 
 	for _, tc := range testCases {
