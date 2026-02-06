@@ -728,6 +728,199 @@ func TestParquetCodec_DatasetWrite_Success(t *testing.T) {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Hardening Tests
+// -----------------------------------------------------------------------------
+
+func TestParquetCodec_NullableFields_RoundTrip_VerifyValues(t *testing.T) {
+	// Verify that explicitly nil vs missing field both decode as nil
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "optional", Type: ParquetString, Nullable: true},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatalf("NewParquetCodec() error = %v", err)
+	}
+
+	records := []any{
+		map[string]any{"id": int64(1), "optional": "present"},
+		map[string]any{"id": int64(2), "optional": nil}, // explicit nil
+		map[string]any{"id": int64(3)},                  // missing key
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := codec.Decode(&buf)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if len(decoded) != 3 {
+		t.Fatalf("Decode() got %d records, want 3", len(decoded))
+	}
+
+	// Record 0: present value
+	r0 := decoded[0].(map[string]any)
+	if r0["optional"] != "present" {
+		t.Errorf("record[0].optional = %v, want %q", r0["optional"], "present")
+	}
+
+	// Record 1: explicit nil should decode as nil
+	r1 := decoded[1].(map[string]any)
+	if r1["optional"] != nil {
+		t.Errorf("record[1].optional = %v, want nil", r1["optional"])
+	}
+
+	// Record 2: missing key should decode as nil
+	r2 := decoded[2].(map[string]any)
+	if r2["optional"] != nil {
+		t.Errorf("record[2].optional = %v, want nil", r2["optional"])
+	}
+}
+
+func TestParquetCodec_InvalidTimestampString_Error(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "ts", Type: ParquetTimestamp},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatalf("NewParquetCodec() error = %v", err)
+	}
+
+	records := []any{
+		map[string]any{"ts": "not-a-valid-timestamp"},
+	}
+
+	var buf bytes.Buffer
+	err = codec.Encode(&buf, records)
+	if err == nil {
+		t.Fatal("Encode() expected error for invalid timestamp string")
+	}
+	if !errors.Is(err, ErrSchemaViolation) {
+		t.Errorf("Encode() error = %v, want ErrSchemaViolation", err)
+	}
+}
+
+func TestParquetCodec_Decode_ErrorsIsErrInvalidFormat(t *testing.T) {
+	// Verify that errors.Is correctly identifies ErrInvalidFormat
+	codec, err := NewParquetCodec(ParquetSchema{
+		Fields: []ParquetField{{Name: "id", Type: ParquetInt64}},
+	})
+	if err != nil {
+		t.Fatalf("NewParquetCodec() error = %v", err)
+	}
+
+	testCases := []struct {
+		name string
+		data []byte
+	}{
+		{"empty", []byte{}},
+		{"garbage", []byte("not parquet data at all")},
+		{"truncated magic", []byte("PAR")},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := codec.Decode(bytes.NewReader(tc.data))
+			if err == nil {
+				t.Fatal("Decode() expected error")
+			}
+			if !errors.Is(err, ErrInvalidFormat) {
+				t.Errorf("errors.Is(err, ErrInvalidFormat) = false, want true; err = %v", err)
+			}
+		})
+	}
+}
+
+func TestParquetCodec_Int32Underflow_Error(t *testing.T) {
+	// Test int32 underflow (negative bound)
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "val", Type: ParquetInt32},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatalf("NewParquetCodec() error = %v", err)
+	}
+
+	records := []any{
+		map[string]any{"val": float64(-3000000000)}, // < -2147483648
+	}
+
+	var buf bytes.Buffer
+	err = codec.Encode(&buf, records)
+	if err == nil {
+		t.Fatal("Encode() expected error for int32 underflow")
+	}
+	if !errors.Is(err, ErrSchemaViolation) {
+		t.Errorf("Encode() error = %v, want ErrSchemaViolation", err)
+	}
+}
+
+func TestParquetCodec_AllTypesNullable_RoundTrip(t *testing.T) {
+	// Verify all types work with nullable fields and nil values
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "int32_field", Type: ParquetInt32, Nullable: true},
+			{Name: "int64_field", Type: ParquetInt64, Nullable: true},
+			{Name: "float32_field", Type: ParquetFloat32, Nullable: true},
+			{Name: "float64_field", Type: ParquetFloat64, Nullable: true},
+			{Name: "string_field", Type: ParquetString, Nullable: true},
+			{Name: "bool_field", Type: ParquetBool, Nullable: true},
+			{Name: "bytes_field", Type: ParquetBytes, Nullable: true},
+			{Name: "timestamp_field", Type: ParquetTimestamp, Nullable: true},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatalf("NewParquetCodec() error = %v", err)
+	}
+
+	// Record with all nil values
+	records := []any{
+		map[string]any{
+			"int32_field":     nil,
+			"int64_field":     nil,
+			"float32_field":   nil,
+			"float64_field":   nil,
+			"string_field":    nil,
+			"bool_field":      nil,
+			"bytes_field":     nil,
+			"timestamp_field": nil,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := codec.Decode(&buf)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if len(decoded) != 1 {
+		t.Fatalf("Decode() got %d records, want 1", len(decoded))
+	}
+
+	r := decoded[0].(map[string]any)
+	for _, field := range schema.Fields {
+		if r[field.Name] != nil {
+			t.Errorf("%s = %v, want nil", field.Name, r[field.Name])
+		}
+	}
+}
+
 // parquetTestIterator is a simple RecordIterator for Parquet codec tests.
 type parquetTestIterator struct {
 	records []any
