@@ -9,7 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- **Parquet Codec**: `NewParquetCodec(schema, opts...)` for columnar storage with schema-explicit encoding
+- **Parquet Types**: `ParquetSchema`, `ParquetField`, and `ParquetType` constants for all primitive types
+- **Parquet Compression**: `WithParquetCompression()` option for Snappy/Gzip internal compression
+- **Parquet Error Sentinels**: `ErrSchemaViolation` and `ErrInvalidFormat` for precise error handling
+
+### Breaking Changes
+
+- **NewParquetCodec Signature**: Returns `(Codec, error)` instead of `Codec` to enable schema validation at construction time. All callsites must handle the error return.
+
+### Upgrade Notes
+
+- **Parquet codec is non-streaming**: Parquet requires a footer referencing all row groups, so `StreamWriteRecords` returns `ErrCodecNotStreamable`. Use `Dataset.Write` for Parquet encoding.
+- **Compression layering**: When using Parquet codec, set Lode's compressor to `NewNoOpCompressor()`. Parquet has internal compression; double compression wastes CPU.
+- **Schema validation**: Invalid schemas (bad types, empty names, duplicates) now return errors at construction time rather than encoding time.
+
+### References
+
+- [CONTRACT_PARQUET.md](docs/contracts/CONTRACT_PARQUET.md) — Parquet codec contract
+- [CONTRACT_ERRORS.md](docs/contracts/CONTRACT_ERRORS.md) — Updated with Parquet error semantics
 
 ---
 

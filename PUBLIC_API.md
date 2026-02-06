@@ -110,7 +110,8 @@ includes a curated set of components:
 - `NewZstdCompressor()` - Zstd compression (higher ratio, faster decompression)
 
 **Codecs:**
-- `NewJSONLCodec()` - JSON Lines format
+- `NewJSONLCodec()` - JSON Lines format (streaming-capable)
+- `NewParquetCodec(schema, opts...) (Codec, error)` - Apache Parquet columnar format (non-streaming)
 
 **Checksums:**
 - `NewMD5Checksum()` - MD5 file checksums (opt-in)
@@ -169,6 +170,86 @@ ds.Write(ctx, []any{Event{...}, Event{...}}, lode.Metadata{})
 Records that do not implement `Timestamped` (including `lode.D`)
 result in `nil` timestamp fields in the manifest—this is valid and indicates
 timestamps are not applicable for that snapshot.
+
+---
+
+## Parquet Codec
+
+The Parquet codec provides columnar storage with explicit schema definition.
+
+### Construction
+
+<!-- illustrative -->
+```go
+schema := lode.ParquetSchema{
+    Fields: []lode.ParquetField{
+        {Name: "id", Type: lode.ParquetInt64},
+        {Name: "name", Type: lode.ParquetString},
+        {Name: "score", Type: lode.ParquetFloat64, Nullable: true},
+    },
+}
+codec, err := lode.NewParquetCodec(schema)
+if err != nil {
+    // Handle schema validation error (bad types, empty names, duplicates)
+}
+
+ds, _ := lode.NewDataset("analytics", factory,
+    lode.WithCodec(codec),
+    lode.WithCompressor(lode.NewNoOpCompressor()), // Important: avoid double compression
+)
+```
+
+### Supported Types
+
+| Type | Go Input Types | Decoded Type |
+|------|---------------|--------------|
+| `ParquetInt32` | `int`, `int32`, `int64`, `float64` | `int32` |
+| `ParquetInt64` | `int`, `int32`, `int64`, `float64` | `int64` |
+| `ParquetFloat32` | `float32`, `float64` | `float32` |
+| `ParquetFloat64` | `float32`, `float64` | `float64` |
+| `ParquetString` | `string` | `string` |
+| `ParquetBool` | `bool` | `bool` |
+| `ParquetBytes` | `[]byte`, `string` | `[]byte` |
+| `ParquetTimestamp` | `time.Time`, `string` (RFC3339) | `time.Time` |
+
+### Streaming Limitation
+
+**Parquet codec does NOT support streaming.**
+
+Parquet files require a footer that references all row groups, making true streaming
+impossible. `StreamWriteRecords` with a Parquet codec returns `ErrCodecNotStreamable`.
+
+Use `Dataset.Write` for Parquet encoding:
+
+<!-- illustrative -->
+```go
+// Correct: use Write for Parquet
+snapshot, err := ds.Write(ctx, records, metadata)
+
+// Wrong: StreamWriteRecords returns ErrCodecNotStreamable
+_, err := ds.StreamWriteRecords(ctx, iter, metadata)
+// err is ErrCodecNotStreamable
+```
+
+### Compression Layering
+
+**Important:** Parquet has internal compression. Do not double-compress.
+
+| Configuration | Result |
+|--------------|--------|
+| Parquet + `NewNoOpCompressor()` | ✅ Correct: Parquet handles compression internally |
+| Parquet + `NewGzipCompressor()` | ❌ Wasteful: double compression, minimal benefit |
+| Parquet + `WithParquetCompression(lode.ParquetCompressionSnappy)` | ✅ Correct: uses Parquet's internal Snappy |
+
+### Error Handling
+
+| Error | Cause |
+|-------|-------|
+| `ErrSchemaViolation` | Missing required field, type mismatch, invalid schema |
+| `ErrInvalidFormat` | Malformed Parquet file, corrupted data |
+| `ErrCodecNotStreamable` | `StreamWriteRecords` called with Parquet codec |
+
+*Contract reference: [`CONTRACT_PARQUET.md`](docs/contracts/CONTRACT_PARQUET.md)*
 
 ---
 
@@ -417,6 +498,8 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | `ErrNilIterator` | Nil iterator passed to StreamWriteRecords | Dataset |
 | `ErrPartitioningNotSupported` | StreamWriteRecords with partitioning | Dataset |
 | `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
+| `ErrSchemaViolation` | Record doesn't conform to Parquet schema | Parquet Codec |
+| `ErrInvalidFormat` | Malformed or corrupted Parquet file | Parquet Codec |
 
 ### Error Handling Guidelines
 
