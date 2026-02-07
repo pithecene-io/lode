@@ -1,6 +1,7 @@
 package lode
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -1926,6 +1927,187 @@ func TestDataset_Write_SingleTimestampedRecord_SameMinMax(t *testing.T) {
 	}
 	if !snap.Manifest.MinTimestamp.Equal(ts) || !snap.Manifest.MaxTimestamp.Equal(ts) {
 		t.Errorf("expected both timestamps to be %v", ts)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// FileStats write-path tests
+// -----------------------------------------------------------------------------
+
+func TestDataset_Write_ParquetCodec_StatsPopulated(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "name", Type: ParquetString},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ds, err := NewDataset("stats-ds", NewMemoryFactory(), WithCodec(codec))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"id": int64(1), "name": "alice"},
+		map[string]any{"id": int64(2), "name": "bob"},
+	}
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(snap.Manifest.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(snap.Manifest.Files))
+	}
+
+	stats := snap.Manifest.Files[0].Stats
+	if stats == nil {
+		t.Fatal("expected Stats on FileRef, got nil")
+	}
+	if stats.RowCount != 2 {
+		t.Errorf("RowCount = %d, want 2", stats.RowCount)
+	}
+	if len(stats.Columns) != 2 {
+		t.Fatalf("len(Columns) = %d, want 2", len(stats.Columns))
+	}
+	if stats.Columns[0].Name != "id" {
+		t.Errorf("Columns[0].Name = %q, want %q", stats.Columns[0].Name, "id")
+	}
+}
+
+func TestDataset_Write_JSONLCodec_StatsNil(t *testing.T) {
+	ds, err := NewDataset("jsonl-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{map[string]any{"key": "value"}}
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.Files[0].Stats != nil {
+		t.Errorf("expected nil Stats for JSONL codec, got %+v", snap.Manifest.Files[0].Stats)
+	}
+}
+
+func TestDataset_Write_RawBlob_StatsNil(t *testing.T) {
+	ds, err := NewDataset("blob-ds", NewMemoryFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := ds.Write(t.Context(), []any{[]byte("raw data")}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.Files[0].Stats != nil {
+		t.Errorf("expected nil Stats for raw blob, got %+v", snap.Manifest.Files[0].Stats)
+	}
+}
+
+func TestDataset_StreamWriteRecords_StatsNil(t *testing.T) {
+	ds, err := NewDataset("stream-ds", NewMemoryFactory(), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iter := &sliceIterator{records: []any{map[string]any{"key": "value"}}}
+	snap, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.Manifest.Files[0].Stats != nil {
+		t.Errorf("expected nil Stats for JSONL stream, got %+v", snap.Manifest.Files[0].Stats)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// FileStats serialization tests
+// -----------------------------------------------------------------------------
+
+func TestFileRef_Stats_JSONRoundTrip(t *testing.T) {
+	ref := FileRef{
+		Path:      "data/test.parquet",
+		SizeBytes: 1024,
+		Stats: &FileStats{
+			RowCount: 100,
+			Columns: []ColumnStats{
+				{Name: "id", Min: float64(1), Max: float64(100), NullCount: 0},
+				{Name: "name", Min: "alice", Max: "zara", NullCount: 5},
+			},
+		},
+	}
+
+	data, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded FileRef
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	if decoded.Stats == nil {
+		t.Fatal("expected Stats after round-trip, got nil")
+	}
+	if decoded.Stats.RowCount != 100 {
+		t.Errorf("RowCount = %d, want 100", decoded.Stats.RowCount)
+	}
+	if len(decoded.Stats.Columns) != 2 {
+		t.Fatalf("len(Columns) = %d, want 2", len(decoded.Stats.Columns))
+	}
+	if decoded.Stats.Columns[0].Name != "id" {
+		t.Errorf("Columns[0].Name = %q, want %q", decoded.Stats.Columns[0].Name, "id")
+	}
+	// JSON round-trips numbers as float64
+	if decoded.Stats.Columns[0].Min != float64(1) {
+		t.Errorf("Columns[0].Min = %v, want 1", decoded.Stats.Columns[0].Min)
+	}
+	if decoded.Stats.Columns[1].NullCount != 5 {
+		t.Errorf("Columns[1].NullCount = %d, want 5", decoded.Stats.Columns[1].NullCount)
+	}
+}
+
+func TestFileRef_Stats_BackwardCompat(t *testing.T) {
+	// JSON without stats field should decode cleanly
+	jsonData := `{"path":"data/test.gz","size_bytes":512}`
+
+	var ref FileRef
+	if err := json.Unmarshal([]byte(jsonData), &ref); err != nil {
+		t.Fatal(err)
+	}
+
+	if ref.Stats != nil {
+		t.Errorf("expected nil Stats for JSON without stats field, got %+v", ref.Stats)
+	}
+	if ref.Path != "data/test.gz" {
+		t.Errorf("Path = %q, want %q", ref.Path, "data/test.gz")
+	}
+}
+
+func TestFileRef_Stats_OmittedWhenNil(t *testing.T) {
+	ref := FileRef{
+		Path:      "data/test.gz",
+		SizeBytes: 256,
+	}
+
+	data, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(data), "stats") {
+		t.Errorf("expected no stats key in JSON when Stats is nil, got: %s", data)
 	}
 }
 

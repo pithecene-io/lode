@@ -630,6 +630,12 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, fmt.Errorf("lode: failed to close encoder: %w", err)
 	}
 
+	// Collect per-file stats if the stream encoder supports it
+	var fileStats *FileStats
+	if se, ok := encoder.(StatisticalStreamEncoder); ok {
+		fileStats = se.FileStats()
+	}
+
 	// Close compression (flushes final data)
 	if err := compWriter.Close(); err != nil {
 		_ = pw.CloseWithError(err)
@@ -651,10 +657,11 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, fmt.Errorf("lode: failed to write data: %w", err)
 	}
 
-	// Build file reference with optional checksum
+	// Build file reference with optional checksum and stats
 	fileRef := FileRef{
 		Path:      filePath,
 		SizeBytes: cw.n,
+		Stats:     fileStats,
 	}
 	if hasher != nil {
 		fileRef.Checksum = hasher.Sum()
@@ -780,6 +787,11 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 		hasher := d.checksum.NewHasher()
 		_, _ = hasher.Write(data)
 		fileRef.Checksum = hasher.Sum()
+	}
+
+	// Collect per-file stats if the codec supports it
+	if sc, ok := d.codec.(StatisticalCodec); ok {
+		fileRef.Stats = sc.FileStats()
 	}
 
 	return fileRef, nil

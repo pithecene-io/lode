@@ -55,6 +55,19 @@ Minimum required fields:
 - min/max timestamp (when data units implement `Timestamped`; omit if not applicable)
 Optional fields:
 - codec name (omit when no codec is configured)
+- per-file statistics (when the codec reports them via `StatisticalCodec`; omit when not available)
+
+### Per-File Statistics
+
+FileRef MAY contain per-file statistics reported by the codec.
+
+- Statistics are codec-agnostic: any codec may report them via the `StatisticalCodec` interface.
+- When a codec reports statistics, they MUST be persisted on the FileRef.
+- When a codec does not report statistics, the stats field MUST be omitted.
+- Statistics values MUST be JSON-serializable.
+- Statistics MUST NOT be inferred; they are reported by the codec from observed data.
+- Per-file statistics include: row count, and per-column min, max, null count, and distinct count.
+- Distinct count is optional; zero means not computed.
 
 ### Checksum Rules
 
