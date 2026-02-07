@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.7.0] - 2026-02-07
+
+### Added
+
+- **Per-File Column Statistics**: New `StatisticalCodec` and `StatisticalStreamEncoder` interfaces allow any codec to report per-file column stats (min, max, null count, distinct count) persisted on `FileRef`
+- **Parquet Statistics**: Parquet codec implements `StatisticalCodec`, reporting column-level min/max/null count for all orderable types (int32, int64, float32, float64, string, timestamp)
+- **New Public Types**: `FileStats`, `ColumnStats` on the public API surface
+
+### Changed
+
+- **Nil Metadata Coalescing**: `Write`, `StreamWrite`, `StreamWriteRecords`, and `Volume.Commit` now coalesce nil metadata to `Metadata{}` instead of returning an error
+
+### Upgrade Notes
+
+- Callers that previously passed `Metadata{}` solely to avoid nil errors can now pass `nil` safely
+- Callers that relied on nil metadata returning an error should remove that expectation
+- Per-file stats are opt-in: only codecs implementing `StatisticalCodec` produce them; manifests without stats remain valid
+
+### References
+
+- [CONTRACT_PARQUET.md](docs/contracts/CONTRACT_PARQUET.md) — Updated with per-file statistics spec
+- [CONTRACT_WRITE_API.md](docs/contracts/CONTRACT_WRITE_API.md) — Updated with stats collection and nil coalescing semantics
+- [CONTRACT_CORE.md](docs/contracts/CONTRACT_CORE.md) — Updated metadata rules
+
+---
+
+## [0.6.0] - 2026-02-07
+
 ### Added
 
 - **Volume Persistence Paradigm**: `NewVolume`, `StageWriteAt`, `Commit`, `ReadAt`, `Latest`, `Snapshots`, `Snapshot` — sparse, resumable byte-range persistence as a coequal paradigm alongside Dataset
@@ -17,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Volume Example**: `examples/volume_sparse/` demonstrating stage → commit → read, ErrRangeMissing, incremental commits, resume pattern
 - **Volume Test Suite**: Comprehensive contract-driven tests covering construction, staging, commit, read, validation, overlap detection, resume, cumulative manifests, and fault injection
 - **Volume Contract**: `CONTRACT_VOLUME.md` — normative contract for Volume persistence model
+- **Overflow-Safe Arithmetic**: Volume bounds checks use overflow-safe arithmetic to prevent silent wrapping on extreme int64 values
 
 ### Changed
 
@@ -46,6 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `.ListSegments(` → `.ListManifests(`
   - `lode.ErrOptionNotValidForReader` → `lode.ErrOptionNotValidForDatasetReader`
 - **No behavior changes intended**: All existing functionality is preserved under the new names.
+
+### References
+
+- [CONTRACT_VOLUME.md](docs/contracts/CONTRACT_VOLUME.md) — Volume persistence contract
 
 ---
 
@@ -277,7 +312,9 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/justapithecus/lode/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/justapithecus/lode/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/justapithecus/lode/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/justapithecus/lode/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/justapithecus/lode/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/justapithecus/lode/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/justapithecus/lode/compare/v0.3.0...v0.4.0
