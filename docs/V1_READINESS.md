@@ -22,11 +22,13 @@ Each downstream project that integrates Lode gets a subsection here.
 Use the template to add new projects as they begin integration.
 
 **Privacy rule:** Only public projects are listed by name. Private projects
-use a redacted alias (e.g. `private-A`, `private-B`) and describe their
-usage profile in backend-agnostic terms — no internal project names,
-repo URLs, or domain-specific details. Evidence summaries and issue
-references must not leak private context; if a linked issue lives in a
-private tracker, reference it as `(private)` instead of by number.
+use a redacted alias (e.g. `private-A`, `private-B`) and must not reveal
+internal project names, repo URLs, domain-specific details, or
+implementation specifics that could identify the project or its purpose.
+Usage profiles and evidence summaries should describe Lode-level behavior
+only (e.g. "Dataset round-trip over S3"), not the consumer's architecture
+or data model. If a linked issue lives in a private tracker, reference it
+as `(private)` instead of by number.
 
 ### quarry
 
