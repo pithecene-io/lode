@@ -202,7 +202,7 @@ Explore new adapters or codecs without expanding the public API.
 - [x] No backend-specific conditionals
 - [x] CONTRACT_STORAGE.md compliance verified
 - [x] Zstd compressor added as an additive compression option
-- [ ] Parquet codec implemented
+- [x] Parquet codec implemented
 - [ ] Manifest stats extensions finalized (additive)
 
 ### S3 Adapter
@@ -292,24 +292,24 @@ without blurring Lode's scope boundary.
 
 ### Phase-0 Volume Deliverables
 
-- [ ] Public `Volume` abstraction and constructor shape documented
-- [ ] Volume snapshot manifest model documented (`volume_id`, `total_length`, committed blocks)
-- [ ] Explicit range-read semantics documented (missing ranges are errors, no zero-fill inference)
-- [ ] Filesystem and memory validation examples for sparse/resumable flows
-- [ ] Restart/resume correctness tests for committed blocks
+- [x] Public `Volume` abstraction and constructor shape documented
+- [x] Volume snapshot manifest model documented (`volume_id`, `total_length`, committed blocks)
+- [x] Explicit range-read semantics documented (missing ranges are errors, no zero-fill inference)
+- [x] Filesystem and memory validation examples for sparse/resumable flows
+- [x] Restart/resume correctness tests for committed blocks
 
 ### Dataset Streaming Boundary (Retained)
 
-- [ ] Clarify in docs and API guidance that Dataset streaming is atomic object construction
-- [ ] Preserve guarantee: object is either fully committed in snapshot or absent
-- [ ] Explicitly route sparse/resumable/range-verified workflows to Volume
+- [x] Clarify in docs and API guidance that Dataset streaming is atomic object construction
+- [x] Preserve guarantee: object is either fully committed in snapshot or absent
+- [x] Explicitly route sparse/resumable/range-verified workflows to Volume
 
 ### Phase-0 Exclusions
 
-- [ ] No torrent protocol concepts (pieces, peers, trackers)
-- [ ] No networking, scheduling, or runtime orchestration
-- [ ] No hash policy ownership in Lode core
-- [ ] No deployables/daemons added to Lode
+- [x] No torrent protocol concepts (pieces, peers, trackers)
+- [x] No networking, scheduling, or runtime orchestration
+- [x] No hash policy ownership in Lode core
+- [x] No deployables/daemons added to Lode
 
 ---
 
