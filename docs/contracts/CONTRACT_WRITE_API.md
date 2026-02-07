@@ -33,6 +33,8 @@ It is authoritative for any `Dataset` implementation.
 - Writes MUST NOT mutate existing snapshots or manifests.
 - The manifest MUST include all required fields defined in `CONTRACT_CORE.md`
   (including row/event count and min/max timestamp when applicable).
+- When the codec implements `StatisticalCodec`, per-file statistics MUST be
+  collected after encoding and recorded on the FileRef.
 - When no codec is configured, each write represents a single data unit and
   the row/event count MUST be `1`.
 
@@ -68,6 +70,8 @@ It is authoritative for any `Dataset` implementation.
 - Row/event count MUST equal the total number of records consumed.
 - When a checksum component is configured, the checksum MUST be computed during
   streaming and recorded in the manifest for each file written.
+- When the stream encoder implements `StatisticalStreamEncoder`, per-file
+  statistics MUST be collected after stream finalization and recorded on the FileRef.
 
 ### Timestamp computation
 

@@ -924,3 +924,305 @@ func (s *parquetTestIterator) Record() any {
 func (s *parquetTestIterator) Err() error {
 	return s.err
 }
+
+// -----------------------------------------------------------------------------
+// FileStats tests
+// -----------------------------------------------------------------------------
+
+func TestParquetCodec_FileStats_BasicTypes(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "name", Type: ParquetString},
+			{Name: "score", Type: ParquetFloat64},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"id": int64(10), "name": "alice", "score": 95.5},
+		map[string]any{"id": int64(1), "name": "bob", "score": 87.3},
+		map[string]any{"id": int64(5), "name": "carol", "score": 99.0},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, ok := codec.(StatisticalCodec)
+	if !ok {
+		t.Fatal("parquet codec does not implement StatisticalCodec")
+	}
+
+	stats := sc.FileStats()
+	if stats == nil {
+		t.Fatal("FileStats() returned nil")
+	}
+	if stats.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", stats.RowCount)
+	}
+	if len(stats.Columns) != 3 {
+		t.Fatalf("len(Columns) = %d, want 3", len(stats.Columns))
+	}
+
+	// id: min=1, max=10, nulls=0
+	idCol := stats.Columns[0]
+	if idCol.Name != "id" {
+		t.Errorf("Columns[0].Name = %q, want %q", idCol.Name, "id")
+	}
+	if idCol.Min != int64(1) {
+		t.Errorf("id.Min = %v, want 1", idCol.Min)
+	}
+	if idCol.Max != int64(10) {
+		t.Errorf("id.Max = %v, want 10", idCol.Max)
+	}
+	if idCol.NullCount != 0 {
+		t.Errorf("id.NullCount = %d, want 0", idCol.NullCount)
+	}
+
+	// name: min="alice", max="carol"
+	nameCol := stats.Columns[1]
+	if nameCol.Min != "alice" {
+		t.Errorf("name.Min = %v, want %q", nameCol.Min, "alice")
+	}
+	if nameCol.Max != "carol" {
+		t.Errorf("name.Max = %v, want %q", nameCol.Max, "carol")
+	}
+
+	// score: min=87.3, max=99.0
+	scoreCol := stats.Columns[2]
+	if scoreCol.Min != 87.3 {
+		t.Errorf("score.Min = %v, want 87.3", scoreCol.Min)
+	}
+	if scoreCol.Max != 99.0 {
+		t.Errorf("score.Max = %v, want 99.0", scoreCol.Max)
+	}
+}
+
+func TestParquetCodec_FileStats_NullableFields(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+			{Name: "tag", Type: ParquetString, Nullable: true},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"id": int64(1), "tag": "alpha"},
+		map[string]any{"id": int64(2), "tag": nil},
+		map[string]any{"id": int64(3), "tag": "gamma"},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+	tagCol := stats.Columns[1]
+	if tagCol.NullCount != 1 {
+		t.Errorf("tag.NullCount = %d, want 1", tagCol.NullCount)
+	}
+	if tagCol.Min != "alpha" {
+		t.Errorf("tag.Min = %v, want %q", tagCol.Min, "alpha")
+	}
+	if tagCol.Max != "gamma" {
+		t.Errorf("tag.Max = %v, want %q", tagCol.Max, "gamma")
+	}
+}
+
+func TestParquetCodec_FileStats_AllNulls(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "val", Type: ParquetInt64, Nullable: true},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"val": nil},
+		map[string]any{"val": nil},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+	col := stats.Columns[0]
+	if col.NullCount != 2 {
+		t.Errorf("NullCount = %d, want 2", col.NullCount)
+	}
+	if col.Min != nil {
+		t.Errorf("Min = %v, want nil", col.Min)
+	}
+	if col.Max != nil {
+		t.Errorf("Max = %v, want nil", col.Max)
+	}
+}
+
+func TestParquetCodec_FileStats_SingleRecord(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "x", Type: ParquetFloat64},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"x": 42.0},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+	col := stats.Columns[0]
+	if col.Min != 42.0 {
+		t.Errorf("Min = %v, want 42.0", col.Min)
+	}
+	if col.Max != 42.0 {
+		t.Errorf("Max = %v, want 42.0", col.Max)
+	}
+	if stats.RowCount != 1 {
+		t.Errorf("RowCount = %d, want 1", stats.RowCount)
+	}
+}
+
+func TestParquetCodec_FileStats_BoolAndBytes_NoMinMax(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "flag", Type: ParquetBool},
+			{Name: "data", Type: ParquetBytes},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := []any{
+		map[string]any{"flag": true, "data": []byte("hello")},
+		map[string]any{"flag": false, "data": []byte("world")},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+
+	flagCol := stats.Columns[0]
+	if flagCol.Min != nil {
+		t.Errorf("flag.Min = %v, want nil", flagCol.Min)
+	}
+	if flagCol.Max != nil {
+		t.Errorf("flag.Max = %v, want nil", flagCol.Max)
+	}
+	if flagCol.NullCount != 0 {
+		t.Errorf("flag.NullCount = %d, want 0", flagCol.NullCount)
+	}
+
+	dataCol := stats.Columns[1]
+	if dataCol.Min != nil {
+		t.Errorf("data.Min = %v, want nil", dataCol.Min)
+	}
+	if dataCol.Max != nil {
+		t.Errorf("data.Max = %v, want nil", dataCol.Max)
+	}
+}
+
+func TestParquetCodec_FileStats_Timestamps(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "ts", Type: ParquetTimestamp},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+	t3 := time.Date(2024, 3, 10, 8, 0, 0, 0, time.UTC)
+
+	records := []any{
+		map[string]any{"ts": t2},
+		map[string]any{"ts": t1},
+		map[string]any{"ts": t3},
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, records); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+	col := stats.Columns[0]
+
+	minTs, ok := col.Min.(time.Time)
+	if !ok {
+		t.Fatalf("ts.Min is %T, want time.Time", col.Min)
+	}
+	if !minTs.Equal(t1) {
+		t.Errorf("ts.Min = %v, want %v", minTs, t1)
+	}
+
+	maxTs, ok := col.Max.(time.Time)
+	if !ok {
+		t.Fatalf("ts.Max is %T, want time.Time", col.Max)
+	}
+	if !maxTs.Equal(t2) {
+		t.Errorf("ts.Max = %v, want %v", maxTs, t2)
+	}
+}
+
+func TestParquetCodec_FileStats_EmptyRecords(t *testing.T) {
+	schema := ParquetSchema{
+		Fields: []ParquetField{
+			{Name: "id", Type: ParquetInt64},
+		},
+	}
+	codec, err := NewParquetCodec(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := codec.Encode(&buf, []any{}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := codec.(StatisticalCodec).FileStats()
+	if stats == nil {
+		t.Fatal("FileStats() returned nil for empty records")
+	}
+	if stats.RowCount != 0 {
+		t.Errorf("RowCount = %d, want 0", stats.RowCount)
+	}
+	if len(stats.Columns) != 1 {
+		t.Fatalf("len(Columns) = %d, want 1", len(stats.Columns))
+	}
+	if stats.Columns[0].Min != nil {
+		t.Errorf("Min = %v, want nil", stats.Columns[0].Min)
+	}
+}

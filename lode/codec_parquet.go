@@ -76,13 +76,14 @@ func WithParquetCompression(codec ParquetCompression) ParquetOption {
 
 // Error sentinels ErrSchemaViolation and ErrInvalidFormat are defined in api.go.
 
-// parquetCodec implements Codec for Apache Parquet format.
+// parquetCodec implements Codec and StatisticalCodec for Apache Parquet format.
 type parquetCodec struct {
 	schema       ParquetSchema
 	compression  ParquetCompression
 	pqSchema     *parquet.Schema
 	fieldOrder   []string                // ordered field names matching schema columns
 	fieldsByName map[string]ParquetField // field lookup by name
+	lastStats    *FileStats              // stats from most recent Encode call
 }
 
 // validateSchema validates a ParquetSchema and builds a field lookup map.
@@ -147,7 +148,13 @@ func (c *parquetCodec) Name() string {
 	return "parquet"
 }
 
+// FileStats returns statistics accumulated during the most recent Encode call.
+func (c *parquetCodec) FileStats() *FileStats {
+	return c.lastStats
+}
+
 func (c *parquetCodec) Encode(w io.Writer, records []any) error {
+	c.lastStats = nil // reset before encoding
 	// Buffer to collect complete parquet file
 	var buf bytes.Buffer
 
@@ -177,6 +184,9 @@ func (c *parquetCodec) Encode(w io.Writer, records []any) error {
 	if err := pqWriter.Close(); err != nil {
 		return fmt.Errorf("parquet: close writer: %w", err)
 	}
+
+	// Compute per-column statistics from the input records
+	c.lastStats = computeFileStats(c.schema, records)
 
 	// Write buffered content to output
 	_, err := io.Copy(w, &buf)
@@ -484,4 +494,165 @@ func buildFieldNode(field ParquetField) parquet.Node {
 	}
 
 	return node
+}
+
+// -----------------------------------------------------------------------------
+// Per-file statistics
+// -----------------------------------------------------------------------------
+
+// orderable maps ParquetType to whether min/max comparisons are meaningful.
+var orderable = map[ParquetType]bool{
+	ParquetInt32:     true,
+	ParquetInt64:     true,
+	ParquetFloat32:   true,
+	ParquetFloat64:   true,
+	ParquetString:    true,
+	ParquetTimestamp: true,
+	ParquetBool:      false,
+	ParquetBytes:     false,
+}
+
+// computeFileStats computes per-column statistics from the input records.
+func computeFileStats(schema ParquetSchema, records []any) *FileStats {
+	columns := make([]ColumnStats, len(schema.Fields))
+	for i, field := range schema.Fields {
+		columns[i] = computeColumnStats(field, records)
+	}
+	return &FileStats{
+		RowCount: int64(len(records)),
+		Columns:  columns,
+	}
+}
+
+// columnAccumulator tracks min/max/nullCount for a single column.
+type columnAccumulator struct {
+	field     ParquetField
+	min       any
+	max       any
+	nullCount int64
+	hasValue  bool
+}
+
+// observe records a single value for this column.
+func (a *columnAccumulator) observe(val any) {
+	if val == nil {
+		a.nullCount++
+		return
+	}
+
+	if !orderable[a.field.Type] {
+		return
+	}
+
+	if !a.hasValue {
+		a.min = val
+		a.max = val
+		a.hasValue = true
+		return
+	}
+
+	if lessThan(a.field.Type, val, a.min) {
+		a.min = val
+	}
+	if lessThan(a.field.Type, a.max, val) {
+		a.max = val
+	}
+}
+
+// computeColumnStats computes statistics for a single column across all records.
+func computeColumnStats(field ParquetField, records []any) ColumnStats {
+	acc := columnAccumulator{field: field}
+
+	for _, record := range records {
+		m, ok := record.(map[string]any)
+		if !ok {
+			continue
+		}
+		val, exists := m[field.Name]
+		if !exists {
+			acc.observe(nil)
+			continue
+		}
+		acc.observe(val)
+	}
+
+	cs := ColumnStats{
+		Name:      field.Name,
+		NullCount: acc.nullCount,
+	}
+	if acc.hasValue {
+		cs.Min = acc.min
+		cs.Max = acc.max
+	}
+	return cs
+}
+
+// lessThan returns true if a < b for the given orderable ParquetType.
+// Both a and b must be non-nil. Handles type coercion for numeric types
+// that may arrive as different Go types (int, int32, int64, float64).
+//
+//nolint:gocyclo // Type dispatch for each orderable Parquet type.
+func lessThan(ptype ParquetType, a, b any) bool {
+	switch ptype {
+	case ParquetInt32:
+		return toInt64(a) < toInt64(b)
+	case ParquetInt64:
+		return toInt64(a) < toInt64(b)
+	case ParquetFloat32:
+		return toFloat64(a) < toFloat64(b)
+	case ParquetFloat64:
+		return toFloat64(a) < toFloat64(b)
+	case ParquetString:
+		as, _ := a.(string)
+		bs, _ := b.(string)
+		return as < bs
+	case ParquetTimestamp:
+		return toTimestamp(a).Before(toTimestamp(b))
+	default:
+		return false
+	}
+}
+
+// toInt64 coerces numeric Go values to int64 for comparison.
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+// toFloat64 coerces numeric Go values to float64 for comparison.
+func toFloat64(v any) float64 {
+	switch n := v.(type) {
+	case float32:
+		return float64(n)
+	case float64:
+		return n
+	default:
+		return 0
+	}
+}
+
+// toTimestamp coerces time values for comparison.
+func toTimestamp(v any) time.Time {
+	switch t := v.(type) {
+	case time.Time:
+		return t
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, t)
+		if err != nil {
+			return time.Time{}
+		}
+		return parsed
+	default:
+		return time.Time{}
+	}
 }

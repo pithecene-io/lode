@@ -116,6 +116,40 @@ type FileRef struct {
 
 	// Checksum is an optional integrity hash.
 	Checksum string `json:"checksum,omitempty"`
+
+	// Stats contains per-file column statistics reported by the codec.
+	// Omitted when the codec does not report statistics.
+	Stats *FileStats `json:"stats,omitempty"`
+}
+
+// FileStats holds per-file statistics reported by a codec after encoding.
+type FileStats struct {
+	// RowCount is the number of rows in this file.
+	RowCount int64 `json:"row_count"`
+
+	// Columns contains per-column statistics. May be empty if the codec
+	// does not report column-level stats.
+	Columns []ColumnStats `json:"columns,omitempty"`
+}
+
+// ColumnStats holds per-column statistics for a single data file.
+type ColumnStats struct {
+	// Name is the column/field name.
+	Name string `json:"name"`
+
+	// Min is the minimum value observed. nil if no non-null values exist.
+	// Values are JSON-serializable Go types matching the codec's decoded types.
+	Min any `json:"min,omitempty"`
+
+	// Max is the maximum value observed. nil if no non-null values exist.
+	Max any `json:"max,omitempty"`
+
+	// NullCount is the number of null values observed for this column.
+	NullCount int64 `json:"null_count"`
+
+	// DistinctCount is the approximate number of distinct values.
+	// Zero means not computed or not available.
+	DistinctCount int64 `json:"distinct_count,omitempty"`
 }
 
 // -----------------------------------------------------------------------------
@@ -209,6 +243,37 @@ type RecordStreamEncoder interface {
 
 	// Close finalizes the stream and flushes any buffered data.
 	Close() error
+}
+
+// -----------------------------------------------------------------------------
+// Statistical codec interfaces
+// -----------------------------------------------------------------------------
+
+// StatisticalCodec is implemented by codecs that report per-file statistics
+// after encoding. This is an optional extension to the Codec interface.
+//
+// The codec accumulates statistics during Encode and returns them via FileStats.
+// FileStats must be called after a successful Encode call and before the next
+// Encode call; behavior is undefined otherwise.
+type StatisticalCodec interface {
+	Codec
+
+	// FileStats returns statistics accumulated during the most recent Encode call.
+	// Returns nil if no statistics are available.
+	FileStats() *FileStats
+}
+
+// StatisticalStreamEncoder is implemented by stream encoders that report
+// per-file statistics after the stream is finalized. This is an optional
+// extension to the RecordStreamEncoder interface.
+//
+// FileStats must be called after Close returns successfully.
+type StatisticalStreamEncoder interface {
+	RecordStreamEncoder
+
+	// FileStats returns statistics accumulated during stream encoding.
+	// Returns nil if no statistics are available.
+	FileStats() *FileStats
 }
 
 // -----------------------------------------------------------------------------

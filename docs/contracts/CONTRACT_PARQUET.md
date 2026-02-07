@@ -240,14 +240,20 @@ The following statistics MAY be extracted and recorded in manifests:
 - `RowCount`: Total rows in the file (from Parquet metadata).
 - `MinTimestamp` / `MaxTimestamp`: When a timestamp column is designated.
 
-### Future: Extended Manifest Stats
+### Per-File Statistics
 
-Future versions MAY add:
-- Column-level min/max statistics.
-- Null counts per column.
-- Byte size per column.
+The Parquet codec implements `StatisticalCodec` and reports per-file statistics
+via `FileStats()` after each `Encode` call:
 
-These extensions are additive and do not affect this contract.
+- `RowCount`: Total rows encoded in the file.
+- Per-column `Min` and `Max` for orderable types: int32, int64, float32, float64, string, timestamp.
+- Per-column `NullCount`: Number of null values for nullable columns.
+- `DistinctCount`: Reserved for future use (reported as 0).
+- Boolean and bytes columns report `NullCount` only (no min/max).
+- Statistics are computed during `Encode` from the Go record values, not from Parquet internal metadata.
+- Min/Max values use the same Go types as the input records. When serialized to
+  JSON, `time.Time` becomes an RFC3339Nano string; consumers must interpret based
+  on schema context.
 
 ---
 

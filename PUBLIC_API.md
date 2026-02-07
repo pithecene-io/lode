@@ -163,6 +163,12 @@ construction.
 
 **Interfaces:**
 - `Timestamped` - Optional interface for records with timestamps (see below)
+- `StatisticalCodec` - Optional codec interface for per-file column statistics
+- `StatisticalStreamEncoder` - Optional stream encoder interface for per-file column statistics
+
+**Types (per-file statistics):**
+- `FileStats` - Per-file row count and column statistics
+- `ColumnStats` - Per-column min, max, null count, and distinct count
 
 **Range read support:**
 - `Store.ReadRange(ctx, path, offset, length)` - Read byte range from object
@@ -288,6 +294,32 @@ _, err := ds.StreamWriteRecords(ctx, iter, metadata)
 | `ErrCodecNotStreamable` | `StreamWriteRecords` called with Parquet codec |
 
 *Contract reference: [`CONTRACT_PARQUET.md`](docs/contracts/CONTRACT_PARQUET.md)*
+
+### Per-File Statistics
+
+The Parquet codec implements `StatisticalCodec` and automatically populates
+per-file column statistics on each `FileRef` during `Write`:
+
+<!-- illustrative -->
+```go
+snap, _ := ds.Write(ctx, records, metadata)
+for _, f := range snap.Manifest.Files {
+    if f.Stats != nil {
+        fmt.Println("rows:", f.Stats.RowCount)
+        for _, col := range f.Stats.Columns {
+            fmt.Printf("  %s: min=%v max=%v nulls=%d\n",
+                col.Name, col.Min, col.Max, col.NullCount)
+        }
+    }
+}
+```
+
+Statistics are computed from Go record values during encoding. Orderable types
+(int32, int64, float32, float64, string, timestamp) get min/max. All columns
+get null count. Boolean and bytes columns have no min/max.
+
+Codecs that do not implement `StatisticalCodec` (e.g., JSONL) produce no stats —
+`FileRef.Stats` is nil and omitted from the manifest JSON.
 
 ---
 
