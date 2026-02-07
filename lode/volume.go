@@ -99,7 +99,7 @@ func (v *volume) StageWriteAt(ctx context.Context, offset int64, r io.Reader) (B
 	if length == 0 {
 		return BlockRef{}, fmt.Errorf("lode: block data must not be empty")
 	}
-	if offset+length > v.totalLength {
+	if length > v.totalLength-offset {
 		return BlockRef{}, fmt.Errorf("lode: block exceeds volume address space (offset=%d, length=%d, totalLength=%d)", offset, length, v.totalLength)
 	}
 
@@ -155,7 +155,7 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		if b.Length <= 0 {
 			return nil, fmt.Errorf("lode: block length must be positive (length=%d)", b.Length)
 		}
-		if b.Offset+b.Length > v.totalLength {
+		if b.Length > v.totalLength-b.Offset {
 			return nil, fmt.Errorf("lode: block exceeds volume address space (offset=%d, length=%d, totalLength=%d)", b.Offset, b.Length, v.totalLength)
 		}
 		expectedPath := volumeBlockPath(v.id, b.Offset, b.Length)
@@ -242,8 +242,9 @@ func validateNoOverlaps(blocks []BlockRef) error {
 	})
 
 	for i := 1; i < len(sorted); i++ {
-		prevEnd := sorted[i-1].Offset + sorted[i-1].Length
-		if prevEnd > sorted[i].Offset {
+		// Overflow-safe: equivalent to sorted[i-1].Offset + sorted[i-1].Length > sorted[i].Offset.
+		// Safe because sorted is in ascending Offset order, so the subtraction is non-negative.
+		if sorted[i-1].Length > sorted[i].Offset-sorted[i-1].Offset {
 			return ErrOverlappingBlocks
 		}
 	}
@@ -263,7 +264,7 @@ func (v *volume) ReadAt(ctx context.Context, snapshotID VolumeSnapshotID, offset
 	if length <= 0 {
 		return nil, fmt.Errorf("lode: length must be positive")
 	}
-	if offset+length > v.totalLength {
+	if length > v.totalLength-offset {
 		return nil, fmt.Errorf("lode: read exceeds volume address space (offset=%d, length=%d, totalLength=%d)", offset, length, v.totalLength)
 	}
 
@@ -486,7 +487,7 @@ func validateVolumeManifest(m *VolumeManifest) error {
 				Message: "is required",
 			}
 		}
-		if b.Offset+b.Length > m.TotalLength {
+		if b.Length > m.TotalLength-b.Offset {
 			return &manifestValidationError{
 				Field:   fmt.Sprintf("blocks[%d]", i),
 				Message: fmt.Sprintf("exceeds total_length (offset=%d, length=%d, total_length=%d)", b.Offset, b.Length, m.TotalLength),
