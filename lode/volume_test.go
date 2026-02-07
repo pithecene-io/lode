@@ -1257,10 +1257,10 @@ func TestVolume_ValidateManifest_OverflowBlock_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestVolume_ValidateNoOverlaps_OverflowPrevEnd_Detected(t *testing.T) {
-	// Two blocks where prevEnd = Offset + Length would overflow.
-	// Block 1 starts near MaxInt64; block 2 starts at offset 0.
-	// Naive prevEnd would wrap to a small number and miss the overlap.
+func TestVolume_ValidateNoOverlaps_OverflowPrevEnd_NoFalsePositive(t *testing.T) {
+	// Two non-overlapping blocks where prevEnd = Offset + Length would overflow.
+	// Block 1 starts at offset 0; block 2 starts near MaxInt64.
+	// Naive prevEnd on block 2 would wrap to a small number and falsely report overlap.
 	blocks := []BlockRef{
 		{Offset: 0, Length: 100, Path: "a.bin"},
 		{Offset: math.MaxInt64 - 10, Length: 20, Path: "b.bin"},
