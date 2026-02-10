@@ -6,35 +6,39 @@ Central index of all Lode benchmarks.
 
 Results from two environments to contextualize the range of expected performance.
 
-| Environment | CPU | Cores | Sampling | Notes |
-|-------------|-----|------:|----------|-------|
-| Workstation | AMD Ryzen 9 5900XT | 16C/32T | Single run | Bare metal, high single-thread clock |
-| CI (GitHub Actions) | AMD EPYC 7763 | 4 vCPU | `-count=10`, benchstat median | Shared runner, noisy neighbor |
+| Machine | CPU | Cores | Sampling | Notes |
+|---------|-----|------:|----------|-------|
+| Workstation | AMD Ryzen 9 5900XT | 16C/32T | `-count=10`, benchstat median | Bare metal, high single-thread clock |
+| CI | AMD EPYC 7763 | 4 vCPU | `-count=10`, benchstat median | GitHub Actions shared runner |
 
 Both: linux/amd64, Go 1.25, Docker-local S3 backends.
 
 ### In-memory
 
-| Benchmark | Workstation ns/op | CI ns/op | B/op | allocs/op |
-|-----------|------------------:|---------:|-----:|----------:|
-| `BenchmarkDataset_SequentialWrites` | 142,114 | 177,600 ± 4% | 98,287 | 680 |
-| `BenchmarkDataset_SequentialWrites_StoreCallCount` | 144,832 | 188,000 ± 3% | 100,218 | 687 |
+| Benchmark | Machine | ns/op | B/op | allocs/op |
+|-----------|---------|------:|-----:|----------:|
+| `BenchmarkDataset_SequentialWrites` | Workstation | 135,400 ± 1% | 97,864 ± 0% | 680 |
+| | CI | 177,600 ± 4% | 99,702 ± 0% | 680 |
+| `BenchmarkDataset_SequentialWrites_StoreCallCount` | Workstation | 138,200 ± 2% | 100,016 ± 1% | 687 |
+| | CI | 188,000 ± 3% | 101,881 ± 0% | 687 |
 
 ### S3 (Docker-local)
 
-| Benchmark | Workstation ns/op | CI ns/op | B/op | allocs/op |
-|-----------|------------------:|---------:|-----:|----------:|
-| `BenchmarkS3_WriteRoundTrip/LocalStack` | 5,572,537 | 8,247,000 ± 3% | 367,305 | 2,969 |
-| `BenchmarkS3_WriteRoundTrip/MinIO` | 11,680,989 | 6,838,000 ± 5% | 371,071 | 3,040 |
+| Benchmark | Machine | ns/op | B/op | allocs/op |
+|-----------|---------|------:|-----:|----------:|
+| `BenchmarkS3_WriteRoundTrip/LocalStack` | Workstation | 5,621,000 ± 15% | 376,832 ± 2% | 2,973 |
+| | CI | 8,247,000 ± 3% | 355,202 ± 1% | 2,965 |
+| `BenchmarkS3_WriteRoundTrip/MinIO` | Workstation | 11,340,000 ± 1% | 380,659 ± 1% | 3,045 |
+| | CI | 6,838,000 ± 5% | 364,071 ± 1% | 3,039 |
 
 > **Note:** S3 numbers reflect Docker-local round-trip latency, not production S3.
 > In-memory benchmarks inject 10 µs simulated store latency.
 > These results are informational — use them for relative comparison, not absolute targets.
 >
-> Allocation counts (B/op, allocs/op) are stable across environments.
-> Latency varies with CPU, Docker runtime, and scheduler noise — the
-> MinIO/LocalStack ordering reverses between workstation and CI, confirming
-> that absolute S3 latency depends on the container environment.
+> Allocation counts are stable across machines. Latency varies with CPU,
+> Docker runtime, and scheduler noise — the MinIO/LocalStack ordering
+> reverses between workstation and CI, confirming that absolute S3 latency
+> depends on the container environment, not the library.
 
 ## Benchmark inventory
 
