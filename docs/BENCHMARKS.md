@@ -21,26 +21,22 @@ Central index of all Lode benchmarks.
 
 ## Running benchmarks
 
-### In-memory benchmarks
-
-```bash
-go test -bench=. -benchmem ./lode/...
-```
-
-### S3 integration benchmarks
-
-Requires Docker for LocalStack and MinIO:
+`task bench` runs **all** benchmarks — in-memory and S3 integration:
 
 ```bash
 task s3:up      # start LocalStack + MinIO
-task bench      # run S3 benchmarks
+task bench      # run all benchmarks
 task s3:down    # stop services
 ```
 
-Or manually:
+In-memory benchmarks always run. S3 benchmarks require services to be up first.
+
+### Manual invocation
 
 ```bash
-docker compose -f lode/s3/docker-compose.yaml up -d
-LODE_S3_TESTS=1 go test -bench=. -benchmem -tags=integration -run=^$ ./lode/s3/...
-docker compose -f lode/s3/docker-compose.yaml down
+# All benchmarks (with S3 services running)
+LODE_S3_TESTS=1 go test -bench=. -benchmem -tags=integration -run=^$ ./...
+
+# In-memory only
+go test -bench=. -benchmem -run=^$ ./lode/...
 ```

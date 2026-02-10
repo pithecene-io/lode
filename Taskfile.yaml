@@ -60,8 +60,8 @@ tasks:
       - go test -v -tags=integration ./lode/s3/...
 
   bench:
-    desc: Run S3 integration benchmarks (requires s3:up first)
+    desc: Run all benchmarks (start s3:up first for S3 benchmarks)
     env:
       LODE_S3_TESTS: "1"
     cmds:
-      - go test -bench=. -benchmem -tags=integration -run=^$ ./lode/s3/...
+      - go test -bench=. -benchmem -tags=integration -run=^$ ./...
