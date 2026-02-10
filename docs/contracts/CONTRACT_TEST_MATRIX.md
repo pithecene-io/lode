@@ -83,6 +83,7 @@ Gaps are tracked with codes indicating category and priority:
 | Creates snapshot | Multiple write tests |
 | nil metadata coalesced | `TestDataset_Write_NilMetadata_CoalescesToEmpty` |
 | Parent snapshot linked | `TestDataset_StreamWrite_ParentSnapshotLinked` |
+| Parent ID cached (O(1) after first write) | `TestDataset_Write_CachesParentSnapshotID` |
 | Raw blob RowCount=1 | `TestDataset_StreamWrite_Success` |
 
 **StreamWrite**: All covered ✅
@@ -95,6 +96,7 @@ Gaps are tracked with codes indicating category and priority:
 | Abort → no manifest | `TestDataset_StreamWrite_Abort_NoManifest` |
 | Close without Commit → abort | `TestDataset_StreamWrite_CloseWithoutCommit_BehavesAsAbort` |
 | Codec configured → error | `TestDataset_StreamWrite_WithCodec_ReturnsError` |
+| Parent ID cached across StreamWrite→Commit | `TestDataset_StreamWrite_CachesParentSnapshotID` |
 | Checksum computed | `TestDataset_StreamWrite_WithChecksum_RecordsChecksum` |
 | Manifest Put error → no manifest + cleanup | `TestStreamWrite_ManifestPutError_NoManifest_CleanupAttempted` |
 | Abort → cleanup attempted | `TestStreamWrite_Abort_NoManifest_CleanupAttempted` |
@@ -113,6 +115,7 @@ Gaps are tracked with codes indicating category and priority:
 | Iterator error → no manifest | `TestDataset_StreamWriteRecords_IteratorError` |
 | RowCount = records consumed | `TestDataset_StreamWriteRecords_Success` |
 | Iterator error → cleanup attempted | `TestStreamWriteRecords_IteratorError_NoManifest_CleanupAttempted` |
+| Parent ID cached across StreamWriteRecords | `TestDataset_StreamWriteRecords_CachesParentSnapshotID` |
 | Manifest Put error → no manifest + cleanup | `TestStreamWriteRecords_ManifestPutError_NoManifest` |
 
 **Timestamp Computation**: All covered ✅

@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.1] - 2026-02-09
+
+### Fixed
+
+- **O(n²) write degradation on remote stores**: `Write()`, `StreamWrite()`, and `StreamWriteRecords()` called `Latest()` on every invocation, scanning all manifests via `store.List` + N×`store.Get`. On remote stores (S3, R2), this caused sequential writes to degrade quadratically. A 40-write burst that should complete in <1s took ~40 minutes. Parent snapshot ID is now cached after each successful write; only the first write (cold start) falls back to `Latest()`. ([#109](https://github.com/pithecene-io/lode/pull/109), closes [#108](https://github.com/pithecene-io/lode/issues/108))
+
+### Added
+
+- **Sequential write benchmarks**: `BenchmarkDataset_SequentialWrites` (wall-clock with simulated latency) and `BenchmarkDataset_SequentialWrites_StoreCallCount` (correctness assertion) guard against parent-resolution regressions
+
+### Upgrade Notes
+
+- No API changes; transparent internal optimization
+- All write paths (`Write`, `StreamWrite`, `StreamWriteRecords`) benefit automatically
+- Safe to upgrade from v0.7.0
+
+---
+
 ## [0.7.0] - 2026-02-07
 
 ### Added
@@ -312,12 +330,13 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/justapithecus/lode/compare/v0.7.0...HEAD
-[0.7.0]: https://github.com/justapithecus/lode/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/justapithecus/lode/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/justapithecus/lode/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/justapithecus/lode/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/justapithecus/lode/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/justapithecus/lode/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/justapithecus/lode/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/justapithecus/lode/releases/tag/v0.1.0
+[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/pithecene-io/lode/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/pithecene-io/lode/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/pithecene-io/lode/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/pithecene-io/lode/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/pithecene-io/lode/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/pithecene-io/lode/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/pithecene-io/lode/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/pithecene-io/lode/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/pithecene-io/lode/releases/tag/v0.1.0

@@ -200,7 +200,7 @@ For full contract details: [`docs/contracts/`](docs/contracts/)
 
 Common pitfalls when using Lode:
 
-- **Metadata must be non-nil** — Pass `lode.Metadata{}` for empty metadata, not `nil`.
+- **Metadata defaults to empty** — `nil` metadata is coalesced to `Metadata{}`; pass `nil` or `Metadata{}` for empty metadata.
 - **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
 - **Single-writer only** — Concurrent writers to the same dataset or volume may corrupt history.
 - **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
@@ -309,7 +309,7 @@ Each example is self-contained and runnable. See the example source for detailed
 
 ## Status
 
-Lode is at **v0.7.0** and under active development.
+Lode is at **v0.7.1** and under active development.
 APIs are stabilizing; some changes are possible before v1.0.
 
 If you are evaluating Lode, focus on:
