@@ -32,16 +32,16 @@ as `(private)` instead of by number.
 
 ### quarry
 
-- **Integration date:** TBD
-- **Contact:** TBD
-- **Usage profile:** Dataset / Volume / Both
-- **Storage backend:** AWS S3
-- **Status:** Not started
+- **Integration date:** 2026-02-10
+- **Contact:** @justapithecus
+- **Usage profile:** Dataset
+- **Storage backend:** AWS S3 (S3 adapter targeting Cloudflare R2)
+- **Status:** In progress
 
 | Criterion | Validated | Date | Notes |
 |-----------|:---------:|------|-------|
 | Dataset write round-trip | | | |
-| Volume write round-trip | | | |
+| Volume write round-trip | N/A | — | Dataset-only integration |
 | Error sentinels observed | | | |
 | API friction (none = pass) | | | |
 
