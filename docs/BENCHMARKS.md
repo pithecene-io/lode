@@ -39,6 +39,9 @@ Both: linux/amd64, Go 1.25, Docker-local S3 backends.
 > Docker runtime, and scheduler noise — the MinIO/LocalStack ordering
 > reverses between workstation and CI, confirming that absolute S3 latency
 > depends on the container environment, not the library.
+>
+> LocalStack shows higher latency variance (± 15% workstation) than MinIO
+> (± 1%) due to its Java/Python runtime. This is inherent to the emulator.
 
 ## Benchmark inventory
 
