@@ -1,67 +1,70 @@
-name: "📦 Release"
+name: 📦 Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: [v*]
 
 permissions:
   contents: write
 
 jobs:
   tag_check:
-    name: "🔎 Tag Check"
+    name: 🔎 Tag Check
     runs-on: ubuntu-latest
     outputs:
       semver_match: ${{ steps.regex-match.outputs.match }}
     steps:
-      - name: "🔎 Match SemVer Tag"
+      - name: 🔎 Match SemVer Tag
         uses: actions-ecosystem/action-regex-match@v2
         id: regex-match
         with:
           text: ${{ github.ref_name }}
-          regex: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          regex: ^v[0-9]+\.[0-9]+\.[0-9]+$
 
   package:
-    name: "📦 Package"
+    name: 📦 Package
     runs-on: ubuntu-latest
     needs: [tag_check]
     if: ${{ needs.tag_check.outputs.semver_match != '' }}
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "📦 Package"
+
+      - name: 📦 Package
         run: |
           mkdir -p dist
           VERSION="${GITHUB_REF_NAME}"
           git archive --format=tar.gz --output="dist/lode-${VERSION}.tar.gz" HEAD
           sha256sum "dist/lode-${VERSION}.tar.gz" > "dist/lode-${VERSION}.tar.gz.sha256"
-      - name: "⬆️ Upload Artifacts"
+
+      - name: ⬆️ Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-dist
           path: dist/
 
   hold:
-    name: "⏸️ Release Approval"
+    name: ⏸️ Release Approval
     runs-on: ubuntu-latest
     needs: [package]
     environment:
       name: release
     steps:
-      - name: "✅ Await Approval"
+      - name: ✅ Await Approval
         run: echo "Release approved; continuing."
 
   release:
-    name: "🚀 GitHub Release"
+    name: 🚀 GitHub Release
     runs-on: ubuntu-latest
     needs: [hold]
     steps:
-      - name: "⬇️ Download Artifacts"
+      - name: ⬇️ Download Artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
-      - name: "🚀 Create Release"
+
+      - name: 🚀 Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}

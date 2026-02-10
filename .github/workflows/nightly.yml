@@ -1,50 +1,60 @@
-name: "🌙 Nightly"
+name: 🌙 Nightly
 
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: 0 4 * * *
   workflow_dispatch:
 
 jobs:
   test-race:
-    name: "🧪 Race Tests"
+    name: 🧪 Race Tests
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "🧪 Race Tests"
+
+      - name: 🧪 Race Tests
         run: task test:race
 
   integration:
-    name: "🔌 Integration Tests"
+    name: 🔌 Integration Tests
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "🐳 Cache Docker images"
+
+      - name: 🐳 Cache Docker images
         uses: actions/cache@v4
         with:
           path: /tmp/docker-images
           key: docker-${{ hashFiles('lode/s3/docker-compose.yaml') }}
-      - name: "🐳 Load cached images"
+
+      - name: 🐳 Load cached images
         run: |
           if [ -f /tmp/docker-images/images.tar ]; then
             docker load -i /tmp/docker-images/images.tar
           fi
-      - name: "🐳 Start S3 Services"
+
+      - name: 🐳 Start S3 Services
         run: task s3:up
-      - name: "🐳 Save Docker images"
+
+      - name: 🐳 Save Docker images
         run: |
           mkdir -p /tmp/docker-images
           docker save $(docker compose -f lode/s3/docker-compose.yaml config --images) -o /tmp/docker-images/images.tar
-      - name: "🧪 Integration Tests"
+
+      - name: 🧪 Integration Tests
         run: task s3:test
-      - name: "📊 Benchmarks"
+
+      - name: 📊 Benchmarks
         run: task bench
-      - name: "🐳 Stop S3 Services"
+
+      - name: 🐳 Stop S3 Services
         if: always()
         run: task s3:down

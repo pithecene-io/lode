@@ -1,63 +1,73 @@
-name: "🤖 CI"
+name: 🤖 CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
   lint:
-    name: "🧹 Lint"
+    name: 🧹 Lint
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "🧹 Lint"
+
+      - name: 🧹 Lint
         run: task lint
 
   test:
-    name: "🧪 Test"
+    name: 🧪 Test
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "🧪 Test"
+
+      - name: 🧪 Test
         run: task test
 
   build:
-    name: "🏗️ Build"
+    name: 🏗️ Build
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "🏗️ Build"
+
+      - name: 🏗️ Build
         run: task build
 
   examples:
-    name: "📦 Examples"
+    name: 📦 Examples
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "📦 Examples"
+
+      - name: 📦 Examples
         run: task examples
 
   snippets:
-    name: "📝 Snippets"
+    name: 📝 Snippets
     runs-on: ubuntu-latest
     steps:
-      - name: "📥 Checkout"
+      - name: 📥 Checkout
         uses: actions/checkout@v4
-      - name: "🧰 Setup"
+
+      - name: 🧰 Setup
         uses: jdx/mise-action@v2
-      - name: "📝 Verify Snippets"
+
+      - name: 📝 Verify Snippets
         run: task snippets
