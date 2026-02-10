@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-race:
+  race:
     name: 🧪 Race Tests
     runs-on: ubuntu-latest
     steps:

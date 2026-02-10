@@ -58,7 +58,10 @@ tasks:
     env:
       LODE_S3_TESTS: "1"
     cmds:
-      - go test -v -tags=integration ./...
+      - >-
+        go test -v -count=1 -tags=integration
+        $(grep -rls '//go:build integration' --include='*_test.go' . |
+        xargs -n1 dirname | sort -u | sed 's|$|/...|')
 
   bench:
     desc: Run all benchmarks (start s3:up first for S3 benchmarks)

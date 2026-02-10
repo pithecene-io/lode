@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -170,7 +171,7 @@ func runStoreIntegrationTests(t *testing.T, store *Store) {
 		if err != nil {
 			t.Fatalf("List failed: %v", err)
 		}
-		if !contains(keys, key) {
+		if !slices.Contains(keys, key) {
 			t.Errorf("expected key %q in list, got %v", key, keys)
 		}
 
@@ -341,16 +342,6 @@ func runStoreIntegrationTests(t *testing.T, store *Store) {
 			t.Error("data file should exist")
 		}
 	})
-}
-
-// contains checks if a string slice contains a specific value.
-func contains(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // -----------------------------------------------------------------------------
