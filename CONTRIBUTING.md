@@ -24,6 +24,7 @@ This installs:
 | `task build` | Build all packages |
 | `task examples` | Run all examples |
 | `task snippets` | Verify runnable markdown snippets |
+| `task bench` | Run S3 integration benchmarks (requires `s3:up`) |
 
 ### S3 integration tests
 
