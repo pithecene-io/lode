@@ -187,6 +187,9 @@ type dataset struct {
 	compressor Compressor
 	codec      Codec
 	checksum   Checksum
+
+	mu             sync.Mutex
+	lastSnapshotID DatasetSnapshotID // cached after successful write
 }
 
 // NewDataset creates a dataset with documented defaults.
@@ -251,18 +254,45 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
+// resolveParentID returns the cached parent snapshot ID when available,
+// falling back to Latest() on cold start. This avoids an O(n) store scan
+// on every write after the first.
+func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error) {
+	d.mu.Lock()
+	cached := d.lastSnapshotID
+	d.mu.Unlock()
+
+	if cached != "" {
+		return cached, nil
+	}
+
+	// Cold start: fall back to Latest()
+	latest, err := d.Latest(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNoSnapshots) {
+			return "", nil
+		}
+		return "", fmt.Errorf("lode: failed to get latest snapshot: %w", err)
+	}
+	return latest.ID, nil
+}
+
+// cacheSnapshotID stores the most recently written snapshot ID so that
+// subsequent writes can skip the Latest() store scan.
+func (d *dataset) cacheSnapshotID(id DatasetSnapshotID) {
+	d.mu.Lock()
+	d.lastSnapshotID = id
+	d.mu.Unlock()
+}
+
 func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*DatasetSnapshot, error) {
 	if metadata == nil {
 		metadata = Metadata{}
 	}
 
-	var parentID DatasetSnapshotID
-	latest, err := d.Latest(ctx)
-	if err != nil && !errors.Is(err, ErrNoSnapshots) {
-		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
-	}
-	if latest != nil {
-		parentID = latest.ID
+	parentID, err := d.resolveParentID(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	snapshotID := DatasetSnapshotID(generateID())
@@ -340,6 +370,8 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 	if err := d.writeManifests(ctx, snapshotID, manifest, partitionKeys); err != nil {
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
+
+	d.cacheSnapshotID(snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -455,14 +487,9 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 		return nil, ErrCodecConfigured
 	}
 
-	// Determine parent snapshot
-	var parentID DatasetSnapshotID
-	latest, err := d.Latest(ctx)
-	if err != nil && !errors.Is(err, ErrNoSnapshots) {
-		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
-	}
-	if latest != nil {
-		parentID = latest.ID
+	parentID, err := d.resolveParentID(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	snapshotID := DatasetSnapshotID(generateID())
@@ -531,14 +558,9 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, ErrPartitioningNotSupported
 	}
 
-	// Determine parent snapshot
-	var parentID DatasetSnapshotID
-	latest, err := d.Latest(ctx)
-	if err != nil && !errors.Is(err, ErrNoSnapshots) {
-		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
-	}
-	if latest != nil {
-		parentID = latest.ID
+	parentID, err := d.resolveParentID(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	snapshotID := DatasetSnapshotID(generateID())
@@ -692,6 +714,8 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
+
+	d.cacheSnapshotID(snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -1103,6 +1127,8 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
+
+	sw.ds.cacheSnapshotID(sw.snapshotID)
 
 	// Mark committed only after full success
 	sw.mu.Lock()

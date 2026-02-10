@@ -2192,3 +2192,143 @@ func (e *errorIterator) Record() any {
 func (e *errorIterator) Err() error {
 	return e.err
 }
+
+// -----------------------------------------------------------------------------
+// Parent snapshot ID caching (issue #108)
+// -----------------------------------------------------------------------------
+
+func TestDataset_Write_CachesParentSnapshotID(t *testing.T) {
+	// After the first Write, subsequent writes must not call store.List
+	// to resolve the parent snapshot ID. This verifies the O(1) parent
+	// resolution described in issue #108.
+	fs := newFaultStore(NewMemory())
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First write: cold start, must call List via Latest()
+	snap1, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterFirst := len(fs.ListCalls())
+	if listCallsAfterFirst == 0 {
+		t.Fatal("expected at least one List call on cold-start write")
+	}
+
+	// Second write: cached parent, must NOT add new List calls
+	snap2, err := ds.Write(t.Context(), R(D{"b": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterSecond := len(fs.ListCalls())
+	if listCallsAfterSecond != listCallsAfterFirst {
+		t.Errorf("expected no new List calls on second write, got %d new calls",
+			listCallsAfterSecond-listCallsAfterFirst)
+	}
+
+	// Verify parent chain is correct
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s, got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	}
+
+	// Third write: still cached
+	snap3, err := ds.Write(t.Context(), R(D{"c": 3}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterThird := len(fs.ListCalls())
+	if listCallsAfterThird != listCallsAfterFirst {
+		t.Errorf("expected no new List calls on third write, got %d new calls",
+			listCallsAfterThird-listCallsAfterFirst)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s, got %s", snap2.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}
+
+func TestDataset_StreamWrite_CachesParentSnapshotID(t *testing.T) {
+	// StreamWrite → Commit must also update the parent cache so that
+	// a subsequent Write uses O(1) parent resolution.
+	fs := newFaultStore(NewMemory())
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First write via StreamWrite
+	sw, err := ds.StreamWrite(t.Context(), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = sw.Write([]byte("payload-1"))
+	snap1, err := sw.Commit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterFirst := len(fs.ListCalls())
+
+	// Second write via regular Write: should use cached parent
+	snap2, err := ds.Write(t.Context(), []any{[]byte("payload-2")}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterSecond := len(fs.ListCalls())
+	if listCallsAfterSecond != listCallsAfterFirst {
+		t.Errorf("expected no new List calls after StreamWrite cached parent, got %d new calls",
+			listCallsAfterSecond-listCallsAfterFirst)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s, got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	}
+}
+
+func TestDataset_StreamWriteRecords_CachesParentSnapshotID(t *testing.T) {
+	// StreamWriteRecords must also update the parent cache.
+	fs := newFaultStore(NewMemory())
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First write
+	snap1, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterFirst := len(fs.ListCalls())
+
+	// Second write via StreamWriteRecords
+	iter := &sliceIterator{records: R(D{"b": 2})}
+	snap2, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterSecond := len(fs.ListCalls())
+	if listCallsAfterSecond != listCallsAfterFirst {
+		t.Errorf("expected no new List calls on StreamWriteRecords, got %d new calls",
+			listCallsAfterSecond-listCallsAfterFirst)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s, got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	}
+
+	// Third write: verify chain continues
+	snap3, err := ds.Write(t.Context(), R(D{"c": 3}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listCallsAfterThird := len(fs.ListCalls())
+	if listCallsAfterThird != listCallsAfterFirst {
+		t.Errorf("expected no new List calls on third write, got %d new calls",
+			listCallsAfterThird-listCallsAfterFirst)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s, got %s", snap2.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}

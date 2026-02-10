@@ -127,6 +127,20 @@ func (f *faultStore) DeleteCalls() []string {
 	return append([]string(nil), f.deleteCalls...)
 }
 
+// ListCalls returns prefixes passed to List.
+func (f *faultStore) ListCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.listCalls...)
+}
+
+// GetCalls returns paths passed to Get.
+func (f *faultStore) GetCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.getCalls...)
+}
+
 // Reset clears all recorded calls.
 func (f *faultStore) Reset() {
 	f.mu.Lock()
