@@ -317,10 +317,10 @@ If you are evaluating Lode, focus on:
 - metadata visibility
 - API clarity
 
-Usage overview: `PUBLIC_API.md`
-Concrete usage: `examples/`
+Usage overview: [`PUBLIC_API.md`](PUBLIC_API.md)
+Concrete usage: [`examples/`](examples/)
 Benchmarks: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
-Implementation milestones: `docs/IMPLEMENTATION_PLAN.md`
+Implementation milestones: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
 
 ---
 
