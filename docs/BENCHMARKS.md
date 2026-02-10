@@ -4,25 +4,37 @@ Central index of all Lode benchmarks.
 
 ## Results
 
-Collected on AMD Ryzen 9 5900XT (linux/amd64), Go 1.25, Docker-local S3 backends.
+Results from two environments to contextualize the range of expected performance.
+
+| Environment | CPU | Cores | Notes |
+|-------------|-----|------:|-------|
+| Workstation | AMD Ryzen 9 5900XT | 12C/24T | Bare metal, high single-thread clock |
+| CI (GitHub Actions) | AMD EPYC 7763 | 4 vCPU | Shared runner, noisy neighbor |
+
+Both: linux/amd64, Go 1.25, Docker-local S3 backends.
 
 ### In-memory
 
-| Benchmark | ns/op | B/op | allocs/op |
-|-----------|------:|-----:|----------:|
-| `BenchmarkDataset_SequentialWrites` | 142,114 | 98,287 | 680 |
-| `BenchmarkDataset_SequentialWrites_StoreCallCount` | 144,832 | 100,218 | 687 |
+| Benchmark | Workstation ns/op | CI ns/op | B/op | allocs/op |
+|-----------|------------------:|---------:|-----:|----------:|
+| `BenchmarkDataset_SequentialWrites` | 142,114 | 177,600 ± 4% | 98,287 | 680 |
+| `BenchmarkDataset_SequentialWrites_StoreCallCount` | 144,832 | 188,000 ± 3% | 100,218 | 687 |
 
 ### S3 (Docker-local)
 
-| Benchmark | ns/op | B/op | allocs/op |
-|-----------|------:|-----:|----------:|
-| `BenchmarkS3_WriteRoundTrip/LocalStack` | 5,572,537 | 367,305 | 2,969 |
-| `BenchmarkS3_WriteRoundTrip/MinIO` | 11,680,989 | 371,071 | 3,040 |
+| Benchmark | Workstation ns/op | CI ns/op | B/op | allocs/op |
+|-----------|------------------:|---------:|-----:|----------:|
+| `BenchmarkS3_WriteRoundTrip/LocalStack` | 5,572,537 | 8,247,000 ± 3% | 367,305 | 2,969 |
+| `BenchmarkS3_WriteRoundTrip/MinIO` | 11,680,989 | 6,838,000 ± 5% | 371,071 | 3,040 |
 
 > **Note:** S3 numbers reflect Docker-local round-trip latency, not production S3.
 > In-memory benchmarks inject 10 µs simulated store latency.
 > These results are informational — use them for relative comparison, not absolute targets.
+>
+> Allocation counts (B/op, allocs/op) are stable across environments.
+> Latency varies with CPU, Docker runtime, and scheduler noise — the
+> MinIO/LocalStack ordering reverses between workstation and CI, confirming
+> that absolute S3 latency depends on the container environment.
 
 ## Benchmark inventory
 
