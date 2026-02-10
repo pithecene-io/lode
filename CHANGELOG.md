@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.2] - 2026-02-09
+
+### Changed
+
+- **Go module path**: Renamed from `github.com/justapithecus/lode` to `github.com/pithecene-io/lode` across all source, tests, examples, documentation, and tooling configuration
+
+### Upgrade Notes
+
+- **Import path migration**: Update all import paths in your codebase:
+  - `github.com/justapithecus/lode/lode` → `github.com/pithecene-io/lode/lode`
+  - `github.com/justapithecus/lode/lode/s3` → `github.com/pithecene-io/lode/lode/s3`
+- **go.mod**: Update `require` directive to `github.com/pithecene-io/lode`
+- No behavior changes; all APIs, semantics, and contracts are unchanged
+
+---
+
 ## [0.7.1] - 2026-02-09
 
 ### Fixed
@@ -330,7 +346,8 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/pithecene-io/lode/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/pithecene-io/lode/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pithecene-io/lode/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/pithecene-io/lode/compare/v0.5.0...v0.6.0

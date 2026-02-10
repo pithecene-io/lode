@@ -75,7 +75,7 @@ If you know the snapshot ID, you know exactly what data you are reading.
 
 <!-- runnable -->
 ```bash
-go get github.com/justapithecus/lode
+go get github.com/pithecene-io/lode
 ```
 
 ### Write and read a blob
@@ -87,7 +87,7 @@ package main
 import (
     "context"
     "fmt"
-    "github.com/justapithecus/lode/lode"
+    "github.com/pithecene-io/lode/lode"
 )
 
 func main() {
@@ -309,7 +309,7 @@ Each example is self-contained and runnable. See the example source for detailed
 
 ## Status
 
-Lode is at **v0.7.1** and under active development.
+Lode is at **v0.7.2** and under active development.
 APIs are stabilizing; some changes are possible before v1.0.
 
 If you are evaluating Lode, focus on:

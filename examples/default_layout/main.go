@@ -16,8 +16,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/justapithecus/lode/internal/testutil"
-	"github.com/justapithecus/lode/lode"
+	"github.com/pithecene-io/lode/internal/testutil"
+	"github.com/pithecene-io/lode/lode"
 )
 
 func main() {
