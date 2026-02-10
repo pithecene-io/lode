@@ -68,13 +68,12 @@ func BenchmarkDataset_SequentialWrites(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	ctx := context.Background()
 	data := R(D{"key": "value"})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < writeCount; j++ {
-			if _, err := ds.Write(ctx, data, Metadata{}); err != nil {
+			if _, err := ds.Write(b.Context(), data, Metadata{}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -93,7 +92,6 @@ func BenchmarkDataset_SequentialWrites_StoreCallCount(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	ctx := context.Background()
 	data := R(D{"key": "value"})
 
 	b.ResetTimer()
@@ -101,14 +99,14 @@ func BenchmarkDataset_SequentialWrites_StoreCallCount(b *testing.B) {
 		fs.Reset()
 
 		// Cold-start write (will call List)
-		if _, err := ds.Write(ctx, data, Metadata{}); err != nil {
+		if _, err := ds.Write(b.Context(), data, Metadata{}); err != nil {
 			b.Fatal(err)
 		}
 		coldListCalls := len(fs.ListCalls())
 
 		// Subsequent writes (should NOT call List)
 		for j := 1; j < 20; j++ {
-			if _, err := ds.Write(ctx, data, Metadata{}); err != nil {
+			if _, err := ds.Write(b.Context(), data, Metadata{}); err != nil {
 				b.Fatal(err)
 			}
 		}

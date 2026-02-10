@@ -147,7 +147,7 @@ Assume it is invalid and stop.
 
 ## Testing conventions
 
-- Use `t.Context()` instead of `context.Background()` in tests
+- Use `t.Context()` / `b.Context()` instead of `context.Background()` in tests and benchmarks
 - Use `errors.Is()` for error comparisons, not `==`
 
 ---
