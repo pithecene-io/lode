@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/justapithecus/lode/lode"
+	"github.com/pithecene-io/lode/lode"
 )
 
 // Integration tests for S3-compatible backends.

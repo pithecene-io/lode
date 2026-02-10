@@ -1,4 +1,4 @@
-module github.com/justapithecus/lode
+module github.com/pithecene-io/lode
 
 go 1.25.6
 

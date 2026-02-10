@@ -22,8 +22,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/justapithecus/lode/lode"
-	"github.com/justapithecus/lode/lode/s3"
+	"github.com/pithecene-io/lode/lode"
+	"github.com/pithecene-io/lode/lode/s3"
 )
 
 func main() {

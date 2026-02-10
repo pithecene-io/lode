@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/justapithecus/lode/internal/testutil"
+	"github.com/pithecene-io/lode/internal/testutil"
 )
 
 // -----------------------------------------------------------------------------

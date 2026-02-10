@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/justapithecus/lode/lode"
+	"github.com/pithecene-io/lode/lode"
 )
 
 func main() {

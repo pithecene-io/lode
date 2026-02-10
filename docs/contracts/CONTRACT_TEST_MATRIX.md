@@ -418,8 +418,8 @@ These gaps will be addressed when the relevant APIs are exposed.
 
 ```
 $ go test ./...
-ok  	github.com/justapithecus/lode/lode
-ok  	github.com/justapithecus/lode/lode/s3
+ok  	github.com/pithecene-io/lode/lode
+ok  	github.com/pithecene-io/lode/lode/s3
 ```
 
 All contracts have test coverage except for deferred gaps and documented residual risk.

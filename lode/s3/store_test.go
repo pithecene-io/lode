@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3api "github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/justapithecus/lode/lode"
+	"github.com/pithecene-io/lode/lode"
 )
 
 // -----------------------------------------------------------------------------
