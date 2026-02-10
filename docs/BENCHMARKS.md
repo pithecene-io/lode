@@ -53,6 +53,35 @@ task s3:down    # stop services
 
 In-memory benchmarks always run. S3 benchmarks require services to be up first.
 
+### Statistical comparison
+
+`task bench:stat` runs all benchmarks with `-count=10` and pipes results through
+[benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat) for statistical
+summaries. Raw output is saved to `bench-inmemory.txt` and `bench-s3.txt`.
+
+```bash
+task s3:up          # start LocalStack + MinIO
+task bench:stat     # -count=10, benchstat summary
+task s3:down        # stop services
+```
+
+To compare two runs (e.g. before and after a change):
+
+```bash
+# Save baseline
+mv bench-inmemory.txt baseline-inmemory.txt
+
+# Make changes, re-run
+task bench:stat
+
+# Compare
+task bench:compare -- baseline-inmemory.txt bench-inmemory.txt
+```
+
+> **Note:** benchstat requires multiple samples (`-count=10`) to produce
+> meaningful confidence intervals. Single-sample comparisons will show `~`
+> (no significant difference) for most benchmarks.
+
 ### Manual invocation
 
 ```bash

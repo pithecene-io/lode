@@ -53,7 +53,7 @@ jobs:
         run: task integration
 
       - name: 📊 Benchmarks
-        run: task bench
+        run: task bench:stat
 
       - name: 🐳 Stop S3 Services
         if: always()

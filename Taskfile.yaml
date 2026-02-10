@@ -63,3 +63,17 @@ tasks:
     cmds:
       - go test -bench=. -benchmem -run=^$ ./lode/...
       - go test -bench=. -benchmem -run=^$ ./lode/s3/... -integration
+
+  bench:stat:
+    desc: Run benchmarks with -count=10 and pipe through benchstat
+    set: [pipefail]
+    cmds:
+      - go test -bench=. -benchmem -count=10 -run=^$ ./lode/... | tee bench-inmemory.txt
+      - go test -bench=. -benchmem -count=10 -run=^$ ./lode/s3/... -integration | tee bench-s3.txt
+      - benchstat bench-inmemory.txt
+      - benchstat bench-s3.txt
+
+  bench:compare:
+    desc: Compare two benchmark result files with benchstat
+    cmds:
+      - benchstat {{.CLI_ARGS}}
