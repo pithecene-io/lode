@@ -6,10 +6,10 @@ Central index of all Lode benchmarks.
 
 Results from two environments to contextualize the range of expected performance.
 
-| Environment | CPU | Cores | Notes |
-|-------------|-----|------:|-------|
-| Workstation | AMD Ryzen 9 5900XT | 16C/32T | Bare metal, high single-thread clock |
-| CI (GitHub Actions) | AMD EPYC 7763 | 4 vCPU | Shared runner, noisy neighbor |
+| Environment | CPU | Cores | Sampling | Notes |
+|-------------|-----|------:|----------|-------|
+| Workstation | AMD Ryzen 9 5900XT | 16C/32T | Single run | Bare metal, high single-thread clock |
+| CI (GitHub Actions) | AMD EPYC 7763 | 4 vCPU | `-count=10`, benchstat median | Shared runner, noisy neighbor |
 
 Both: linux/amd64, Go 1.25, Docker-local S3 backends.
 
