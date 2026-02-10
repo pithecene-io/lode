@@ -24,13 +24,15 @@ This installs:
 | `task build` | Build all packages |
 | `task examples` | Run all examples |
 | `task snippets` | Verify runnable markdown snippets |
+| `task bench` | Run all benchmarks (start `s3:up` first for S3) |
+| `task integration` | Run integration tests (requires `s3:up`) |
 
-### S3 integration tests
+### Integration tests
 
 ```bash
-task s3:up        # start LocalStack + MinIO
-task s3:test      # run S3 integration tests
-task s3:down      # stop services
+task s3:up          # start LocalStack + MinIO
+task integration    # run all integration tests
+task s3:down        # stop services
 ```
 
 ## Code style

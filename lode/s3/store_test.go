@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -800,7 +801,7 @@ func TestStore_List_WithStorePrefix(t *testing.T) {
 
 	// Keys should be relative (without store prefix)
 	for _, key := range keys {
-		if !contains([]string{"foo/1.txt", "foo/2.txt"}, key) {
+		if !slices.Contains([]string{"foo/1.txt", "foo/2.txt"}, key) {
 			t.Errorf("unexpected key: %s", key)
 		}
 	}
@@ -1079,17 +1080,4 @@ func (m *racingMockS3Client) CompleteMultipartUpload(ctx context.Context, params
 		m.mu.Unlock()
 	}
 	return m.MockS3Client.CompleteMultipartUpload(ctx, params, opts...)
-}
-
-// -----------------------------------------------------------------------------
-// Helper functions
-// -----------------------------------------------------------------------------
-
-func contains(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
