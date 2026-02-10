@@ -12,6 +12,7 @@ This installs:
 - Go 1.25.6
 - [Task](https://taskfile.dev/) 3.47.0
 - [golangci-lint](https://golangci-lint.run/) 2.8.0
+- [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat)
 
 ## Development tasks
 
@@ -25,6 +26,8 @@ This installs:
 | `task examples` | Run all examples |
 | `task snippets` | Verify runnable markdown snippets |
 | `task bench` | Run all benchmarks (start `s3:up` first for S3) |
+| `task bench:stat` | Run benchmarks with `-count=10` + benchstat summary |
+| `task bench:compare` | Compare two benchmark result files via benchstat |
 | `task integration` | Run integration tests (requires `s3:up`) |
 
 ### Integration tests
