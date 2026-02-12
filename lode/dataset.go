@@ -188,6 +188,13 @@ type dataset struct {
 	compressor Compressor
 	codec      Codec
 	checksum   Checksum
+
+	// lastSnapshotID is set after each successful commit. It guards against
+	// stale-but-existing pointers: if the pointer write fails after a commit,
+	// the pointer still references an older (existing) snapshot. Without this
+	// field, the next write would trust the stale pointer and break linear
+	// history. Single-writer constraint means no mutex is required.
+	lastSnapshotID DatasetSnapshotID
 }
 
 // NewDataset creates a dataset with documented defaults.
@@ -252,10 +259,19 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
-// resolveParentID reads the latest pointer for O(1) parent resolution.
-// Falls back to a full store scan for backward compatibility with
-// pre-pointer datasets.
+// resolveParentID resolves the most recent snapshot ID for parent linking.
+//
+// Resolution order:
+//  1. In-memory cache (always correct within a process; guards against stale pointers)
+//  2. Persistent pointer + Exists verification (O(1) cold start)
+//  3. Full scan fallback (backward compat for pre-pointer datasets)
 func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error) {
+	// In-memory cache is authoritative within this process.
+	// It guards against stale-but-existing pointers after a pointer write failure.
+	if d.lastSnapshotID != "" {
+		return d.lastSnapshotID, nil
+	}
+
 	id, err := d.readLatestPointer(ctx)
 	if err == nil {
 		// Verify the referenced snapshot exists (1 Exists call).
@@ -397,6 +413,7 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 
 	// Best-effort: manifest is the commit signal; pointer is an optimization.
 	_ = d.writeLatestPointer(ctx, snapshotID)
+	d.lastSnapshotID = snapshotID
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -786,6 +803,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 
 	// Best-effort: manifest is the commit signal; pointer is an optimization.
 	_ = d.writeLatestPointer(ctx, snapshotID)
+	d.lastSnapshotID = snapshotID
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -1204,6 +1222,7 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 
 	// Best-effort: manifest is the commit signal; pointer is an optimization.
 	_ = sw.ds.writeLatestPointer(ctx, sw.snapshotID)
+	sw.ds.lastSnapshotID = sw.snapshotID
 
 	// Mark committed only after full success
 	sw.mu.Lock()

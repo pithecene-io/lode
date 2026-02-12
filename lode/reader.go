@@ -166,6 +166,14 @@ func (r *reader) ListManifests(ctx context.Context, dataset DatasetID, partition
 
 		manifestPartition := r.layout.parsePartitionFromManifest(p)
 
+		// Skip canonical manifests in partition-aware layouts. These exist
+		// only for O(1) Snapshot(ctx, id) lookups and must not appear in
+		// listing results (their empty Partition field is nondeterministic
+		// relative to partition-specific manifests in store listing order).
+		if r.layout.supportsPartitions() && manifestPartition == "" {
+			continue
+		}
+
 		// Always validate manifest per CONTRACT_READ_API.md
 		manifest, err := r.loadManifest(ctx, p)
 		if err != nil {

@@ -2689,3 +2689,49 @@ func TestDataset_Write_CorruptPointer_FallsBackToScan(t *testing.T) {
 		t.Errorf("expected parent %s (from scan), got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
 	}
 }
+
+// TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache verifies that
+// when the pointer references an older (but existing) snapshot — e.g., because
+// a pointer write failed — the in-memory cache prevents the stale pointer from
+// breaking linear history.
+func TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
+	mem := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write snap-1 and snap-2 normally.
+	snap1, err := ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Fatalf("snap2 parent should be snap1")
+	}
+
+	// Corrupt the pointer to point back to snap-1 (which still exists).
+	// This simulates a pointer write failure after snap-2's commit.
+	pointerPath := "datasets/test-ds/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte(snap1.ID))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write snap-3: must use snap-2 as parent (from in-memory cache),
+	// NOT snap-1 (from stale pointer).
+	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if err != nil {
+		t.Fatalf("Write with stale pointer should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
+			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
+	}
+}

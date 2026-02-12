@@ -25,6 +25,10 @@ type volume struct {
 	store       Store
 	totalLength int64
 	checksum    Checksum
+
+	// lastSnapshotID guards against stale-but-existing pointers after a
+	// pointer write failure. See dataset.lastSnapshotID for rationale.
+	lastSnapshotID VolumeSnapshotID
 }
 
 // NewVolume creates a volume with a fixed total length.
@@ -168,25 +172,40 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, fmt.Errorf("lode: commit must include at least one new block")
 	}
 
-	// Resolve parent via pointer for O(1), falling back to scan.
+	// Resolve parent via in-memory cache → pointer → scan.
+	// In-memory cache is authoritative within this process and guards against
+	// stale-but-existing pointers after a pointer write failure.
 	var parentID VolumeSnapshotID
 	var existingBlocks []BlockRef
 	parentResolved := false
 
-	latestID, pointerErr := v.readLatestPointer(ctx)
-	if pointerErr == nil {
-		snap, snapErr := v.Snapshot(ctx, latestID)
+	if v.lastSnapshotID != "" {
+		snap, snapErr := v.Snapshot(ctx, v.lastSnapshotID)
 		if snapErr == nil {
 			parentID = snap.ID
 			existingBlocks = snap.Manifest.Blocks
 			parentResolved = true
 		} else if !errors.Is(snapErr, ErrNotFound) {
-			return nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
+			return nil, fmt.Errorf("lode: failed to load snapshot from cache: %w", snapErr)
 		}
-		// Pointer references nonexistent snapshot — fall through to scan.
+		// Cache references nonexistent snapshot — fall through to pointer/scan.
 	}
 	if !parentResolved {
-		// No pointer or stale pointer: fall back to scan for backward compat.
+		latestID, pointerErr := v.readLatestPointer(ctx)
+		if pointerErr == nil {
+			snap, snapErr := v.Snapshot(ctx, latestID)
+			if snapErr == nil {
+				parentID = snap.ID
+				existingBlocks = snap.Manifest.Blocks
+				parentResolved = true
+			} else if !errors.Is(snapErr, ErrNotFound) {
+				return nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
+			}
+			// Pointer references nonexistent snapshot — fall through to scan.
+		}
+	}
+	if !parentResolved {
+		// No cache, no pointer, or stale: fall back to scan for backward compat.
 		latest, scanErr := v.latestByScan(ctx)
 		if scanErr != nil && !errors.Is(scanErr, ErrNoSnapshots) {
 			return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
@@ -272,6 +291,7 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 
 	// Best-effort: manifest is the commit signal; pointer is an optimization.
 	_ = v.writeLatestPointer(ctx, snapshotID)
+	v.lastSnapshotID = snapshotID
 
 	return &VolumeSnapshot{
 		ID:       snapshotID,

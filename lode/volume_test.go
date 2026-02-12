@@ -1675,6 +1675,68 @@ func TestVolume_Commit_StalePointer_FallsBackToScan(t *testing.T) {
 	}
 }
 
+// TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache verifies that
+// when the pointer references an older (but existing) snapshot — e.g., because
+// a pointer write failed — the in-memory cache prevents the stale pointer from
+// breaking linear history.
+func TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
+	mem := NewMemory()
+	vol, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit snap-1 and snap-2 normally.
+	block1, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block2, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Fatalf("snap2 parent should be snap1")
+	}
+
+	// Corrupt the pointer to point back to snap-1 (which still exists).
+	pointerPath := "volumes/test-vol/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte(snap1.ID))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit snap-3: must use snap-2 as parent (from in-memory cache),
+	// NOT snap-1 (from stale pointer).
+	block3, err := vol.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := vol.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if err != nil {
+		t.Fatalf("Commit with stale pointer should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
+			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
+	}
+	// Cumulative blocks should include all three.
+	if len(snap3.Manifest.Blocks) != 3 {
+		t.Errorf("expected 3 cumulative blocks, got %d", len(snap3.Manifest.Blocks))
+	}
+}
+
 // BenchmarkMergeBlocks measures merge performance with varying existing block counts.
 func BenchmarkMergeBlocks(b *testing.B) {
 	for _, existingCount := range []int{10, 100, 1000, 10000} {

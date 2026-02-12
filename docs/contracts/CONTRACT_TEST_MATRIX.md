@@ -404,12 +404,20 @@ proportional to dataset/volume size on remote stores (S3/R2).
 | Unsorted overlap detection | `TestVolume_ValidateNoOverlaps_UnsortedInput` |
 | Unsorted overlap rejection | `TestVolume_ValidateNoOverlaps_UnsortedOverlap` |
 
-**Pointer Verification**: Corrupt/stale pointers fall back to scan.
+**Pointer Verification**: Corrupt/stale pointers fall back correctly.
 
 | Requirement | Test |
 |-------------|------|
-| Dataset: corrupt pointer → scan fallback on write | `TestDataset_Write_CorruptPointer_FallsBackToScan` |
-| Volume: stale pointer → scan fallback on commit | `TestVolume_Commit_StalePointer_FallsBackToScan` |
+| Dataset: nonexistent pointer target → scan fallback | `TestDataset_Write_CorruptPointer_FallsBackToScan` |
+| Volume: nonexistent pointer target → scan fallback | `TestVolume_Commit_StalePointer_FallsBackToScan` |
+| Dataset: existing-but-stale pointer → in-memory cache wins | `TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache` |
+| Volume: existing-but-stale pointer → in-memory cache wins | `TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache` |
+
+**Hive Canonical Manifest**: Canonical manifest excluded from listing.
+
+| Requirement | Test |
+|-------------|------|
+| ListManifests skips canonical for partition layouts | `TestDatasetReader_ListManifests_HiveLayout_SkipsCanonicalManifest` |
 
 **Benchmarks**:
 
