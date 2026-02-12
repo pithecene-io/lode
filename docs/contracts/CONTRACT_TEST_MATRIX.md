@@ -83,7 +83,7 @@ Gaps are tracked with codes indicating category and priority:
 | Creates snapshot | Multiple write tests |
 | nil metadata coalesced | `TestDataset_Write_NilMetadata_CoalescesToEmpty` |
 | Parent snapshot linked | `TestDataset_StreamWrite_ParentSnapshotLinked` |
-| Parent ID cached (O(1) after first write) | `TestDataset_Write_CachesParentSnapshotID` |
+| Parent ID resolved O(1) via persistent pointer | `TestDataset_Write_LatestPointer_SkipsScan` |
 | Raw blob RowCount=1 | `TestDataset_StreamWrite_Success` |
 
 **StreamWrite**: All covered ✅
@@ -96,7 +96,7 @@ Gaps are tracked with codes indicating category and priority:
 | Abort → no manifest | `TestDataset_StreamWrite_Abort_NoManifest` |
 | Close without Commit → abort | `TestDataset_StreamWrite_CloseWithoutCommit_BehavesAsAbort` |
 | Codec configured → error | `TestDataset_StreamWrite_WithCodec_ReturnsError` |
-| Parent ID cached across StreamWrite→Commit | `TestDataset_StreamWrite_CachesParentSnapshotID` |
+| Parent ID resolved O(1) via persistent pointer | `TestDataset_StreamWrite_LatestPointer_SkipsScan` |
 | Checksum computed | `TestDataset_StreamWrite_WithChecksum_RecordsChecksum` |
 | Manifest Put error → no manifest + cleanup | `TestStreamWrite_ManifestPutError_NoManifest_CleanupAttempted` |
 | Abort → cleanup attempted | `TestStreamWrite_Abort_NoManifest_CleanupAttempted` |
@@ -115,7 +115,7 @@ Gaps are tracked with codes indicating category and priority:
 | Iterator error → no manifest | `TestDataset_StreamWriteRecords_IteratorError` |
 | RowCount = records consumed | `TestDataset_StreamWriteRecords_Success` |
 | Iterator error → cleanup attempted | `TestStreamWriteRecords_IteratorError_NoManifest_CleanupAttempted` |
-| Parent ID cached across StreamWriteRecords | `TestDataset_StreamWriteRecords_CachesParentSnapshotID` |
+| Parent ID resolved O(1) via persistent pointer | `TestDataset_StreamWriteRecords_LatestPointer_SkipsScan` |
 | Manifest Put error → no manifest + cleanup | `TestStreamWriteRecords_ManifestPutError_NoManifest` |
 
 **Timestamp Computation**: All covered ✅
@@ -356,6 +356,70 @@ All error sentinels covered ✅
 | Requirement | Test |
 |-------------|------|
 | FS store round-trip | `TestVolume_FSStore_StageCommitReadAt` |
+
+---
+
+## Performance: O(1) Resolution and Complexity Guarantees
+
+These tests verify that hot-path operations use O(1) store calls or O(log B) lookups
+instead of O(N) full scans. Regressions here would cause wall-clock degradation
+proportional to dataset/volume size on remote stores (S3/R2).
+
+**Dataset — Latest Pointer**: Persistent `latest` file enables O(1) resolution.
+
+| Requirement | Test |
+|-------------|------|
+| Pointer written on Write | `TestDataset_LatestPointer_ReadAfterWrite` |
+| Pointer tracks most recent | `TestDataset_LatestPointer_UpdatesAcrossWrites` |
+| Backward compat: scan fallback | `TestDataset_LatestPointer_BackwardCompat` |
+| Corrupt pointer: scan fallback | `TestDataset_LatestPointer_CorruptPointer` |
+| Pointer paths for all layouts | `TestDataset_LatestPointer_AllLayouts` |
+| Write: 0 List calls after pointer | `TestDataset_Write_LatestPointer_SkipsScan` |
+| StreamWrite: 0 List calls | `TestDataset_StreamWrite_LatestPointer_SkipsScan` |
+| StreamWriteRecords: 0 List calls | `TestDataset_StreamWriteRecords_LatestPointer_SkipsScan` |
+
+**Dataset — HiveLayout Canonical Manifest**: O(1) `Snapshot(ctx, id)`.
+
+| Requirement | Test |
+|-------------|------|
+| Snapshot by ID: 0 List calls | `TestDataset_HiveLayout_SnapshotByID_NoListCall` |
+| Canonical manifest written | `TestDataset_HiveLayout_CanonicalManifestWritten` |
+| Backward compat: scan fallback | `TestDataset_HiveLayout_BackwardCompat_FallbackScan` |
+
+**Volume — Latest Pointer**: Same O(1) pattern for volumes.
+
+| Requirement | Test |
+|-------------|------|
+| Pointer written on Commit | `TestVolume_LatestPointer_ReadAfterCommit` |
+| Pointer tracks most recent | `TestVolume_LatestPointer_MultipleCommits` |
+| Backward compat: scan fallback | `TestVolume_LatestPointer_BackwardCompat` |
+
+**Volume — Block Operations**: Sorted blocks and O(log B) lookup.
+
+| Requirement | Test |
+|-------------|------|
+| Blocks sorted in manifest | `TestVolume_Commit_BlocksSortedInManifest` |
+| Block merge correctness | `TestMergeBlocks` (4 subtests) |
+| Binary search: sorted input | `TestFindCoveringBlocks_BinarySearch` (6 subtests) |
+| Unsorted overlap detection | `TestVolume_ValidateNoOverlaps_UnsortedInput` |
+| Unsorted overlap rejection | `TestVolume_ValidateNoOverlaps_UnsortedOverlap` |
+
+**Reader — Path-Only Listing**: 0 manifest Gets for listing operations.
+
+| Requirement | Test |
+|-------------|------|
+| ListManifests: 0 Get calls | `TestDatasetReader_ListManifests_NoGetCalls` |
+| ListPartitions: 0 Get calls | `TestDatasetReader_ListPartitions_NoGetCalls` |
+| Validation deferred to GetManifest | `TestDatasetReader_ListManifests_InvalidManifest_DeferredToGetManifest` |
+
+**Benchmarks**:
+
+| Benchmark | Validates |
+|-----------|-----------|
+| `BenchmarkDataset_SequentialWrites` | Pointer eliminates quadratic scan cost |
+| `BenchmarkDataset_SequentialWrites_StoreCallCount` | O(1) List calls regardless of snapshot count |
+| `BenchmarkFindCoveringBlocks` | O(log B) lookup at 10/100/1K/10K blocks |
+| `BenchmarkMergeBlocks` | O(N + K log K) merge at 10/100/1K/10K existing blocks |
 
 ---
 

@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/pithecene-io/lode/internal/testutil"
 )
 
 // -----------------------------------------------------------------------------
@@ -593,7 +595,7 @@ func TestDatasetReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer testutil.RemoveAll(tmpDir)
 
 	reader, err := NewDatasetReader(NewFSFactory(tmpDir))
 	if err != nil {

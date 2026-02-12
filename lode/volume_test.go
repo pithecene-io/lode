@@ -1309,6 +1309,34 @@ func TestVolume_ValidateNoOverlaps_OverlapAtHighOffset(t *testing.T) {
 	}
 }
 
+func TestVolume_ValidateNoOverlaps_UnsortedInput(t *testing.T) {
+	// Backward compat: blocks that are not sorted by offset should still
+	// be validated correctly (defensive sort kicks in).
+	blocks := []BlockRef{
+		{Offset: 20, Length: 10, Path: "c.bin"},
+		{Offset: 0, Length: 10, Path: "a.bin"},
+		{Offset: 10, Length: 10, Path: "b.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if err != nil {
+		t.Fatalf("expected no overlap for non-overlapping unsorted blocks, got: %v", err)
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_UnsortedOverlap(t *testing.T) {
+	// Unsorted blocks that overlap should still be detected.
+	blocks := []BlockRef{
+		{Offset: 15, Length: 10, Path: "b.bin"},
+		{Offset: 0, Length: 20, Path: "a.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if !errors.Is(err, ErrOverlappingBlocks) {
+		t.Fatalf("expected ErrOverlappingBlocks for unsorted overlapping blocks, got: %v", err)
+	}
+}
+
 // =============================================================================
 // Latest pointer tests (issue #118 / #119)
 // =============================================================================
@@ -1543,6 +1571,78 @@ func BenchmarkFindCoveringBlocks(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
+			}
+		})
+	}
+}
+
+// TestMergeBlocks verifies that mergeBlocks produces a correctly sorted result
+// from a pre-sorted slice and an unsorted slice of new blocks.
+func TestMergeBlocks(t *testing.T) {
+	tests := []struct {
+		name     string
+		sorted   []BlockRef
+		unsorted []BlockRef
+		want     []int64 // expected offsets in order
+	}{
+		{
+			name:     "empty both",
+			sorted:   nil,
+			unsorted: nil,
+			want:     nil,
+		},
+		{
+			name:     "existing only",
+			sorted:   []BlockRef{{Offset: 0, Length: 10}, {Offset: 10, Length: 10}},
+			unsorted: nil,
+			want:     []int64{0, 10},
+		},
+		{
+			name:     "new only",
+			sorted:   nil,
+			unsorted: []BlockRef{{Offset: 20, Length: 10}, {Offset: 0, Length: 10}},
+			want:     []int64{0, 20},
+		},
+		{
+			name:     "interleaved",
+			sorted:   []BlockRef{{Offset: 0, Length: 10}, {Offset: 20, Length: 10}},
+			unsorted: []BlockRef{{Offset: 30, Length: 10}, {Offset: 10, Length: 10}},
+			want:     []int64{0, 10, 20, 30},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeBlocks(tt.sorted, tt.unsorted)
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d blocks, got %d", len(tt.want), len(got))
+			}
+			for i, want := range tt.want {
+				if got[i].Offset != want {
+					t.Errorf("[%d] expected offset %d, got %d", i, want, got[i].Offset)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkMergeBlocks measures merge performance with varying existing block counts.
+func BenchmarkMergeBlocks(b *testing.B) {
+	for _, existingCount := range []int{10, 100, 1000, 10000} {
+		existing := make([]BlockRef, existingCount)
+		for i := range existing {
+			existing[i] = BlockRef{Offset: int64(i) * 1024, Length: 1024}
+		}
+		// 3 new blocks at varying offsets (typical commit pattern).
+		newBlocks := []BlockRef{
+			{Offset: int64(existingCount+2) * 1024, Length: 1024},
+			{Offset: int64(existingCount) * 1024, Length: 1024},
+			{Offset: int64(existingCount+1) * 1024, Length: 1024},
+		}
+
+		b.Run(fmt.Sprintf("existing=%d/new=3", existingCount), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = mergeBlocks(existing, newBlocks)
 			}
 		})
 	}

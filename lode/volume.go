@@ -228,12 +228,9 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 	}
 
 	// Build cumulative block set, sorted by offset for O(log B) lookups.
-	cumulativeBlocks := make([]BlockRef, 0, len(existingBlocks)+len(blocks))
-	cumulativeBlocks = append(cumulativeBlocks, existingBlocks...)
-	cumulativeBlocks = append(cumulativeBlocks, blocks...)
-	sort.Slice(cumulativeBlocks, func(i, j int) bool {
-		return cumulativeBlocks[i].Offset < cumulativeBlocks[j].Offset
-	})
+	// existingBlocks are sorted (guaranteed by prior commits). Sort only
+	// the new blocks and merge for O(N + K log K) instead of O((N+K) log(N+K)).
+	cumulativeBlocks := mergeBlocks(existingBlocks, blocks)
 
 	// Validate no overlaps in the full cumulative set.
 	if err := validateNoOverlaps(cumulativeBlocks); err != nil {
@@ -277,6 +274,40 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		ID:       snapshotID,
 		Manifest: manifest,
 	}, nil
+}
+
+// mergeBlocks merges two block slices into a single sorted-by-offset result.
+// sorted must already be in ascending Offset order (from a prior commit).
+// unsorted is sorted first, then the two are merged in O(N + K log K).
+func mergeBlocks(sorted, unsorted []BlockRef) []BlockRef {
+	if len(unsorted) == 0 {
+		out := make([]BlockRef, len(sorted))
+		copy(out, sorted)
+		return out
+	}
+
+	// Sort new blocks (K is small — typically 1–10 blocks per commit).
+	newBlocks := make([]BlockRef, len(unsorted))
+	copy(newBlocks, unsorted)
+	sort.Slice(newBlocks, func(i, j int) bool {
+		return newBlocks[i].Offset < newBlocks[j].Offset
+	})
+
+	// Merge two sorted slices.
+	result := make([]BlockRef, 0, len(sorted)+len(newBlocks))
+	i, j := 0, 0
+	for i < len(sorted) && j < len(newBlocks) {
+		if sorted[i].Offset <= newBlocks[j].Offset {
+			result = append(result, sorted[i])
+			i++
+		} else {
+			result = append(result, newBlocks[j])
+			j++
+		}
+	}
+	result = append(result, sorted[i:]...)
+	result = append(result, newBlocks[j:]...)
+	return result
 }
 
 // validateNoOverlaps checks that blocks do not overlap in the cumulative set.
