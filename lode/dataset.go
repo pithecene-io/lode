@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -187,9 +188,6 @@ type dataset struct {
 	compressor Compressor
 	codec      Codec
 	checksum   Checksum
-
-	mu             sync.Mutex
-	lastSnapshotID DatasetSnapshotID // cached after successful write
 }
 
 // NewDataset creates a dataset with documented defaults.
@@ -254,20 +252,17 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
-// resolveParentID returns the cached parent snapshot ID when available,
-// falling back to Latest() on cold start. This avoids an O(n) store scan
-// on every write after the first.
+// resolveParentID reads the latest pointer for O(1) parent resolution.
+// Falls back to a full store scan for backward compatibility with
+// pre-pointer datasets.
 func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error) {
-	d.mu.Lock()
-	cached := d.lastSnapshotID
-	d.mu.Unlock()
-
-	if cached != "" {
-		return cached, nil
+	id, err := d.readLatestPointer(ctx)
+	if err == nil {
+		return id, nil
 	}
 
-	// Cold start: fall back to Latest()
-	latest, err := d.Latest(ctx)
+	// Pointer missing: fall back to scan for backward compat.
+	latest, err := d.latestByScan(ctx)
 	if err != nil {
 		if errors.Is(err, ErrNoSnapshots) {
 			return "", nil
@@ -277,12 +272,34 @@ func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error
 	return latest.ID, nil
 }
 
-// cacheSnapshotID stores the most recently written snapshot ID so that
-// subsequent writes can skip the Latest() store scan.
-func (d *dataset) cacheSnapshotID(id DatasetSnapshotID) {
-	d.mu.Lock()
-	d.lastSnapshotID = id
-	d.mu.Unlock()
+// readLatestPointer reads the persistent latest-snapshot pointer file.
+// Returns the snapshot ID or ErrNotFound if the pointer does not exist.
+func (d *dataset) readLatestPointer(ctx context.Context) (DatasetSnapshotID, error) {
+	pointerPath := d.layout.latestPointerPath(d.id)
+	rc, err := d.store.Get(ctx, pointerPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rc.Close() }()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("lode: failed to read latest pointer: %w", err)
+	}
+
+	id := DatasetSnapshotID(strings.TrimSpace(string(data)))
+	if id == "" {
+		return "", ErrNotFound
+	}
+	return id, nil
+}
+
+// writeLatestPointer persists the snapshot ID as the latest pointer.
+// Uses Delete+Put because Store.Put is no-overwrite.
+func (d *dataset) writeLatestPointer(ctx context.Context, id DatasetSnapshotID) error {
+	pointerPath := d.layout.latestPointerPath(d.id)
+	_ = d.store.Delete(ctx, pointerPath) // ignore error; path may not exist
+	return d.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
 
 func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*DatasetSnapshot, error) {
@@ -371,7 +388,8 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 
-	d.cacheSnapshotID(snapshotID)
+	// Best-effort: manifest is the commit signal; pointer is an optimization.
+	_ = d.writeLatestPointer(ctx, snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -469,6 +487,22 @@ func (d *dataset) Read(ctx context.Context, id DatasetSnapshotID) ([]any, error)
 }
 
 func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
+	// Pointer-first: O(1) via persistent latest file.
+	id, err := d.readLatestPointer(ctx)
+	if err == nil {
+		snap, snapErr := d.Snapshot(ctx, id)
+		if snapErr == nil {
+			return snap, nil
+		}
+		// Pointer references a nonexistent snapshot — fall through to scan.
+	}
+
+	return d.latestByScan(ctx)
+}
+
+// latestByScan lists all snapshots and returns the most recent by CreatedAt.
+// This is the backward-compatible fallback for datasets without a latest pointer.
+func (d *dataset) latestByScan(ctx context.Context) (*DatasetSnapshot, error) {
 	snapshots, err := d.Snapshots(ctx)
 	if err != nil {
 		return nil, err
@@ -715,7 +749,8 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 
-	d.cacheSnapshotID(snapshotID)
+	// Best-effort: manifest is the commit signal; pointer is an optimization.
+	_ = d.writeLatestPointer(ctx, snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -1128,7 +1163,8 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 
-	sw.ds.cacheSnapshotID(sw.snapshotID)
+	// Best-effort: manifest is the commit signal; pointer is an optimization.
+	_ = sw.ds.writeLatestPointer(ctx, sw.snapshotID)
 
 	// Mark committed only after full success
 	sw.mu.Lock()

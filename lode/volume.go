@@ -79,6 +79,39 @@ func volumeBlockPath(id VolumeID, offset, length int64) string {
 	return path.Join("volumes", string(id), "data", fmt.Sprintf("%d-%d.bin", offset, length))
 }
 
+func volumeLatestPointerPath(id VolumeID) string {
+	return path.Join("volumes", string(id), "latest")
+}
+
+// readLatestPointer reads the persistent latest-snapshot pointer file.
+// Returns the snapshot ID or ErrNotFound if the pointer does not exist.
+func (v *volume) readLatestPointer(ctx context.Context) (VolumeSnapshotID, error) {
+	rc, err := v.store.Get(ctx, volumeLatestPointerPath(v.id))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rc.Close() }()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("lode: failed to read volume latest pointer: %w", err)
+	}
+
+	id := VolumeSnapshotID(strings.TrimSpace(string(data)))
+	if id == "" {
+		return "", ErrNotFound
+	}
+	return id, nil
+}
+
+// writeLatestPointer persists the snapshot ID as the latest pointer.
+// Uses Delete+Put because Store.Put is no-overwrite.
+func (v *volume) writeLatestPointer(ctx context.Context, id VolumeSnapshotID) error {
+	pointerPath := volumeLatestPointerPath(v.id)
+	_ = v.store.Delete(ctx, pointerPath) // ignore error; path may not exist
+	return v.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
+}
+
 // -----------------------------------------------------------------------------
 // Write surface
 // -----------------------------------------------------------------------------
@@ -135,16 +168,30 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, fmt.Errorf("lode: commit must include at least one new block")
 	}
 
-	// Get latest snapshot for parent tracking.
+	// Resolve parent via pointer for O(1), falling back to scan.
 	var parentID VolumeSnapshotID
 	var existingBlocks []BlockRef
-	latest, err := v.Latest(ctx)
-	if err != nil && !errors.Is(err, ErrNoSnapshots) {
-		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
+	latestID, pointerErr := v.readLatestPointer(ctx)
+	if pointerErr == nil {
+		snap, snapErr := v.Snapshot(ctx, latestID)
+		if snapErr == nil {
+			parentID = snap.ID
+			existingBlocks = snap.Manifest.Blocks
+		} else if !errors.Is(snapErr, ErrNotFound) {
+			return nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
+		}
+		// Pointer references nonexistent snapshot — treat as empty.
 	}
-	if latest != nil {
-		parentID = latest.ID
-		existingBlocks = latest.Manifest.Blocks
+	if pointerErr != nil {
+		// No pointer: fall back to scan for backward compat.
+		latest, scanErr := v.latestByScan(ctx)
+		if scanErr != nil && !errors.Is(scanErr, ErrNoSnapshots) {
+			return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
+		}
+		if latest != nil {
+			parentID = latest.ID
+			existingBlocks = latest.Manifest.Blocks
+		}
 	}
 
 	// Validate all new blocks have required fields, conform to fixed layout, and are within bounds.
@@ -219,6 +266,9 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 	if err := v.store.Put(ctx, manifestPath, bytes.NewReader(manifestData)); err != nil {
 		return nil, fmt.Errorf("lode: failed to write volume manifest: %w", err)
 	}
+
+	// Best-effort: manifest is the commit signal; pointer is an optimization.
+	_ = v.writeLatestPointer(ctx, snapshotID)
 
 	return &VolumeSnapshot{
 		ID:       snapshotID,
@@ -342,6 +392,22 @@ func findCoveringBlocks(blocks []BlockRef, offset, length int64) ([]BlockRef, er
 
 // Latest returns the most recently committed snapshot.
 func (v *volume) Latest(ctx context.Context) (*VolumeSnapshot, error) {
+	// Pointer-first: O(1) via persistent latest file.
+	id, err := v.readLatestPointer(ctx)
+	if err == nil {
+		snap, snapErr := v.Snapshot(ctx, id)
+		if snapErr == nil {
+			return snap, nil
+		}
+		// Pointer references a nonexistent snapshot — fall through to scan.
+	}
+
+	return v.latestByScan(ctx)
+}
+
+// latestByScan lists all snapshots and returns the most recent by CreatedAt.
+// This is the backward-compatible fallback for volumes without a latest pointer.
+func (v *volume) latestByScan(ctx context.Context) (*VolumeSnapshot, error) {
 	snapshots, err := v.Snapshots(ctx)
 	if err != nil {
 		return nil, err

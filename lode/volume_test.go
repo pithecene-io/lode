@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"testing"
 	"time"
@@ -1304,5 +1305,106 @@ func TestVolume_ValidateNoOverlaps_OverlapAtHighOffset(t *testing.T) {
 	err := validateNoOverlaps(blocks)
 	if !errors.Is(err, ErrOverlappingBlocks) {
 		t.Fatalf("expected ErrOverlappingBlocks for overlapping blocks at high offset, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Latest pointer tests (issue #118 / #119)
+// =============================================================================
+
+func TestVolume_LatestPointer_ReadAfterCommit(t *testing.T) {
+	// After Commit, the pointer file must exist and Latest() must resolve
+	// via pointer without calling List.
+	store := NewMemory()
+	fs := newFaultStore(store)
+	vol := newTestVolume(t, "test-vol", newFaultStoreFactory(fs), 100)
+
+	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+	// Verify pointer file exists.
+	pointerPath := "volumes/test-vol/latest"
+	rc, err := store.Get(t.Context(), pointerPath)
+	if err != nil {
+		t.Fatalf("expected pointer file at %s, got error: %v", pointerPath, err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap.ID) {
+		t.Errorf("pointer content: expected %q, got %q", snap.ID, string(data))
+	}
+
+	// Reset call tracking, verify Latest() uses pointer (no List calls).
+	fs.Reset()
+	latest, err := vol.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed: %v", err)
+	}
+	if latest.ID != snap.ID {
+		t.Errorf("Latest() returned %s, expected %s", latest.ID, snap.ID)
+	}
+	if len(fs.ListCalls()) != 0 {
+		t.Errorf("Latest() should not call List when pointer exists, got %d List calls",
+			len(fs.ListCalls()))
+	}
+}
+
+func TestVolume_LatestPointer_MultipleCommits(t *testing.T) {
+	// Pointer must always track the most recent snapshot across commits.
+	store := NewMemory()
+	vol := newTestVolume(t, "test-vol", NewMemoryFactoryFrom(store), 90)
+
+	pointerPath := "volumes/test-vol/latest"
+
+	for i := range 3 {
+		offset := int64(i) * 30
+		blk := stageBlock(t, vol, offset, bytes.Repeat([]byte("X"), 30))
+		snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+		rc, err := store.Get(t.Context(), pointerPath)
+		if err != nil {
+			t.Fatalf("commit %d: pointer missing: %v", i, err)
+		}
+		data, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if string(data) != string(snap.ID) {
+			t.Errorf("commit %d: pointer %q, expected %q", i, string(data), snap.ID)
+		}
+	}
+}
+
+func TestVolume_LatestPointer_BackwardCompat(t *testing.T) {
+	// Pre-pointer volumes (manifests exist, no pointer) must fall back
+	// to scan. After a commit, the pointer is created.
+	store := NewMemory()
+	vol := newTestVolume(t, "test-vol", NewMemoryFactoryFrom(store), 100)
+
+	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	snap1 := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+	// Delete the pointer to simulate pre-pointer state.
+	_ = store.Delete(t.Context(), "volumes/test-vol/latest")
+
+	// Latest() should still work via scan fallback.
+	latest, err := vol.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() scan fallback failed: %v", err)
+	}
+	if latest.ID != snap1.ID {
+		t.Errorf("scan fallback returned %s, expected %s", latest.ID, snap1.ID)
+	}
+
+	// Next commit should create the pointer.
+	blk2 := stageBlock(t, vol, 10, bytes.Repeat([]byte("B"), 10))
+	snap2 := commitBlocks(t, vol, []BlockRef{blk2}, Metadata{})
+
+	rc, err := store.Get(t.Context(), "volumes/test-vol/latest")
+	if err != nil {
+		t.Fatalf("pointer should exist after commit: %v", err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap2.ID) {
+		t.Errorf("pointer %q, expected %q", string(data), snap2.ID)
 	}
 }
