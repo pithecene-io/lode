@@ -369,11 +369,11 @@ func TestDatasetReader_GetManifest_InvalidManifest_NegativeFileSize(t *testing.T
 	}
 }
 
-func TestDatasetReader_ListManifests_InvalidManifest_WithPartitionFilter_ReturnsError(t *testing.T) {
+func TestDatasetReader_ListManifests_InvalidManifest_DeferredToGetManifest(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemory()
 
-	// Write an invalid manifest (missing required fields)
+	// Write an invalid manifest (missing required fields).
 	manifest := &Manifest{
 		// SchemaName missing - invalid
 		DatasetID:  "test-ds",
@@ -386,34 +386,109 @@ func TestDatasetReader_ListManifests_InvalidManifest_WithPartitionFilter_Returns
 		t.Fatal(err)
 	}
 
-	_, err = reader.ListManifests(ctx, "test-ds", "some-partition", ManifestListOptions{})
+	// ListManifests extracts refs from paths without loading manifests.
+	// Validation is deferred to GetManifest.
+	refs, err := reader.ListManifests(ctx, "test-ds", "", ManifestListOptions{})
+	if err != nil {
+		t.Fatalf("ListManifests should succeed (path-only): %v", err)
+	}
+	if len(refs) == 0 {
+		t.Fatal("expected at least one manifest ref")
+	}
+
+	// GetManifest triggers validation and returns the error.
+	_, err = reader.GetManifest(ctx, "test-ds", refs[0])
 	if !errors.Is(err, ErrManifestInvalid) {
-		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+		t.Errorf("expected ErrManifestInvalid from GetManifest, got: %v", err)
 	}
 }
 
-func TestDatasetReader_ListManifests_InvalidManifest_WithoutPartitionFilter_ReturnsError(t *testing.T) {
-	ctx := t.Context()
-	store := NewMemory()
+// TestDatasetReader_ListManifests_NoGetCalls verifies that ListManifests
+// extracts ManifestRefs from paths without downloading any manifests.
+func TestDatasetReader_ListManifests_NoGetCalls(t *testing.T) {
+	fs := newFaultStore(NewMemory())
 
-	// Write an invalid manifest (missing required fields)
-	manifest := &Manifest{
-		// SchemaName missing - invalid
-		DatasetID:  "test-ds",
-		SnapshotID: "snap-1",
+	// Write a dataset with 3 snapshots.
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
 	}
-	writeManifest(ctx, t, store, manifest)
+	for i := 0; i < 3; i++ {
+		if _, err := ds.Write(t.Context(), R(D{"i": i}), Metadata{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store))
+	reader, err := NewDatasetReader(newFaultStoreFactory(fs))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Per CONTRACT_READ_API.md, invalid manifests must return an error
-	// even when no partition filter is specified
-	_, err = reader.ListManifests(ctx, "test-ds", "", ManifestListOptions{})
-	if !errors.Is(err, ErrManifestInvalid) {
-		t.Errorf("expected ErrManifestInvalid, got: %v", err)
+	fs.Reset()
+
+	refs, err := reader.ListManifests(t.Context(), "test-ds", "", ManifestListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("expected 3 refs, got %d", len(refs))
+	}
+
+	// ListManifests should use 1 List call and 0 Get calls.
+	getCalls := fs.GetCalls()
+	if len(getCalls) != 0 {
+		t.Fatalf("expected 0 Get calls from ListManifests, got %d: %v", len(getCalls), getCalls)
+	}
+	listCalls := fs.ListCalls()
+	if len(listCalls) != 1 {
+		t.Fatalf("expected 1 List call, got %d", len(listCalls))
+	}
+}
+
+// TestDatasetReader_ListPartitions_NoGetCalls verifies that ListPartitions
+// extracts partitions from store paths without downloading any manifests.
+func TestDatasetReader_ListPartitions_NoGetCalls(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+		D{"id": 3, "day": "2024-01-17"},
+	)
+	if _, err := ds.Write(t.Context(), records, Metadata{}); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := NewDatasetReader(newFaultStoreFactory(fs), WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fs.Reset()
+
+	partitions, err := reader.ListPartitions(t.Context(), "test-ds", PartitionListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partitions) != 3 {
+		t.Fatalf("expected 3 partitions, got %d", len(partitions))
+	}
+
+	// ListPartitions should use 1 List call and 0 Get calls.
+	getCalls := fs.GetCalls()
+	if len(getCalls) != 0 {
+		t.Fatalf("expected 0 Get calls from ListPartitions, got %d: %v", len(getCalls), getCalls)
+	}
+	listCalls := fs.ListCalls()
+	if len(listCalls) != 1 {
+		t.Fatalf("expected 1 List call, got %d", len(listCalls))
 	}
 }
 

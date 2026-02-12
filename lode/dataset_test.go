@@ -2521,3 +2521,133 @@ func TestDataset_LatestPointer_AllLayouts(t *testing.T) {
 		t.Errorf("hive: expected %q, got %q", "datasets/my-ds/latest", got)
 	}
 }
+
+// TestDataset_HiveLayout_SnapshotByID_NoListCall verifies that Snapshot(ctx, id)
+// with HiveLayout does NOT require a List call. The canonical manifest is always
+// written alongside partition manifests, so a single Get resolves the snapshot.
+func TestDataset_HiveLayout_SnapshotByID_NoListCall(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reset counters after the write.
+	fs.Reset()
+
+	// Snapshot by ID — should NOT trigger any List calls.
+	got, err := ds.Snapshot(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Snapshot(%s) failed: %v", snap.ID, err)
+	}
+	if got.ID != snap.ID {
+		t.Fatalf("expected snapshot ID %s, got %s", snap.ID, got.ID)
+	}
+
+	listCalls := fs.ListCalls()
+	if len(listCalls) != 0 {
+		t.Fatalf("expected 0 List calls for Snapshot(id), got %d: %v", len(listCalls), listCalls)
+	}
+}
+
+// TestDataset_HiveLayout_CanonicalManifestWritten verifies that writeManifests
+// writes the canonical manifest alongside partition manifests for HiveLayout.
+func TestDataset_HiveLayout_CanonicalManifestWritten(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Canonical path must exist.
+	canonicalPath := "datasets/test-ds/segments/" + string(snap.ID) + "/manifest.json"
+	exists, err := fs.inner.Exists(t.Context(), canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatalf("canonical manifest not found at %s", canonicalPath)
+	}
+
+	// Partition paths must also exist.
+	partPaths := []string{
+		"datasets/test-ds/partitions/day=2024-01-15/segments/" + string(snap.ID) + "/manifest.json",
+		"datasets/test-ds/partitions/day=2024-01-16/segments/" + string(snap.ID) + "/manifest.json",
+	}
+	for _, pp := range partPaths {
+		exists, err := fs.inner.Exists(t.Context(), pp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("partition manifest not found at %s", pp)
+		}
+	}
+}
+
+// TestDataset_HiveLayout_BackwardCompat_FallbackScan verifies that Snapshot(ctx, id)
+// falls back to findSnapshotByID when the canonical manifest is missing (pre-fix data).
+func TestDataset_HiveLayout_BackwardCompat_FallbackScan(t *testing.T) {
+	mem := NewMemory()
+	fs := newFaultStore(mem)
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate pre-fix data: delete the canonical manifest.
+	canonicalPath := "datasets/test-ds/segments/" + string(snap.ID) + "/manifest.json"
+	if err := mem.Delete(t.Context(), canonicalPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot should still work via findSnapshotByID fallback.
+	got, err := ds.Snapshot(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Snapshot(%s) failed after canonical delete: %v", snap.ID, err)
+	}
+	if got.ID != snap.ID {
+		t.Fatalf("expected snapshot ID %s, got %s", snap.ID, got.ID)
+	}
+}

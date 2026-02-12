@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 )
 
 // -----------------------------------------------------------------------------
@@ -107,35 +106,30 @@ func (r *reader) ListDatasets(ctx context.Context, opts DatasetListOptions) ([]D
 }
 
 func (r *reader) ListPartitions(ctx context.Context, dataset DatasetID, opts PartitionListOptions) ([]PartitionRef, error) {
-	refs, err := r.ListManifests(ctx, dataset, "", ManifestListOptions{})
-	if err != nil {
-		return nil, err
+	if !r.layout.supportsPartitions() {
+		return nil, nil
 	}
 
-	if len(refs) == 0 {
-		return nil, nil
+	// Extract partitions directly from store paths — zero manifest Gets.
+	prefix := r.layout.segmentsPrefix(dataset)
+	paths, err := r.store.List(ctx, prefix)
+	if err != nil {
+		return nil, err
 	}
 
 	seen := make(map[string]bool)
 	var partitions []PartitionRef
 
-	for _, ref := range refs {
-		manifest, err := r.GetManifest(ctx, dataset, ref)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load manifest for snapshot %s: %w", ref.ID, err)
+	for _, p := range paths {
+		partPath := r.layout.extractPartitionPath(p)
+		if partPath == "" || seen[partPath] {
+			continue
 		}
+		seen[partPath] = true
+		partitions = append(partitions, PartitionRef{Path: partPath})
 
-		for _, f := range manifest.Files {
-			partPath := r.layout.extractPartitionPath(f.Path)
-			if partPath == "" || seen[partPath] {
-				continue
-			}
-			seen[partPath] = true
-			partitions = append(partitions, PartitionRef{Path: partPath})
-
-			if opts.Limit > 0 && len(partitions) >= opts.Limit {
-				return partitions, nil
-			}
+		if opts.Limit > 0 && len(partitions) >= opts.Limit {
+			break
 		}
 	}
 
@@ -166,17 +160,12 @@ func (r *reader) ListManifests(ctx context.Context, dataset DatasetID, partition
 
 		manifestPartition := r.layout.parsePartitionFromManifest(p)
 
-		// Always validate manifest per CONTRACT_READ_API.md
-		manifest, err := r.loadManifest(ctx, p)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load manifest %s: %w", p, err)
-		}
-
-		// Apply partition filter if specified
+		// Apply partition filter: skip manifests whose path doesn't encode the
+		// requested partition. For partition-aware layouts (Hive), the partition
+		// is always in the path. For non-partition layouts, manifestPartition
+		// is empty and partition filter is inapplicable.
 		if partition != "" && manifestPartition == "" {
-			if !r.manifestContainsPartition(manifest, partition) {
-				continue
-			}
+			continue
 		}
 
 		seen[snapshotID] = true
@@ -229,15 +218,6 @@ func (r *reader) loadManifest(ctx context.Context, manifestPath string) (*Manife
 	return &manifest, nil
 }
 
-func (r *reader) manifestContainsPartition(m *Manifest, partition string) bool {
-	for _, f := range m.Files {
-		partPath := r.layout.extractPartitionPath(f.Path)
-		if partPath == partition || strings.HasPrefix(partPath, partition+"/") {
-			return true
-		}
-	}
-	return false
-}
 
 // -----------------------------------------------------------------------------
 // Manifest Validation

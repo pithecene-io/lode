@@ -500,17 +500,45 @@ func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 	return d.latestByScan(ctx)
 }
 
-// latestByScan lists all snapshots and returns the most recent by CreatedAt.
-// This is the backward-compatible fallback for datasets without a latest pointer.
+// latestByScan finds the latest snapshot via a single List + single Get.
+// Snapshot IDs are nanosecond timestamps, so the lexicographically largest
+// manifest path contains the latest snapshot.
 func (d *dataset) latestByScan(ctx context.Context) (*DatasetSnapshot, error) {
-	snapshots, err := d.Snapshots(ctx)
+	prefix := d.layout.segmentsPrefix(d.id)
+	paths, err := d.store.List(ctx, prefix)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: failed to list snapshots: %w", err)
 	}
-	if len(snapshots) == 0 {
+
+	// Find the lexicographically largest snapshot ID from manifest paths.
+	var latestID DatasetSnapshotID
+	var latestPath string
+	for _, p := range paths {
+		if !d.layout.isManifest(p) {
+			continue
+		}
+		id := d.layout.parseSegmentID(p)
+		if id == "" {
+			continue
+		}
+		if string(id) > string(latestID) {
+			latestID = id
+			latestPath = p
+		}
+	}
+	if latestID == "" {
 		return nil, ErrNoSnapshots
 	}
-	return snapshots[len(snapshots)-1], nil
+
+	snap, err := d.loadSnapshotFromPath(ctx, latestID, latestPath)
+	if err != nil {
+		return nil, fmt.Errorf("lode: failed to load latest snapshot: %w", err)
+	}
+
+	// Self-heal: write the pointer so subsequent calls are O(1).
+	_ = d.writeLatestPointer(ctx, latestID)
+
+	return snap, nil
 }
 
 func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWriter, error) {
@@ -924,6 +952,10 @@ func (d *dataset) writeManifests(ctx context.Context, snapshotID DatasetSnapshot
 			firstPartPath := d.layout.manifestPathInPartition(d.id, snapshotID, firstNonEmptyPart)
 
 			if firstPartPath != canonicalPath {
+				// Always write canonical manifest for O(1) Snapshot(ctx, id) lookup.
+				pathSet[canonicalPath] = true
+				manifestPaths = append(manifestPaths, canonicalPath)
+
 				for _, pk := range partitionKeys {
 					if pk != "" {
 						partPath := d.layout.manifestPathInPartition(d.id, snapshotID, pk)

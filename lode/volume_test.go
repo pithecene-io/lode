@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"testing"
@@ -1406,5 +1407,143 @@ func TestVolume_LatestPointer_BackwardCompat(t *testing.T) {
 	_ = rc.Close()
 	if string(data) != string(snap2.ID) {
 		t.Errorf("pointer %q, expected %q", string(data), snap2.ID)
+	}
+}
+
+// TestFindCoveringBlocks_BinarySearch verifies that findCoveringBlocks correctly
+// uses binary search on sorted blocks. Tests cover exact matches, partial overlaps,
+// gaps, and large block counts.
+func TestFindCoveringBlocks_BinarySearch(t *testing.T) {
+	tests := []struct {
+		name    string
+		blocks  []BlockRef
+		offset  int64
+		length  int64
+		wantN   int // expected number of covering blocks
+		wantErr error
+	}{
+		{
+			name: "exact single block",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 10, length: 10,
+			wantN: 1,
+		},
+		{
+			name: "spanning two blocks",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 5, length: 15,
+			wantN: 2,
+		},
+		{
+			name: "all blocks",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 0, length: 30,
+			wantN: 3,
+		},
+		{
+			name: "gap returns error",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 5, length: 20,
+			wantErr: ErrRangeMissing,
+		},
+		{
+			name:    "empty blocks",
+			blocks:  nil,
+			offset:  0,
+			length:  10,
+			wantErr: ErrRangeMissing,
+		},
+		{
+			name: "unsorted blocks (backward compat)",
+			blocks: []BlockRef{
+				{Offset: 20, Length: 10},
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+			},
+			offset: 0, length: 30,
+			wantN:  3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := findCoveringBlocks(tt.blocks, tt.offset, tt.length)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantN {
+				t.Fatalf("expected %d blocks, got %d", tt.wantN, len(got))
+			}
+		})
+	}
+}
+
+// TestVolume_Commit_BlocksSortedInManifest verifies that committed blocks
+// are stored sorted by offset in the manifest, enabling O(log B) lookups.
+func TestVolume_Commit_BlocksSortedInManifest(t *testing.T) {
+	store := NewMemory()
+	vol, err := NewVolume("test-vol", func() (Store, error) { return store, nil }, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage blocks out of order.
+	blk3 := stageBlock(t, vol, 20, bytes.Repeat([]byte("C"), 10))
+	blk1 := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	blk2 := stageBlock(t, vol, 10, bytes.Repeat([]byte("B"), 10))
+
+	snap := commitBlocks(t, vol, []BlockRef{blk3, blk1, blk2}, Metadata{})
+
+	// Verify blocks in manifest are sorted by offset.
+	for i := 1; i < len(snap.Manifest.Blocks); i++ {
+		if snap.Manifest.Blocks[i].Offset <= snap.Manifest.Blocks[i-1].Offset {
+			t.Fatalf("blocks not sorted: [%d].Offset=%d <= [%d].Offset=%d",
+				i, snap.Manifest.Blocks[i].Offset, i-1, snap.Manifest.Blocks[i-1].Offset)
+		}
+	}
+}
+
+// BenchmarkFindCoveringBlocks benchmarks block lookup with varying block counts.
+func BenchmarkFindCoveringBlocks(b *testing.B) {
+	for _, blockCount := range []int{10, 100, 1000, 10000} {
+		blocks := make([]BlockRef, blockCount)
+		for i := range blocks {
+			blocks[i] = BlockRef{
+				Offset: int64(i) * 1024,
+				Length: 1024,
+			}
+		}
+
+		// Request a range in the middle (2 blocks).
+		mid := int64(blockCount/2) * 1024
+		b.Run(fmt.Sprintf("blocks=%d", blockCount), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, err := findCoveringBlocks(blocks, mid, 2048)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
