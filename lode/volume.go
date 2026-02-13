@@ -34,13 +34,13 @@ type volume struct {
 // NewVolume creates a volume with a fixed total length.
 func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...VolumeOption) (Volume, error) {
 	if storeFactory == nil {
-		return nil, fmt.Errorf("lode: store factory must not be nil")
+		return nil, errors.New("lode: store factory must not be nil")
 	}
 	if id == "" {
-		return nil, fmt.Errorf("lode: volume ID must not be empty")
+		return nil, errors.New("lode: volume ID must not be empty")
 	}
 	if totalLength <= 0 {
-		return nil, fmt.Errorf("lode: total length must be positive")
+		return nil, errors.New("lode: total length must be positive")
 	}
 
 	store, err := storeFactory()
@@ -48,7 +48,7 @@ func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts .
 		return nil, fmt.Errorf("lode: failed to create store: %w", err)
 	}
 	if store == nil {
-		return nil, fmt.Errorf("lode: store factory returned nil store")
+		return nil, errors.New("lode: store factory returned nil store")
 	}
 
 	cfg := &volumeConfig{}
@@ -124,7 +124,7 @@ func (v *volume) writeLatestPointer(ctx context.Context, id VolumeSnapshotID) er
 // Staged data is not visible until Commit is called.
 func (v *volume) StageWriteAt(ctx context.Context, offset int64, r io.Reader) (BlockRef, error) {
 	if offset < 0 {
-		return BlockRef{}, fmt.Errorf("lode: offset must be non-negative")
+		return BlockRef{}, errors.New("lode: offset must be non-negative")
 	}
 
 	data, err := io.ReadAll(r)
@@ -134,7 +134,7 @@ func (v *volume) StageWriteAt(ctx context.Context, offset int64, r io.Reader) (B
 
 	length := int64(len(data))
 	if length == 0 {
-		return BlockRef{}, fmt.Errorf("lode: block data must not be empty")
+		return BlockRef{}, errors.New("lode: block data must not be empty")
 	}
 	if length > v.totalLength-offset {
 		return BlockRef{}, fmt.Errorf("lode: block exceeds volume address space (offset=%d, length=%d, totalLength=%d)", offset, length, v.totalLength)
@@ -169,51 +169,12 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		metadata = Metadata{}
 	}
 	if len(blocks) == 0 {
-		return nil, fmt.Errorf("lode: commit must include at least one new block")
+		return nil, errors.New("lode: commit must include at least one new block")
 	}
 
-	// Resolve parent via in-memory cache → pointer → scan.
-	// In-memory cache is authoritative within this process and guards against
-	// stale-but-existing pointers after a pointer write failure.
-	var parentID VolumeSnapshotID
-	var existingBlocks []BlockRef
-	parentResolved := false
-
-	if v.lastSnapshotID != "" {
-		snap, snapErr := v.Snapshot(ctx, v.lastSnapshotID)
-		if snapErr == nil {
-			parentID = snap.ID
-			existingBlocks = snap.Manifest.Blocks
-			parentResolved = true
-		} else if !errors.Is(snapErr, ErrNotFound) {
-			return nil, fmt.Errorf("lode: failed to load snapshot from cache: %w", snapErr)
-		}
-		// Cache references nonexistent snapshot — fall through to pointer/scan.
-	}
-	if !parentResolved {
-		latestID, pointerErr := v.readLatestPointer(ctx)
-		if pointerErr == nil {
-			snap, snapErr := v.Snapshot(ctx, latestID)
-			if snapErr == nil {
-				parentID = snap.ID
-				existingBlocks = snap.Manifest.Blocks
-				parentResolved = true
-			} else if !errors.Is(snapErr, ErrNotFound) {
-				return nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
-			}
-			// Pointer references nonexistent snapshot — fall through to scan.
-		}
-	}
-	if !parentResolved {
-		// No cache, no pointer, or stale: fall back to scan for backward compat.
-		latest, scanErr := v.latestByScan(ctx)
-		if scanErr != nil && !errors.Is(scanErr, ErrNoSnapshots) {
-			return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
-		}
-		if latest != nil {
-			parentID = latest.ID
-			existingBlocks = latest.Manifest.Blocks
-		}
+	parentID, existingBlocks, err := v.resolveParent(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate all new blocks have required fields, conform to fixed layout, and are within bounds.
@@ -246,7 +207,7 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		}
 	}
 	if !hasNew {
-		return nil, fmt.Errorf("lode: commit must include at least one new block (all provided blocks already committed)")
+		return nil, errors.New("lode: commit must include at least one new block (all provided blocks already committed)")
 	}
 
 	// Build cumulative block set, sorted by offset for O(log B) lookups.
@@ -302,6 +263,47 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		ID:       snapshotID,
 		Manifest: manifest,
 	}, nil
+}
+
+// resolveParent finds the most recent committed snapshot for parent chaining.
+// Resolution cascade: in-memory cache → pointer → scan fallback.
+// Returns zero values if no parent exists (first commit).
+func (v *volume) resolveParent(ctx context.Context) (VolumeSnapshotID, []BlockRef, error) {
+	// In-memory cache is authoritative within this process and guards against
+	// stale-but-existing pointers after a pointer write failure.
+	if v.lastSnapshotID != "" {
+		snap, snapErr := v.Snapshot(ctx, v.lastSnapshotID)
+		if snapErr == nil {
+			return snap.ID, snap.Manifest.Blocks, nil
+		}
+		if !errors.Is(snapErr, ErrNotFound) {
+			return "", nil, fmt.Errorf("lode: failed to load snapshot from cache: %w", snapErr)
+		}
+		// Cache references nonexistent snapshot — fall through to pointer/scan.
+	}
+
+	latestID, pointerErr := v.readLatestPointer(ctx)
+	if pointerErr == nil {
+		snap, snapErr := v.Snapshot(ctx, latestID)
+		if snapErr == nil {
+			return snap.ID, snap.Manifest.Blocks, nil
+		}
+		if !errors.Is(snapErr, ErrNotFound) {
+			return "", nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
+		}
+		// Pointer references nonexistent snapshot — fall through to scan.
+	}
+
+	// No cache, no pointer, or stale: fall back to scan for backward compat.
+	latest, scanErr := v.latestByScan(ctx)
+	if scanErr != nil && !errors.Is(scanErr, ErrNoSnapshots) {
+		return "", nil, fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
+	}
+	if latest != nil {
+		return latest.ID, latest.Manifest.Blocks, nil
+	}
+
+	return "", nil, nil
 }
 
 // mergeBlocks merges two block slices into a single sorted-by-offset result.
@@ -365,10 +367,10 @@ func validateNoOverlaps(blocks []BlockRef) error {
 // ReadAt reads a fully committed range from a snapshot.
 func (v *volume) ReadAt(ctx context.Context, snapshotID VolumeSnapshotID, offset, length int64) ([]byte, error) {
 	if offset < 0 {
-		return nil, fmt.Errorf("lode: offset must be non-negative")
+		return nil, errors.New("lode: offset must be non-negative")
 	}
 	if length <= 0 {
-		return nil, fmt.Errorf("lode: length must be positive")
+		return nil, errors.New("lode: length must be positive")
 	}
 	if length > v.totalLength-offset {
 		return nil, fmt.Errorf("lode: read exceeds volume address space (offset=%d, length=%d, totalLength=%d)", offset, length, v.totalLength)
@@ -590,6 +592,17 @@ func parseVolumeSnapshotID(p string) VolumeSnapshotID {
 // Volume manifest validation
 // -----------------------------------------------------------------------------
 
+// ensureBlocksSortedByOffset sorts blocks by ascending Offset if not already sorted.
+func ensureBlocksSortedByOffset(blocks []BlockRef) {
+	if !sort.SliceIsSorted(blocks, func(i, j int) bool {
+		return blocks[i].Offset < blocks[j].Offset
+	}) {
+		sort.Slice(blocks, func(i, j int) bool {
+			return blocks[i].Offset < blocks[j].Offset
+		})
+	}
+}
+
 // validateVolumeManifest checks that a volume manifest contains all required
 // fields per CONTRACT_VOLUME.md.
 func validateVolumeManifest(m *VolumeManifest) error {
@@ -651,13 +664,7 @@ func validateVolumeManifest(m *VolumeManifest) error {
 	// Sort blocks by offset at load time so downstream consumers
 	// (findCoveringBlocks, validateNoOverlaps) can assume sorted input.
 	// One-time O(B log B) amortized across all reads.
-	if !sort.SliceIsSorted(m.Blocks, func(i, j int) bool {
-		return m.Blocks[i].Offset < m.Blocks[j].Offset
-	}) {
-		sort.Slice(m.Blocks, func(i, j int) bool {
-			return m.Blocks[i].Offset < m.Blocks[j].Offset
-		})
-	}
+	ensureBlocksSortedByOffset(m.Blocks)
 
 	if err := validateNoOverlaps(m.Blocks); err != nil {
 		return &manifestValidationError{Field: "blocks", Message: "contain overlapping ranges"}

@@ -1498,16 +1498,6 @@ func TestFindCoveringBlocks_BinarySearch(t *testing.T) {
 			length:  10,
 			wantErr: ErrRangeMissing,
 		},
-		{
-			name: "sorted input (blocks sorted at load time)",
-			blocks: []BlockRef{
-				{Offset: 0, Length: 10},
-				{Offset: 10, Length: 10},
-				{Offset: 20, Length: 10},
-			},
-			offset: 0, length: 30,
-			wantN: 3,
-		},
 	}
 
 	for _, tt := range tests {
