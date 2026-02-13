@@ -439,6 +439,29 @@ proportional to dataset/volume size on remote stores (S3/R2).
 | `BenchmarkFindCoveringBlocks` | O(log B) lookup at 10/100/1K/10K blocks |
 | `BenchmarkMergeBlocks` | O(N + K log K) merge at 10/100/1K/10K existing blocks |
 
+### Complexity Violations (tracked tech debt)
+
+| ID | Operation | Required | Current | Priority |
+|----|-----------|----------|---------|----------|
+| CX-1 | `findCoveringBlocks` sort check | O(log B + R) per read | O(B) per read | Critical |
+| CX-2 | `ListManifests` deserialization | path-only IDs + validation | O(M) full deser | High |
+| CX-3 | `ListPartitions` double deser | single-pass manifests | O(2M) Gets | High |
+| CX-4 | `findSnapshotByID` fallback | O(1) canonical Get | O(N) scan | Medium |
+| CX-5 | `Write` partitioned memory | O(R + encoded) | O(3R) | Medium |
+| CX-6 | `Volume.Snapshots` validation | O(S × B_avg) | + redundant sort checks | Medium |
+| CX-7 | `fsStore.List` Walk vs WalkDir | O(N) readdir | O(N) stat | Low |
+
+### Documented Inherent Costs (not violations)
+
+| Operation | Cost | Reason |
+|-----------|------|--------|
+| `Store.List` | O(N) memory | Interface returns `[]string` |
+| `Dataset.Snapshots()` | O(S) Gets | Must load all manifests for history |
+| `Volume.Snapshots()` | O(S × B_avg) memory | Cumulative manifests |
+| `Volume.Commit` manifest | O(B) per commit | Cumulative design |
+| `Dataset.Read(id)` | O(R_total) memory | Returns all records |
+| `latestByScan` | O(N) List | Backward-compat; self-heals via pointer write |
+
 ---
 
 ## Open Gaps

@@ -311,7 +311,40 @@ Any adapter must demonstrate:
 
 ---
 
+## Complexity Bounds
+
+See [CONTRACT_COMPLEXITY.md](CONTRACT_COMPLEXITY.md) for full definitions and variable glossary.
+
+### Enumeration
+
+| Operation | Store Calls | Memory |
+|-----------|-------------|--------|
+| `ListDatasets` | 1 List | O(N) |
+| `ListManifests` | 1 List + M Gets (validation) | O(N + M × manifest) |
+| `ListPartitions` | 1 List + M Gets | O(N + M × manifest) |
+| `GetManifest` | 1 Get | O(manifest) |
+| `OpenObject` | 1 Get | O(1) streaming |
+
+`ListManifests` MUST extract snapshot IDs from paths without full-content deserialization
+beyond what is required for CONTRACT_ERRORS.md validation.
+
+`ListPartitions` MUST NOT deserialize manifests that were already deserialized by `ListManifests`.
+
+### Dataset Operations
+
+| Operation | Store Calls (warm) | Memory |
+|-----------|-------------------|--------|
+| `Latest` | 2 (pointer + manifest) | O(manifest) |
+| `Snapshot(id)` | 1 Get (canonical path) | O(manifest) |
+| `Snapshots` | 1 List + S Gets | O(S × manifest) |
+| `Read(id)` | 1 + F Gets | O(R_total) |
+
+`Snapshots()` is a cold-path enumeration with cost proportional to history depth.
+Callers MUST NOT use `Snapshots()` on hot paths.
+
+---
+
 ## Design Invariant
 
-> **Lode’s read API exposes stored facts, not interpretations.  
+> **Lode's read API exposes stored facts, not interpretations.
 > Planning and meaning belong to consumers.**
