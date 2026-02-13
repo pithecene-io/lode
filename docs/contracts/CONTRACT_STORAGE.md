@@ -125,3 +125,32 @@ For streaming writes that use the multipart/chunked path:
 Adapters MUST document:
 - Consistency guarantees for `List` and `Exists`
 - Any required read-after-write delays or mitigations
+
+---
+
+## Complexity Bounds
+
+See [CONTRACT_COMPLEXITY.md](CONTRACT_COMPLEXITY.md) for full definitions.
+
+### Per-Operation Bounds
+
+| Operation | Store Calls | Memory |
+|-----------|-------------|--------|
+| `Put` | 1 (atomic) or 1 + ⌈size/partSize⌉ (multipart) | O(payload) |
+| `Get` | 1 | O(1) streaming |
+| `Exists` | 1 | O(1) |
+| `Delete` | 1 | O(1) |
+| `ReadRange` | 1 | O(L) |
+| `ReaderAt` | 1 setup; 1 per ReadAt call | O(L) per call |
+| `List` | ⌈N/page⌉ | **O(N) full materialization** |
+
+### List Full Materialization
+
+`Store.List` returns `[]string`. All matching keys are accumulated in memory.
+This is a **documented interface constraint**, not an implementation bug.
+
+Adapters MUST paginate the backend (e.g., S3 `ListObjectsV2` continuation tokens)
+but MUST return all results in the returned slice.
+
+Callers MUST scope prefixes as narrowly as possible.
+Hot-path operations MUST NOT depend on unbounded List results.

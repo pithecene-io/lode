@@ -181,6 +181,31 @@ Streaming-specific error taxonomy and handling guidance are defined in
 
 ---
 
+## Complexity Bounds
+
+See [CONTRACT_COMPLEXITY.md](CONTRACT_COMPLEXITY.md) for full definitions and variable glossary.
+
+### Parent Resolution
+
+- In-memory cache (within process): **0 store calls**.
+- Persistent pointer (cold start): **2 store calls** (1 Get + 1 Exists).
+- Scan fallback (no pointer, backward compat): **O(N) via List**. Self-heals on completion.
+
+Parent resolution MUST NOT use List when a valid pointer exists.
+
+### Write Operations
+
+| Operation | Store Calls (warm) | Memory |
+|-----------|-------------------|--------|
+| `Write` (unpartitioned) | 4 fixed | O(R + encoded) |
+| `Write` (P partitions) | 2P + 3 | O(R + encoded) |
+| `StreamWrite` | 4 fixed | O(1) streaming |
+| `StreamWriteRecords` | 4 fixed | O(1) streaming |
+
+Hot-path writes MUST NOT trigger Store.List.
+
+---
+
 ## Prohibited Behaviors
 
 - In-place mutation of existing data files

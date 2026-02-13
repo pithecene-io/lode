@@ -317,6 +317,37 @@ Design discipline:
 
 ---
 
+## Complexity Bounds
+
+See [CONTRACT_COMPLEXITY.md](CONTRACT_COMPLEXITY.md) for full definitions and variable glossary.
+
+### Write Operations
+
+| Operation | Store Calls (warm) | Memory | CPU |
+|-----------|-------------------|--------|-----|
+| `StageWriteAt` | 1 Put | O(block) | O(block) |
+| `Commit` | 4 fixed | O(B) manifest | O(B + K log K) |
+
+Cumulative manifest size is O(B). This is inherent in the cumulative design.
+
+### Read Operations
+
+| Operation | Store Calls | Memory | CPU |
+|-----------|-------------|--------|-----|
+| `ReadAt` | 1 Get + R ReadRange | O(L) | **O(log B + R)** |
+| `Latest` | 2 (pointer + manifest) | O(B) | O(1) |
+| `Snapshot(id)` | 1 Get | O(B) | O(B) validation |
+| `Snapshots` | 1 List + S Gets | O(S × B_avg) | O(S log S) |
+
+Block lookup MUST be O(log B + R) where R is covering blocks.
+Implementations MUST NOT perform per-read sorted-ness checks.
+Sort verification MUST occur at manifest load time, not at read time.
+
+`Snapshots()` cost grows with snapshot count × cumulative block count.
+Callers MUST NOT use `Snapshots()` on hot paths.
+
+---
+
 ## Prohibited Behaviors
 
 - Inferring committed blocks not present in the manifest.
