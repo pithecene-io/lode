@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1304,5 +1307,658 @@ func TestVolume_ValidateNoOverlaps_OverlapAtHighOffset(t *testing.T) {
 	err := validateNoOverlaps(blocks)
 	if !errors.Is(err, ErrOverlappingBlocks) {
 		t.Fatalf("expected ErrOverlappingBlocks for overlapping blocks at high offset, got: %v", err)
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_UnsortedInput(t *testing.T) {
+	// Backward compat: blocks that are not sorted by offset should still
+	// be validated correctly (defensive sort kicks in).
+	blocks := []BlockRef{
+		{Offset: 20, Length: 10, Path: "c.bin"},
+		{Offset: 0, Length: 10, Path: "a.bin"},
+		{Offset: 10, Length: 10, Path: "b.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if err != nil {
+		t.Fatalf("expected no overlap for non-overlapping unsorted blocks, got: %v", err)
+	}
+}
+
+func TestVolume_ValidateNoOverlaps_UnsortedOverlap(t *testing.T) {
+	// Unsorted blocks that overlap should still be detected.
+	blocks := []BlockRef{
+		{Offset: 15, Length: 10, Path: "b.bin"},
+		{Offset: 0, Length: 20, Path: "a.bin"},
+	}
+
+	err := validateNoOverlaps(blocks)
+	if !errors.Is(err, ErrOverlappingBlocks) {
+		t.Fatalf("expected ErrOverlappingBlocks for unsorted overlapping blocks, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Latest pointer tests (issue #118 / #119)
+// =============================================================================
+
+func TestVolume_LatestPointer_ReadAfterCommit(t *testing.T) {
+	// After Commit, the pointer file must exist and Latest() must resolve
+	// via pointer without calling List.
+	store := NewMemory()
+	fs := newFaultStore(store)
+	vol := newTestVolume(t, "test-vol", newFaultStoreFactory(fs), 100)
+
+	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+	// Verify pointer file exists.
+	pointerPath := "volumes/test-vol/latest"
+	rc, err := store.Get(t.Context(), pointerPath)
+	if err != nil {
+		t.Fatalf("expected pointer file at %s, got error: %v", pointerPath, err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap.ID) {
+		t.Errorf("pointer content: expected %q, got %q", snap.ID, string(data))
+	}
+
+	// Reset call tracking, verify Latest() uses pointer (no List calls).
+	fs.Reset()
+	latest, err := vol.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed: %v", err)
+	}
+	if latest.ID != snap.ID {
+		t.Errorf("Latest() returned %s, expected %s", latest.ID, snap.ID)
+	}
+	if len(fs.ListCalls()) != 0 {
+		t.Errorf("Latest() should not call List when pointer exists, got %d List calls",
+			len(fs.ListCalls()))
+	}
+}
+
+func TestVolume_LatestPointer_MultipleCommits(t *testing.T) {
+	// Pointer must always track the most recent snapshot across commits.
+	store := NewMemory()
+	vol := newTestVolume(t, "test-vol", NewMemoryFactoryFrom(store), 90)
+
+	pointerPath := "volumes/test-vol/latest"
+
+	for i := range 3 {
+		offset := int64(i) * 30
+		blk := stageBlock(t, vol, offset, bytes.Repeat([]byte("X"), 30))
+		snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+		rc, err := store.Get(t.Context(), pointerPath)
+		if err != nil {
+			t.Fatalf("commit %d: pointer missing: %v", i, err)
+		}
+		data, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if string(data) != string(snap.ID) {
+			t.Errorf("commit %d: pointer %q, expected %q", i, string(data), snap.ID)
+		}
+	}
+}
+
+func TestVolume_LatestPointer_BackwardCompat(t *testing.T) {
+	// Pre-pointer volumes (manifests exist, no pointer) must fall back
+	// to scan. After a commit, the pointer is created.
+	store := NewMemory()
+	vol := newTestVolume(t, "test-vol", NewMemoryFactoryFrom(store), 100)
+
+	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	snap1 := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
+
+	// Delete the pointer to simulate pre-pointer state.
+	_ = store.Delete(t.Context(), "volumes/test-vol/latest")
+
+	// Latest() should still work via scan fallback.
+	latest, err := vol.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() scan fallback failed: %v", err)
+	}
+	if latest.ID != snap1.ID {
+		t.Errorf("scan fallback returned %s, expected %s", latest.ID, snap1.ID)
+	}
+
+	// Next commit should create the pointer.
+	blk2 := stageBlock(t, vol, 10, bytes.Repeat([]byte("B"), 10))
+	snap2 := commitBlocks(t, vol, []BlockRef{blk2}, Metadata{})
+
+	rc, err := store.Get(t.Context(), "volumes/test-vol/latest")
+	if err != nil {
+		t.Fatalf("pointer should exist after commit: %v", err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap2.ID) {
+		t.Errorf("pointer %q, expected %q", string(data), snap2.ID)
+	}
+}
+
+// TestFindCoveringBlocks_BinarySearch verifies that findCoveringBlocks correctly
+// uses binary search on sorted blocks. Tests cover exact matches, partial overlaps,
+// gaps, and large block counts.
+func TestFindCoveringBlocks_BinarySearch(t *testing.T) {
+	tests := []struct {
+		name    string
+		blocks  []BlockRef
+		offset  int64
+		length  int64
+		wantN   int // expected number of covering blocks
+		wantErr error
+	}{
+		{
+			name: "exact single block",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 10, length: 10,
+			wantN: 1,
+		},
+		{
+			name: "spanning two blocks",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 5, length: 15,
+			wantN: 2,
+		},
+		{
+			name: "all blocks",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 0, length: 30,
+			wantN: 3,
+		},
+		{
+			name: "gap returns error",
+			blocks: []BlockRef{
+				{Offset: 0, Length: 10},
+				{Offset: 20, Length: 10},
+			},
+			offset: 5, length: 20,
+			wantErr: ErrRangeMissing,
+		},
+		{
+			name:    "empty blocks",
+			blocks:  nil,
+			offset:  0,
+			length:  10,
+			wantErr: ErrRangeMissing,
+		},
+		{
+			name: "unsorted blocks (backward compat)",
+			blocks: []BlockRef{
+				{Offset: 20, Length: 10},
+				{Offset: 0, Length: 10},
+				{Offset: 10, Length: 10},
+			},
+			offset: 0, length: 30,
+			wantN: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := findCoveringBlocks(tt.blocks, tt.offset, tt.length)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.wantN {
+				t.Fatalf("expected %d blocks, got %d", tt.wantN, len(got))
+			}
+		})
+	}
+}
+
+// TestVolume_Commit_BlocksSortedInManifest verifies that committed blocks
+// are stored sorted by offset in the manifest, enabling O(log B) lookups.
+func TestVolume_Commit_BlocksSortedInManifest(t *testing.T) {
+	store := NewMemory()
+	vol, err := NewVolume("test-vol", func() (Store, error) { return store, nil }, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage blocks out of order.
+	blk3 := stageBlock(t, vol, 20, bytes.Repeat([]byte("C"), 10))
+	blk1 := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
+	blk2 := stageBlock(t, vol, 10, bytes.Repeat([]byte("B"), 10))
+
+	snap := commitBlocks(t, vol, []BlockRef{blk3, blk1, blk2}, Metadata{})
+
+	// Verify blocks in manifest are sorted by offset.
+	for i := 1; i < len(snap.Manifest.Blocks); i++ {
+		if snap.Manifest.Blocks[i].Offset <= snap.Manifest.Blocks[i-1].Offset {
+			t.Fatalf("blocks not sorted: [%d].Offset=%d <= [%d].Offset=%d",
+				i, snap.Manifest.Blocks[i].Offset, i-1, snap.Manifest.Blocks[i-1].Offset)
+		}
+	}
+}
+
+// BenchmarkFindCoveringBlocks benchmarks block lookup with varying block counts.
+func BenchmarkFindCoveringBlocks(b *testing.B) {
+	for _, blockCount := range []int{10, 100, 1000, 10000} {
+		blocks := make([]BlockRef, blockCount)
+		for i := range blocks {
+			blocks[i] = BlockRef{
+				Offset: int64(i) * 1024,
+				Length: 1024,
+			}
+		}
+
+		// Request a range in the middle (2 blocks).
+		mid := int64(blockCount/2) * 1024
+		b.Run(fmt.Sprintf("blocks=%d", blockCount), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, err := findCoveringBlocks(blocks, mid, 2048)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// TestMergeBlocks verifies that mergeBlocks produces a correctly sorted result
+// from a pre-sorted slice and an unsorted slice of new blocks.
+func TestMergeBlocks(t *testing.T) {
+	tests := []struct {
+		name     string
+		sorted   []BlockRef
+		unsorted []BlockRef
+		want     []int64 // expected offsets in order
+	}{
+		{
+			name:     "empty both",
+			sorted:   nil,
+			unsorted: nil,
+			want:     nil,
+		},
+		{
+			name:     "existing only",
+			sorted:   []BlockRef{{Offset: 0, Length: 10}, {Offset: 10, Length: 10}},
+			unsorted: nil,
+			want:     []int64{0, 10},
+		},
+		{
+			name:     "new only",
+			sorted:   nil,
+			unsorted: []BlockRef{{Offset: 20, Length: 10}, {Offset: 0, Length: 10}},
+			want:     []int64{0, 20},
+		},
+		{
+			name:     "interleaved",
+			sorted:   []BlockRef{{Offset: 0, Length: 10}, {Offset: 20, Length: 10}},
+			unsorted: []BlockRef{{Offset: 30, Length: 10}, {Offset: 10, Length: 10}},
+			want:     []int64{0, 10, 20, 30},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeBlocks(tt.sorted, tt.unsorted)
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d blocks, got %d", len(tt.want), len(got))
+			}
+			for i, want := range tt.want {
+				if got[i].Offset != want {
+					t.Errorf("[%d] expected offset %d, got %d", i, want, got[i].Offset)
+				}
+			}
+		})
+	}
+}
+
+// TestVolume_Commit_StalePointer_FallsBackToScan verifies that a stale
+// latest pointer (referencing a nonexistent snapshot) causes Commit to
+// fall back to scan, preserving linear history.
+func TestVolume_Commit_StalePointer_FallsBackToScan(t *testing.T) {
+	mem := NewMemory()
+	vol, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage and commit first block.
+	block1, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1-data")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the pointer to reference a nonexistent snapshot.
+	pointerPath := "volumes/test-vol/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte("nonexistent-snap-id"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage and commit second block — should succeed via scan fallback.
+	block2, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2-data")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatalf("Commit with stale pointer should succeed: %v", err)
+	}
+
+	// Parent should be snap1 (from scan fallback), not the stale ID.
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s (from scan), got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	}
+	// Cumulative blocks should include both.
+	if len(snap2.Manifest.Blocks) != 2 {
+		t.Errorf("expected 2 cumulative blocks, got %d", len(snap2.Manifest.Blocks))
+	}
+}
+
+// TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache verifies that
+// when the pointer references an older (but existing) snapshot — e.g., because
+// a pointer write failed — the in-memory cache prevents the stale pointer from
+// breaking linear history.
+func TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
+	mem := NewMemory()
+	vol, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit snap-1 and snap-2 normally.
+	block1, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block2, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Fatalf("snap2 parent should be snap1")
+	}
+
+	// Corrupt the pointer to point back to snap-1 (which still exists).
+	pointerPath := "volumes/test-vol/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte(snap1.ID))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit snap-3: must use snap-2 as parent (from in-memory cache),
+	// NOT snap-1 (from stale pointer).
+	block3, err := vol.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := vol.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if err != nil {
+		t.Fatalf("Commit with stale pointer should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
+			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
+	}
+	// Cumulative blocks should include all three.
+	if len(snap3.Manifest.Blocks) != 3 {
+		t.Errorf("expected 3 cumulative blocks, got %d", len(snap3.Manifest.Blocks))
+	}
+}
+
+// TestVolume_Commit_ColdStart_ReadsPointerFromStore verifies that a new
+// Volume instance (cold start with no in-memory cache) resolves the correct
+// parent by reading the persistent pointer from the store.
+func TestVolume_Commit_ColdStart_ReadsPointerFromStore(t *testing.T) {
+	mem := NewMemory()
+
+	// Process A: commit 3 snapshots.
+	volA, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block1, err := volA.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := volA.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block2, err := volA.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = volA.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block3, err := volA.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := volA.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify pointer is on snap3 (protocol ensures this).
+	rc, err := mem.Get(t.Context(), "volumes/test-vol/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap3.ID) {
+		t.Fatalf("pointer should track snap3, got %q", string(data))
+	}
+
+	// Process B: cold start (new Volume instance, empty in-memory cache).
+	volB, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block4, err := volB.StageWriteAt(t.Context(), 300, bytes.NewReader([]byte("block-4")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap4, err := volB.Commit(t.Context(), []BlockRef{block4}, Metadata{})
+	if err != nil {
+		t.Fatalf("cold-start commit should succeed: %v", err)
+	}
+
+	// snap4 must have snap3 as parent (pointer is correct).
+	if snap4.Manifest.ParentSnapshotID != snap3.ID {
+		t.Errorf("expected parent %s, got %s (snap1=%s)",
+			snap3.ID, snap4.Manifest.ParentSnapshotID, snap1.ID)
+	}
+	// Cumulative blocks should include all four.
+	if len(snap4.Manifest.Blocks) != 4 {
+		t.Errorf("expected 4 cumulative blocks, got %d", len(snap4.Manifest.Blocks))
+	}
+}
+
+// TestVolume_Commit_ColdStart_CorruptPointer_FallsBackToScan verifies that
+// a new Volume instance (cold start) with a corrupt pointer correctly falls
+// back to scan.
+func TestVolume_Commit_ColdStart_CorruptPointer_FallsBackToScan(t *testing.T) {
+	mem := NewMemory()
+
+	// Process A: commit 2 snapshots.
+	volA, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block1, err := volA.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = volA.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block2, err := volA.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := volA.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the pointer to reference a nonexistent snapshot.
+	pointerPath := "volumes/test-vol/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte("nonexistent-snap-id"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Process B: cold start with corrupt pointer.
+	volB, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block3, err := volB.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := volB.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if err != nil {
+		t.Fatalf("cold-start commit with corrupt pointer should succeed: %v", err)
+	}
+
+	// snap3 must have snap2 as parent (from scan fallback).
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from scan), got %s", snap2.ID, snap3.Manifest.ParentSnapshotID)
+	}
+	// Cumulative blocks should include all three.
+	if len(snap3.Manifest.Blocks) != 3 {
+		t.Errorf("expected 3 cumulative blocks, got %d", len(snap3.Manifest.Blocks))
+	}
+}
+
+// TestVolume_Commit_PointerWriteFailure_AbortsCommit verifies that when
+// writeLatestPointer fails, the commit is aborted and no manifest is written.
+func TestVolume_Commit_PointerWriteFailure_AbortsCommit(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	vol, err := NewVolume("test-vol", factory, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First commit succeeds.
+	block1, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject Put error only on the "latest" pointer path.
+	fs.mu.Lock()
+	fs.putErr = errors.New("injected: pointer write failure")
+	fs.putErrMatch = "latest"
+	fs.mu.Unlock()
+
+	// Record Put calls before the failed commit.
+	fs.Reset()
+
+	// Second commit should fail because pointer write is required.
+	block2, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err == nil {
+		t.Fatal("expected commit to fail when pointer write fails")
+	}
+
+	// Verify no manifest was written.
+	putCalls := fs.PutCalls()
+	for _, p := range putCalls {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not be written when pointer fails, but saw Put(%s)", p)
+		}
+	}
+
+	// Clear the error and commit again — should succeed with snap-1 as parent.
+	fs.mu.Lock()
+	fs.putErr = nil
+	fs.putErrMatch = ""
+	fs.mu.Unlock()
+
+	block2b, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2b")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := vol.Commit(t.Context(), []BlockRef{block2b}, Metadata{})
+	if err != nil {
+		t.Fatalf("commit after clearing error should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s, got %s", snap1.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}
+
+// BenchmarkMergeBlocks measures merge performance with varying existing block counts.
+func BenchmarkMergeBlocks(b *testing.B) {
+	for _, existingCount := range []int{10, 100, 1000, 10000} {
+		existing := make([]BlockRef, existingCount)
+		for i := range existing {
+			existing[i] = BlockRef{Offset: int64(i) * 1024, Length: 1024}
+		}
+		// 3 new blocks at varying offsets (typical commit pattern).
+		newBlocks := []BlockRef{
+			{Offset: int64(existingCount+2) * 1024, Length: 1024},
+			{Offset: int64(existingCount) * 1024, Length: 1024},
+			{Offset: int64(existingCount+1) * 1024, Length: 1024},
+		}
+
+		b.Run(fmt.Sprintf("existing=%d/new=3", existingCount), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = mergeBlocks(existing, newBlocks)
+			}
+		})
 	}
 }

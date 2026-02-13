@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/pithecene-io/lode/internal/testutil"
 )
 
 // -----------------------------------------------------------------------------
@@ -417,6 +419,46 @@ func TestDatasetReader_ListManifests_InvalidManifest_WithoutPartitionFilter_Retu
 	}
 }
 
+// TestDatasetReader_ListManifests_HiveLayout_SkipsCanonicalManifest verifies
+// that ListManifests excludes the canonical manifest written for O(1) Snapshot
+// lookups. Without this, ManifestRef.Partition would be nondeterministic
+// (empty vs populated) depending on store listing order.
+func TestDatasetReader_ListManifests_HiveLayout_SkipsCanonicalManifest(t *testing.T) {
+	store := NewMemory()
+
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store),
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+	)
+	if _, err := ds.Write(t.Context(), records, Metadata{}); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := NewDatasetReader(NewMemoryFactoryFrom(store), WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := reader.ListManifests(t.Context(), "test-ds", "", ManifestListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Every ref must have a non-empty Partition (canonical manifest excluded).
+	for _, ref := range refs {
+		if ref.Partition == "" {
+			t.Errorf("ManifestRef %s has empty Partition; canonical manifest should be excluded from listing", ref.ID)
+		}
+	}
+}
+
 // -----------------------------------------------------------------------------
 // G3: ErrNoManifests test
 // -----------------------------------------------------------------------------
@@ -518,7 +560,7 @@ func TestDatasetReader_ListDatasets_FSStore_EmptyStorage_ReturnsEmptyList(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer testutil.RemoveAll(tmpDir)
 
 	reader, err := NewDatasetReader(NewFSFactory(tmpDir))
 	if err != nil {

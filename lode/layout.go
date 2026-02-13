@@ -23,6 +23,7 @@ type layout interface {
 	manifestPath(dataset DatasetID, segment DatasetSnapshotID) string
 	manifestPathInPartition(dataset DatasetID, segment DatasetSnapshotID, partition string) string
 	dataFilePath(dataset DatasetID, segment DatasetSnapshotID, partition, filename string) string
+	latestPointerPath(dataset DatasetID) string
 
 	// Partitioning (unified with layout)
 	partitioner() partitioner
@@ -122,6 +123,10 @@ func (l *defaultLayout) extractPartitionPath(_ string) string {
 
 func (l *defaultLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, _, filename string) string {
 	return path.Join(datasetsDir, string(dataset), snapshotsDir, string(segment), dataDir, filename)
+}
+
+func (l *defaultLayout) latestPointerPath(dataset DatasetID) string {
+	return path.Join(datasetsDir, string(dataset), "latest")
 }
 
 func (l *defaultLayout) partitioner() partitioner {
@@ -295,6 +300,10 @@ func (l *hiveLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, 
 	return path.Join(datasetsDir, string(dataset), partitionsDir, partition, segmentsDir, string(segment), dataDir, filename)
 }
 
+func (l *hiveLayout) latestPointerPath(dataset DatasetID) string {
+	return path.Join(datasetsDir, string(dataset), "latest")
+}
+
 func (l *hiveLayout) partitioner() partitioner {
 	return l.part
 }
@@ -379,6 +388,10 @@ func (l *flatLayout) extractPartitionPath(_ string) string {
 
 func (l *flatLayout) dataFilePath(dataset DatasetID, segment DatasetSnapshotID, _, filename string) string {
 	return path.Join(string(dataset), string(segment), dataDir, filename)
+}
+
+func (l *flatLayout) latestPointerPath(dataset DatasetID) string {
+	return path.Join(string(dataset), "latest")
 }
 
 func (l *flatLayout) partitioner() partitioner {

@@ -48,12 +48,12 @@ func (s *latencyStore) ReaderAt(ctx context.Context, path string) (io.ReaderAt, 
 
 // BenchmarkDataset_SequentialWrites measures the cost of N sequential writes.
 //
-// With parent-ID caching (issue #108), writes 2..N resolve the parent in O(1).
-// Without caching, each write would call Latest() → Snapshots() → List + N×Get,
-// making total cost O(n²) and wall-clock time proportional to n² × store latency.
+// With the persistent latest pointer (issues #118/#119), writes 2..N resolve
+// the parent in O(1) via a single Get. The first write to a new dataset falls
+// back to scan (List), but subsequent writes read the pointer directly.
 //
 // The 1ms simulated latency makes quadratic regression obvious: 20 writes would
-// take ~400ms uncached (20×20×1ms) vs ~20ms cached (20×1ms cold start only).
+// take ~400ms without pointer (20×20×1ms) vs ~20ms with pointer.
 func BenchmarkDataset_SequentialWrites(b *testing.B) {
 	const writeCount = 20
 
@@ -81,8 +81,9 @@ func BenchmarkDataset_SequentialWrites(b *testing.B) {
 }
 
 // BenchmarkDataset_SequentialWrites_StoreCallCount verifies that store.List
-// calls remain O(1) regardless of snapshot count. This is a correctness
-// benchmark — it asserts on call counts rather than timing.
+// calls remain O(1) regardless of snapshot count. With the persistent latest
+// pointer, only the cold-start write (no pointer yet) triggers a List call.
+// All subsequent writes resolve the parent via the pointer (Get only).
 func BenchmarkDataset_SequentialWrites_StoreCallCount(b *testing.B) {
 	fs := newFaultStore(NewMemory())
 	factory := newFaultStoreFactory(fs)
@@ -98,13 +99,14 @@ func BenchmarkDataset_SequentialWrites_StoreCallCount(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		fs.Reset()
 
-		// Cold-start write (will call List)
+		// First write of iteration (may call List on very first iteration
+		// if no pointer exists yet; pointer-based on subsequent iterations).
 		if _, err := ds.Write(b.Context(), data, Metadata{}); err != nil {
 			b.Fatal(err)
 		}
-		coldListCalls := len(fs.ListCalls())
+		firstWriteListCalls := len(fs.ListCalls())
 
-		// Subsequent writes (should NOT call List)
+		// Subsequent writes (should NOT call List — pointer always exists)
 		for j := 1; j < 20; j++ {
 			if _, err := ds.Write(b.Context(), data, Metadata{}); err != nil {
 				b.Fatal(err)
@@ -112,9 +114,9 @@ func BenchmarkDataset_SequentialWrites_StoreCallCount(b *testing.B) {
 		}
 
 		totalListCalls := len(fs.ListCalls())
-		if totalListCalls != coldListCalls {
-			b.Fatalf("expected %d List calls (cold start only), got %d after 20 writes",
-				coldListCalls, totalListCalls)
+		if totalListCalls != firstWriteListCalls {
+			b.Fatalf("expected %d List calls (first write only), got %d after 20 writes",
+				firstWriteListCalls, totalListCalls)
 		}
 	}
 }

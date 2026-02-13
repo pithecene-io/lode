@@ -330,35 +330,37 @@ func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Block Put operations and signal when manifest Put is entered
+	// Block Put operations and signal when the pointer Put is entered.
+	// With pointer-before-manifest protocol, the first Put during Commit
+	// is the "latest" pointer, not the manifest.
 	putBlock := make(chan struct{})
-	manifestPutEntered := make(chan struct{}, 1)
+	pointerPutEntered := make(chan struct{}, 1)
 	fs.SetPutBlock(putBlock)
 
 	// Use beforePut hook for deterministic synchronization (no busy-spin)
 	fs.SetBeforePut(func(path string) {
-		if strings.Contains(path, "manifest") {
+		if strings.Contains(path, "latest") {
 			select {
-			case manifestPutEntered <- struct{}{}:
+			case pointerPutEntered <- struct{}{}:
 			default:
 				// Already signaled
 			}
 		}
 	})
 
-	// Start commit in goroutine (will block on manifest Put)
+	// Start commit in goroutine (will block on pointer Put)
 	commitDone := make(chan error, 1)
 	go func() {
 		_, err := sw.Commit(ctx)
 		commitDone <- err
 	}()
 
-	// Wait for commit to reach the blocked manifest Put (deterministic sync)
+	// Wait for commit to reach the blocked pointer Put (deterministic sync)
 	select {
-	case <-manifestPutEntered:
-		// Manifest Put has been called and is now blocked
+	case <-pointerPutEntered:
+		// Pointer Put has been called and is now blocked
 	case <-time.After(2 * time.Second):
-		t.Fatal("commit did not reach manifest Put")
+		t.Fatal("commit did not reach pointer Put")
 	}
 
 	// Cancel context while Put is blocked

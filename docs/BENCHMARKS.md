@@ -51,6 +51,8 @@ Both: linux/amd64, Go 1.25, Docker-local S3 backends.
 | `BenchmarkDataset_SequentialWrites_StoreCallCount` | `lode/dataset_bench_test.go` | In-memory (fault store) | Done |
 | `BenchmarkS3_WriteRoundTrip/LocalStack` | `lode/s3/bench_integration_test.go` | LocalStack | Done |
 | `BenchmarkS3_WriteRoundTrip/MinIO` | `lode/s3/bench_integration_test.go` | MinIO | Done |
+| `BenchmarkFindCoveringBlocks` | `lode/volume_test.go` | In-memory | Done |
+| `BenchmarkMergeBlocks` | `lode/volume_test.go` | In-memory | Done |
 
 ### Planned
 

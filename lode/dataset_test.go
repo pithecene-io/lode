@@ -1,6 +1,7 @@
 package lode
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -2194,13 +2195,12 @@ func (e *errorIterator) Err() error {
 }
 
 // -----------------------------------------------------------------------------
-// Parent snapshot ID caching (issue #108)
+// Latest pointer tests (issue #118 / #119)
 // -----------------------------------------------------------------------------
 
-func TestDataset_Write_CachesParentSnapshotID(t *testing.T) {
-	// After the first Write, subsequent writes must not call store.List
-	// to resolve the parent snapshot ID. This verifies the O(1) parent
-	// resolution described in issue #108.
+func TestDataset_Write_LatestPointer_SkipsScan(t *testing.T) {
+	// After the first Write creates the pointer, subsequent writes must not
+	// call store.List to resolve the parent snapshot ID (O(1) via pointer).
 	fs := newFaultStore(NewMemory())
 	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
 		WithCodec(NewJSONLCodec()),
@@ -2209,17 +2209,17 @@ func TestDataset_Write_CachesParentSnapshotID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// First write: cold start, must call List via Latest()
+	// First write: no pointer yet, falls back to scan (List)
 	snap1, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	listCallsAfterFirst := len(fs.ListCalls())
 	if listCallsAfterFirst == 0 {
-		t.Fatal("expected at least one List call on cold-start write")
+		t.Fatal("expected at least one List call on first write (no pointer)")
 	}
 
-	// Second write: cached parent, must NOT add new List calls
+	// Second write: pointer exists, must NOT call List
 	snap2, err := ds.Write(t.Context(), R(D{"b": 2}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
@@ -2235,7 +2235,7 @@ func TestDataset_Write_CachesParentSnapshotID(t *testing.T) {
 		t.Errorf("expected parent %s, got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
 	}
 
-	// Third write: still cached
+	// Third write: still pointer-based
 	snap3, err := ds.Write(t.Context(), R(D{"c": 3}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
@@ -2250,9 +2250,9 @@ func TestDataset_Write_CachesParentSnapshotID(t *testing.T) {
 	}
 }
 
-func TestDataset_StreamWrite_CachesParentSnapshotID(t *testing.T) {
-	// StreamWrite → Commit must also update the parent cache so that
-	// a subsequent Write uses O(1) parent resolution.
+func TestDataset_StreamWrite_LatestPointer_SkipsScan(t *testing.T) {
+	// StreamWrite → Commit must write the pointer so that a subsequent
+	// Write uses O(1) parent resolution.
 	fs := newFaultStore(NewMemory())
 	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs))
 	if err != nil {
@@ -2271,14 +2271,14 @@ func TestDataset_StreamWrite_CachesParentSnapshotID(t *testing.T) {
 	}
 	listCallsAfterFirst := len(fs.ListCalls())
 
-	// Second write via regular Write: should use cached parent
+	// Second write via regular Write: pointer exists, no List
 	snap2, err := ds.Write(t.Context(), []any{[]byte("payload-2")}, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	listCallsAfterSecond := len(fs.ListCalls())
 	if listCallsAfterSecond != listCallsAfterFirst {
-		t.Errorf("expected no new List calls after StreamWrite cached parent, got %d new calls",
+		t.Errorf("expected no new List calls after StreamWrite wrote pointer, got %d new calls",
 			listCallsAfterSecond-listCallsAfterFirst)
 	}
 	if snap2.Manifest.ParentSnapshotID != snap1.ID {
@@ -2286,8 +2286,8 @@ func TestDataset_StreamWrite_CachesParentSnapshotID(t *testing.T) {
 	}
 }
 
-func TestDataset_StreamWriteRecords_CachesParentSnapshotID(t *testing.T) {
-	// StreamWriteRecords must also update the parent cache.
+func TestDataset_StreamWriteRecords_LatestPointer_SkipsScan(t *testing.T) {
+	// StreamWriteRecords must write the pointer.
 	fs := newFaultStore(NewMemory())
 	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
 		WithCodec(NewJSONLCodec()),
@@ -2303,7 +2303,7 @@ func TestDataset_StreamWriteRecords_CachesParentSnapshotID(t *testing.T) {
 	}
 	listCallsAfterFirst := len(fs.ListCalls())
 
-	// Second write via StreamWriteRecords
+	// Second write via StreamWriteRecords: pointer exists
 	iter := &sliceIterator{records: R(D{"b": 2})}
 	snap2, err := ds.StreamWriteRecords(t.Context(), iter, Metadata{})
 	if err != nil {
@@ -2318,7 +2318,7 @@ func TestDataset_StreamWriteRecords_CachesParentSnapshotID(t *testing.T) {
 		t.Errorf("expected parent %s, got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
 	}
 
-	// Third write: verify chain continues
+	// Third write: verify chain continues via pointer
 	snap3, err := ds.Write(t.Context(), R(D{"c": 3}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
@@ -2330,5 +2330,562 @@ func TestDataset_StreamWriteRecords_CachesParentSnapshotID(t *testing.T) {
 	}
 	if snap3.Manifest.ParentSnapshotID != snap2.ID {
 		t.Errorf("expected parent %s, got %s", snap2.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}
+
+func TestDataset_LatestPointer_ReadAfterWrite(t *testing.T) {
+	// After a write, the pointer file must exist in the store and
+	// Latest() must resolve via pointer (no List calls).
+	store := NewMemory()
+	fs := newFaultStore(store)
+	ds, err := NewDataset("test-ds", newFaultStoreFactory(fs),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify pointer file exists in store.
+	pointerPath := "datasets/test-ds/latest"
+	rc, err := store.Get(t.Context(), pointerPath)
+	if err != nil {
+		t.Fatalf("expected pointer file at %s, got error: %v", pointerPath, err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap.ID) {
+		t.Errorf("pointer file content: expected %q, got %q", snap.ID, string(data))
+	}
+
+	// Reset call tracking to verify Latest() uses pointer, not List.
+	fs.Reset()
+	latest, err := ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() failed: %v", err)
+	}
+	if latest.ID != snap.ID {
+		t.Errorf("Latest() returned %s, expected %s", latest.ID, snap.ID)
+	}
+	if len(fs.ListCalls()) != 0 {
+		t.Errorf("Latest() should not call List when pointer exists, got %d List calls",
+			len(fs.ListCalls()))
+	}
+}
+
+func TestDataset_LatestPointer_UpdatesAcrossWrites(t *testing.T) {
+	// Pointer must always track the most recent snapshot.
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pointerPath := "datasets/test-ds/latest"
+
+	for i := range 3 {
+		snap, err := ds.Write(t.Context(), R(D{"i": i}), Metadata{})
+		if err != nil {
+			t.Fatalf("write %d failed: %v", i, err)
+		}
+
+		rc, err := store.Get(t.Context(), pointerPath)
+		if err != nil {
+			t.Fatalf("write %d: pointer file missing: %v", i, err)
+		}
+		data, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		if string(data) != string(snap.ID) {
+			t.Errorf("write %d: pointer %q, expected %q", i, string(data), snap.ID)
+		}
+	}
+}
+
+func TestDataset_LatestPointer_BackwardCompat(t *testing.T) {
+	// Pre-pointer datasets (manifests exist, no pointer) must fall back
+	// to scan and work correctly. After a write, the pointer is created.
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a manifest directly without writing a pointer (simulates pre-pointer data).
+	snap1, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the pointer to simulate pre-pointer state.
+	_ = store.Delete(t.Context(), "datasets/test-ds/latest")
+
+	// Latest() should still work via scan fallback.
+	latest, err := ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() scan fallback failed: %v", err)
+	}
+	if latest.ID != snap1.ID {
+		t.Errorf("scan fallback returned %s, expected %s", latest.ID, snap1.ID)
+	}
+
+	// Next write should create the pointer.
+	snap2, err := ds.Write(t.Context(), R(D{"b": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := store.Get(t.Context(), "datasets/test-ds/latest")
+	if err != nil {
+		t.Fatalf("pointer should exist after write: %v", err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap2.ID) {
+		t.Errorf("pointer %q, expected %q", string(data), snap2.ID)
+	}
+}
+
+func TestDataset_LatestPointer_CorruptPointer(t *testing.T) {
+	// If the pointer references a nonexistent snapshot, Latest() must
+	// fall back to scan and return the correct result.
+	store := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(store),
+		WithCodec(NewJSONLCodec()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a real snapshot.
+	snap1, err := ds.Write(t.Context(), R(D{"a": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite the pointer with a nonexistent snapshot ID.
+	pointerPath := "datasets/test-ds/latest"
+	_ = store.Delete(t.Context(), pointerPath)
+	_ = store.Put(t.Context(), pointerPath, strings.NewReader("nonexistent-id"))
+
+	// Latest() should fall back to scan and find snap1.
+	latest, err := ds.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("Latest() with corrupt pointer failed: %v", err)
+	}
+	if latest.ID != snap1.ID {
+		t.Errorf("expected %s from scan fallback, got %s", snap1.ID, latest.ID)
+	}
+}
+
+func TestDataset_LatestPointer_AllLayouts(t *testing.T) {
+	// Verify pointer paths for all three layouts.
+	tests := []struct {
+		name         string
+		layout       layout
+		expectedPath string
+	}{
+		{
+			name:         "default",
+			layout:       NewDefaultLayout(),
+			expectedPath: "datasets/my-ds/latest",
+		},
+		{
+			name:         "flat",
+			layout:       NewFlatLayout(),
+			expectedPath: "my-ds/latest",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.layout.latestPointerPath("my-ds")
+			if got != tt.expectedPath {
+				t.Errorf("expected %q, got %q", tt.expectedPath, got)
+			}
+		})
+	}
+
+	// Hive layout requires NewHiveLayout with keys
+	hive, err := NewHiveLayout("day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := hive.latestPointerPath("my-ds")
+	if got != "datasets/my-ds/latest" {
+		t.Errorf("hive: expected %q, got %q", "datasets/my-ds/latest", got)
+	}
+}
+
+// TestDataset_HiveLayout_SnapshotByID_NoListCall verifies that Snapshot(ctx, id)
+// with HiveLayout does NOT require a List call. The canonical manifest is always
+// written alongside partition manifests, so a single Get resolves the snapshot.
+func TestDataset_HiveLayout_SnapshotByID_NoListCall(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reset counters after the write.
+	fs.Reset()
+
+	// Snapshot by ID — should NOT trigger any List calls.
+	got, err := ds.Snapshot(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Snapshot(%s) failed: %v", snap.ID, err)
+	}
+	if got.ID != snap.ID {
+		t.Fatalf("expected snapshot ID %s, got %s", snap.ID, got.ID)
+	}
+
+	listCalls := fs.ListCalls()
+	if len(listCalls) != 0 {
+		t.Fatalf("expected 0 List calls for Snapshot(id), got %d: %v", len(listCalls), listCalls)
+	}
+}
+
+// TestDataset_HiveLayout_CanonicalManifestWritten verifies that writeManifests
+// writes the canonical manifest alongside partition manifests for HiveLayout.
+func TestDataset_HiveLayout_CanonicalManifestWritten(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+		D{"id": 2, "day": "2024-01-16"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Canonical path must exist.
+	canonicalPath := "datasets/test-ds/segments/" + string(snap.ID) + "/manifest.json"
+	exists, err := fs.inner.Exists(t.Context(), canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatalf("canonical manifest not found at %s", canonicalPath)
+	}
+
+	// Partition paths must also exist.
+	partPaths := []string{
+		"datasets/test-ds/partitions/day=2024-01-15/segments/" + string(snap.ID) + "/manifest.json",
+		"datasets/test-ds/partitions/day=2024-01-16/segments/" + string(snap.ID) + "/manifest.json",
+	}
+	for _, pp := range partPaths {
+		exists, err := fs.inner.Exists(t.Context(), pp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("partition manifest not found at %s", pp)
+		}
+	}
+}
+
+// TestDataset_HiveLayout_BackwardCompat_FallbackScan verifies that Snapshot(ctx, id)
+// falls back to findSnapshotByID when the canonical manifest is missing (pre-fix data).
+func TestDataset_HiveLayout_BackwardCompat_FallbackScan(t *testing.T) {
+	mem := NewMemory()
+	fs := newFaultStore(mem)
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory,
+		WithCodec(NewJSONLCodec()),
+		WithHiveLayout("day"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := R(
+		D{"id": 1, "day": "2024-01-15"},
+	)
+
+	snap, err := ds.Write(t.Context(), records, Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate pre-fix data: delete the canonical manifest.
+	canonicalPath := "datasets/test-ds/segments/" + string(snap.ID) + "/manifest.json"
+	if err := mem.Delete(t.Context(), canonicalPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot should still work via findSnapshotByID fallback.
+	got, err := ds.Snapshot(t.Context(), snap.ID)
+	if err != nil {
+		t.Fatalf("Snapshot(%s) failed after canonical delete: %v", snap.ID, err)
+	}
+	if got.ID != snap.ID {
+		t.Fatalf("expected snapshot ID %s, got %s", snap.ID, got.ID)
+	}
+}
+
+// TestDataset_Write_CorruptPointer_FallsBackToScan verifies that a corrupt
+// latest pointer (referencing a nonexistent snapshot) falls through to scan
+// in resolveParentID, preventing broken linear history.
+func TestDataset_Write_CorruptPointer_FallsBackToScan(t *testing.T) {
+	mem := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write first snapshot.
+	snap1, err := ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the pointer to reference a nonexistent snapshot.
+	pointerPath := "datasets/test-ds/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte("nonexistent-snap-id"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second write should succeed — resolveParentID falls back to scan.
+	snap2, err := ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err != nil {
+		t.Fatalf("Write with corrupt pointer should succeed: %v", err)
+	}
+
+	// Parent should be snap1 (from scan fallback), not the corrupt ID.
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s (from scan), got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	}
+}
+
+// TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache verifies that
+// when the pointer references an older (but existing) snapshot — e.g., because
+// a pointer write failed — the in-memory cache prevents the stale pointer from
+// breaking linear history.
+func TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
+	mem := NewMemory()
+	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write snap-1 and snap-2 normally.
+	snap1, err := ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.Manifest.ParentSnapshotID != snap1.ID {
+		t.Fatalf("snap2 parent should be snap1")
+	}
+
+	// Corrupt the pointer to point back to snap-1 (which still exists).
+	// This simulates a pointer write failure after snap-2's commit.
+	pointerPath := "datasets/test-ds/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte(snap1.ID))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write snap-3: must use snap-2 as parent (from in-memory cache),
+	// NOT snap-1 (from stale pointer).
+	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if err != nil {
+		t.Fatalf("Write with stale pointer should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
+			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
+	}
+}
+
+// TestDataset_Write_ColdStart_ReadsPointerFromStore verifies that a new
+// Dataset instance (cold start with no in-memory cache) resolves the correct
+// parent by reading the persistent pointer from the store.
+func TestDataset_Write_ColdStart_ReadsPointerFromStore(t *testing.T) {
+	mem := NewMemory()
+
+	// Process A: write 3 snapshots.
+	dsA, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap1, err := dsA.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dsA.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := dsA.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify pointer is on snap3 (protocol ensures this).
+	rc, err := mem.Get(t.Context(), "datasets/test-ds/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(data) != string(snap3.ID) {
+		t.Fatalf("pointer should track snap3, got %q", string(data))
+	}
+
+	// Process B: cold start (new Dataset instance, empty in-memory cache).
+	dsB, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap4, err := dsB.Write(t.Context(), R(D{"i": 4}), Metadata{})
+	if err != nil {
+		t.Fatalf("cold-start write should succeed: %v", err)
+	}
+
+	// snap4 must have snap3 as parent (pointer is correct).
+	if snap4.Manifest.ParentSnapshotID != snap3.ID {
+		t.Errorf("expected parent %s, got %s (snap1=%s)",
+			snap3.ID, snap4.Manifest.ParentSnapshotID, snap1.ID)
+	}
+}
+
+// TestDataset_Write_ColdStart_CorruptPointer_FallsBackToScan verifies that
+// a new Dataset instance (cold start) with a corrupt pointer (references
+// nonexistent snapshot) correctly falls back to scan.
+func TestDataset_Write_ColdStart_CorruptPointer_FallsBackToScan(t *testing.T) {
+	mem := NewMemory()
+
+	// Process A: write 2 snapshots.
+	dsA, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dsA.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap2, err := dsA.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the pointer to reference a nonexistent snapshot.
+	pointerPath := "datasets/test-ds/latest"
+	if err := mem.Delete(t.Context(), pointerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(t.Context(), pointerPath, bytes.NewReader([]byte("nonexistent-snap-id"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Process B: cold start with corrupt pointer.
+	dsB, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap3, err := dsB.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if err != nil {
+		t.Fatalf("cold-start write with corrupt pointer should succeed: %v", err)
+	}
+
+	// snap3 must have snap2 as parent (from scan fallback).
+	if snap3.Manifest.ParentSnapshotID != snap2.ID {
+		t.Errorf("expected parent %s (from scan), got %s", snap2.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}
+
+// TestDataset_Write_PointerWriteFailure_AbortsCommit verifies that when
+// writeLatestPointer fails, the commit is aborted and no manifest is written.
+// This is the core of the pointer-before-manifest protocol.
+func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
+	fs := newFaultStore(NewMemory())
+	factory := newFaultStoreFactory(fs)
+
+	ds, err := NewDataset("test-ds", factory, WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First write succeeds (creates snap-1).
+	snap1, err := ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject Put error only on the "latest" pointer path.
+	// writeLatestPointer does Delete + Put; the Put will fail.
+	fs.mu.Lock()
+	fs.putErr = errors.New("injected: pointer write failure")
+	fs.putErrMatch = "latest"
+	fs.mu.Unlock()
+
+	// Record Put calls before the failed write.
+	fs.Reset()
+
+	// Second write should fail because pointer write is required.
+	_, err = ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if err == nil {
+		t.Fatal("expected write to fail when pointer write fails")
+	}
+
+	// Verify no manifest was written (only Put calls should be for data file + pointer attempt).
+	putCalls := fs.PutCalls()
+	for _, p := range putCalls {
+		if strings.Contains(p, "manifest.json") {
+			t.Errorf("manifest should not be written when pointer fails, but saw Put(%s)", p)
+		}
+	}
+
+	// Clear the error and write again — should succeed with snap-1 as parent.
+	fs.mu.Lock()
+	fs.putErr = nil
+	fs.putErrMatch = ""
+	fs.mu.Unlock()
+
+	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if err != nil {
+		t.Fatalf("write after clearing error should succeed: %v", err)
+	}
+	if snap3.Manifest.ParentSnapshotID != snap1.ID {
+		t.Errorf("expected parent %s, got %s", snap1.ID, snap3.Manifest.ParentSnapshotID)
 	}
 }

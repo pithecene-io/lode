@@ -25,6 +25,10 @@ type volume struct {
 	store       Store
 	totalLength int64
 	checksum    Checksum
+
+	// lastSnapshotID guards against stale-but-existing pointers after a
+	// pointer write failure. See dataset.lastSnapshotID for rationale.
+	lastSnapshotID VolumeSnapshotID
 }
 
 // NewVolume creates a volume with a fixed total length.
@@ -77,6 +81,39 @@ func volumeManifestPath(id VolumeID, snapID VolumeSnapshotID) string {
 
 func volumeBlockPath(id VolumeID, offset, length int64) string {
 	return path.Join("volumes", string(id), "data", fmt.Sprintf("%d-%d.bin", offset, length))
+}
+
+func volumeLatestPointerPath(id VolumeID) string {
+	return path.Join("volumes", string(id), "latest")
+}
+
+// readLatestPointer reads the persistent latest-snapshot pointer file.
+// Returns the snapshot ID or ErrNotFound if the pointer does not exist.
+func (v *volume) readLatestPointer(ctx context.Context) (VolumeSnapshotID, error) {
+	rc, err := v.store.Get(ctx, volumeLatestPointerPath(v.id))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rc.Close() }()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("lode: failed to read volume latest pointer: %w", err)
+	}
+
+	id := VolumeSnapshotID(strings.TrimSpace(string(data)))
+	if id == "" {
+		return "", ErrNotFound
+	}
+	return id, nil
+}
+
+// writeLatestPointer persists the snapshot ID as the latest pointer.
+// Uses Delete+Put because Store.Put is no-overwrite.
+func (v *volume) writeLatestPointer(ctx context.Context, id VolumeSnapshotID) error {
+	pointerPath := volumeLatestPointerPath(v.id)
+	_ = v.store.Delete(ctx, pointerPath) // ignore error; path may not exist
+	return v.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
 
 // -----------------------------------------------------------------------------
@@ -135,16 +172,48 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, fmt.Errorf("lode: commit must include at least one new block")
 	}
 
-	// Get latest snapshot for parent tracking.
+	// Resolve parent via in-memory cache → pointer → scan.
+	// In-memory cache is authoritative within this process and guards against
+	// stale-but-existing pointers after a pointer write failure.
 	var parentID VolumeSnapshotID
 	var existingBlocks []BlockRef
-	latest, err := v.Latest(ctx)
-	if err != nil && !errors.Is(err, ErrNoSnapshots) {
-		return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", err)
+	parentResolved := false
+
+	if v.lastSnapshotID != "" {
+		snap, snapErr := v.Snapshot(ctx, v.lastSnapshotID)
+		if snapErr == nil {
+			parentID = snap.ID
+			existingBlocks = snap.Manifest.Blocks
+			parentResolved = true
+		} else if !errors.Is(snapErr, ErrNotFound) {
+			return nil, fmt.Errorf("lode: failed to load snapshot from cache: %w", snapErr)
+		}
+		// Cache references nonexistent snapshot — fall through to pointer/scan.
 	}
-	if latest != nil {
-		parentID = latest.ID
-		existingBlocks = latest.Manifest.Blocks
+	if !parentResolved {
+		latestID, pointerErr := v.readLatestPointer(ctx)
+		if pointerErr == nil {
+			snap, snapErr := v.Snapshot(ctx, latestID)
+			if snapErr == nil {
+				parentID = snap.ID
+				existingBlocks = snap.Manifest.Blocks
+				parentResolved = true
+			} else if !errors.Is(snapErr, ErrNotFound) {
+				return nil, fmt.Errorf("lode: failed to load snapshot from pointer: %w", snapErr)
+			}
+			// Pointer references nonexistent snapshot — fall through to scan.
+		}
+	}
+	if !parentResolved {
+		// No cache, no pointer, or stale: fall back to scan for backward compat.
+		latest, scanErr := v.latestByScan(ctx)
+		if scanErr != nil && !errors.Is(scanErr, ErrNoSnapshots) {
+			return nil, fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
+		}
+		if latest != nil {
+			parentID = latest.ID
+			existingBlocks = latest.Manifest.Blocks
+		}
 	}
 
 	// Validate all new blocks have required fields, conform to fixed layout, and are within bounds.
@@ -180,10 +249,10 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, fmt.Errorf("lode: commit must include at least one new block (all provided blocks already committed)")
 	}
 
-	// Build cumulative block set.
-	cumulativeBlocks := make([]BlockRef, 0, len(existingBlocks)+len(blocks))
-	cumulativeBlocks = append(cumulativeBlocks, existingBlocks...)
-	cumulativeBlocks = append(cumulativeBlocks, blocks...)
+	// Build cumulative block set, sorted by offset for O(log B) lookups.
+	// existingBlocks are sorted (guaranteed by prior commits). Sort only
+	// the new blocks and merge for O(N + K log K) instead of O((N+K) log(N+K)).
+	cumulativeBlocks := mergeBlocks(existingBlocks, blocks)
 
 	// Validate no overlaps in the full cumulative set.
 	if err := validateNoOverlaps(cumulativeBlocks); err != nil {
@@ -215,10 +284,19 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, fmt.Errorf("lode: failed to marshal volume manifest: %w", err)
 	}
 
+	// Pointer must be written before manifest to prevent stale-but-existing
+	// pointers on cold start. If this fails, no manifest is written and the
+	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+	// harmless (Exists check falls through to scan on the next cold start).
+	if err := v.writeLatestPointer(ctx, snapshotID); err != nil {
+		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	}
+
 	manifestPath := volumeManifestPath(v.id, snapshotID)
 	if err := v.store.Put(ctx, manifestPath, bytes.NewReader(manifestData)); err != nil {
 		return nil, fmt.Errorf("lode: failed to write volume manifest: %w", err)
 	}
+	v.lastSnapshotID = snapshotID
 
 	return &VolumeSnapshot{
 		ID:       snapshotID,
@@ -226,20 +304,58 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 	}, nil
 }
 
+// mergeBlocks merges two block slices into a single sorted-by-offset result.
+// sorted must already be in ascending Offset order (from a prior commit).
+// unsorted is sorted first, then the two are merged in O(N + K log K).
+func mergeBlocks(sorted, unsorted []BlockRef) []BlockRef {
+	if len(unsorted) == 0 {
+		out := make([]BlockRef, len(sorted))
+		copy(out, sorted)
+		return out
+	}
+
+	// Sort new blocks (K is small — typically 1–10 blocks per commit).
+	newBlocks := make([]BlockRef, len(unsorted))
+	copy(newBlocks, unsorted)
+	sort.Slice(newBlocks, func(i, j int) bool {
+		return newBlocks[i].Offset < newBlocks[j].Offset
+	})
+
+	// Merge two sorted slices.
+	result := make([]BlockRef, 0, len(sorted)+len(newBlocks))
+	i, j := 0, 0
+	for i < len(sorted) && j < len(newBlocks) {
+		if sorted[i].Offset <= newBlocks[j].Offset {
+			result = append(result, sorted[i])
+			i++
+		} else {
+			result = append(result, newBlocks[j])
+			j++
+		}
+	}
+	result = append(result, sorted[i:]...)
+	result = append(result, newBlocks[j:]...)
+	return result
+}
+
 // validateNoOverlaps checks that blocks do not overlap in the cumulative set.
+// Blocks are expected to be sorted by Offset (Commit sorts before calling).
+// For backward compat, falls back to a defensive copy-and-sort if needed.
 func validateNoOverlaps(blocks []BlockRef) error {
 	if len(blocks) <= 1 {
 		return nil
 	}
 
-	sorted := make([]BlockRef, len(blocks))
-	copy(sorted, blocks)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Offset != sorted[j].Offset {
+	sorted := blocks
+	if !sort.SliceIsSorted(sorted, func(i, j int) bool {
+		return sorted[i].Offset < sorted[j].Offset
+	}) {
+		sorted = make([]BlockRef, len(blocks))
+		copy(sorted, blocks)
+		sort.Slice(sorted, func(i, j int) bool {
 			return sorted[i].Offset < sorted[j].Offset
-		}
-		return sorted[i].Length < sorted[j].Length
-	})
+		})
+	}
 
 	for i := 1; i < len(sorted); i++ {
 		// Overflow-safe: equivalent to sorted[i-1].Offset + sorted[i-1].Length > sorted[i].Offset.
@@ -305,22 +421,39 @@ func (v *volume) ReadAt(ctx context.Context, snapshotID VolumeSnapshotID, offset
 
 // findCoveringBlocks returns the blocks that fully cover [offset, offset+length).
 // Returns ErrRangeMissing if any sub-range is not covered.
+//
+// Blocks are expected to be sorted by Offset (guaranteed for manifests written
+// after the sorted-commit fix). Uses binary search for O(log B + R) where R is
+// the number of covering blocks. For backward compat with unsorted manifests,
+// falls back to a defensive copy-and-sort.
 func findCoveringBlocks(blocks []BlockRef, offset, length int64) ([]BlockRef, error) {
 	requestEnd := offset + length
 
-	// Filter blocks that intersect the requested range.
-	var relevant []BlockRef
-	for _, b := range blocks {
-		blockEnd := b.Offset + b.Length
-		if b.Offset < requestEnd && blockEnd > offset {
-			relevant = append(relevant, b)
-		}
+	// Defensive: sort a copy if blocks are not already sorted (backward compat).
+	sorted := blocks
+	if !sort.SliceIsSorted(sorted, func(i, j int) bool {
+		return sorted[i].Offset < sorted[j].Offset
+	}) {
+		sorted = make([]BlockRef, len(blocks))
+		copy(sorted, blocks)
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Offset < sorted[j].Offset
+		})
 	}
 
-	// Sort by offset.
-	sort.Slice(relevant, func(i, j int) bool {
-		return relevant[i].Offset < relevant[j].Offset
+	// Binary search: find first block whose end exceeds the requested offset.
+	start := sort.Search(len(sorted), func(i int) bool {
+		return sorted[i].Offset+sorted[i].Length > offset
 	})
+
+	// Collect relevant blocks (walk forward from start).
+	var relevant []BlockRef
+	for i := start; i < len(sorted); i++ {
+		if sorted[i].Offset >= requestEnd {
+			break
+		}
+		relevant = append(relevant, sorted[i])
+	}
 
 	// Verify contiguous coverage from offset to requestEnd.
 	cursor := offset
@@ -342,14 +475,58 @@ func findCoveringBlocks(blocks []BlockRef, offset, length int64) ([]BlockRef, er
 
 // Latest returns the most recently committed snapshot.
 func (v *volume) Latest(ctx context.Context) (*VolumeSnapshot, error) {
-	snapshots, err := v.Snapshots(ctx)
+	// Pointer-first: O(1) via persistent latest file.
+	id, err := v.readLatestPointer(ctx)
+	if err == nil {
+		snap, snapErr := v.Snapshot(ctx, id)
+		if snapErr == nil {
+			return snap, nil
+		}
+		// Pointer references a nonexistent snapshot — fall through to scan.
+	}
+
+	return v.latestByScan(ctx)
+}
+
+// latestByScan finds the latest snapshot via a single List + single Get.
+// Snapshot IDs are nanosecond timestamps, so the lexicographically largest
+// manifest path contains the latest snapshot.
+func (v *volume) latestByScan(ctx context.Context) (*VolumeSnapshot, error) {
+	prefix := volumeSnapshotsPrefix(v.id)
+	paths, err := v.store.List(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("lode: failed to list volume snapshots: %w", err)
+	}
+
+	// Find the lexicographically largest snapshot ID from manifest paths.
+	var latestID VolumeSnapshotID
+	var latestPath string
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "manifest.json") {
+			continue
+		}
+		id := parseVolumeSnapshotID(p)
+		if id == "" {
+			continue
+		}
+		if string(id) > string(latestID) {
+			latestID = id
+			latestPath = p
+		}
+	}
+	if latestID == "" {
+		return nil, ErrNoSnapshots
+	}
+
+	snap, err := v.loadSnapshot(ctx, latestID, latestPath)
 	if err != nil {
 		return nil, err
 	}
-	if len(snapshots) == 0 {
-		return nil, ErrNoSnapshots
-	}
-	return snapshots[len(snapshots)-1], nil
+
+	// Self-heal: write the pointer so subsequent calls are O(1).
+	_ = v.writeLatestPointer(ctx, latestID)
+
+	return snap, nil
 }
 
 // Snapshots lists all committed snapshots sorted by creation time.

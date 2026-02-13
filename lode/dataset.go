@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -188,8 +189,12 @@ type dataset struct {
 	codec      Codec
 	checksum   Checksum
 
-	mu             sync.Mutex
-	lastSnapshotID DatasetSnapshotID // cached after successful write
+	// lastSnapshotID is set after each successful commit. It guards against
+	// stale-but-existing pointers: if the pointer write fails after a commit,
+	// the pointer still references an older (existing) snapshot. Without this
+	// field, the next write would trust the stale pointer and break linear
+	// history. Single-writer constraint means no mutex is required.
+	lastSnapshotID DatasetSnapshotID
 }
 
 // NewDataset creates a dataset with documented defaults.
@@ -254,20 +259,33 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
-// resolveParentID returns the cached parent snapshot ID when available,
-// falling back to Latest() on cold start. This avoids an O(n) store scan
-// on every write after the first.
+// resolveParentID resolves the most recent snapshot ID for parent linking.
+//
+// Resolution order:
+//  1. In-memory cache (always correct within a process; guards against stale pointers)
+//  2. Persistent pointer + Exists verification (O(1) cold start)
+//  3. Full scan fallback (backward compat for pre-pointer datasets)
 func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error) {
-	d.mu.Lock()
-	cached := d.lastSnapshotID
-	d.mu.Unlock()
-
-	if cached != "" {
-		return cached, nil
+	// In-memory cache is authoritative within this process.
+	// It guards against stale-but-existing pointers after a pointer write failure.
+	if d.lastSnapshotID != "" {
+		return d.lastSnapshotID, nil
 	}
 
-	// Cold start: fall back to Latest()
-	latest, err := d.Latest(ctx)
+	id, err := d.readLatestPointer(ctx)
+	if err == nil {
+		// Verify the referenced snapshot exists (1 Exists call).
+		// A corrupt/stale pointer must not produce a nonexistent parent.
+		manifestPath := d.layout.manifestPath(d.id, id)
+		exists, existsErr := d.store.Exists(ctx, manifestPath)
+		if existsErr == nil && exists {
+			return id, nil
+		}
+		// Pointer is stale or corrupt — fall through to scan.
+	}
+
+	// Pointer missing or stale: fall back to scan for backward compat.
+	latest, err := d.latestByScan(ctx)
 	if err != nil {
 		if errors.Is(err, ErrNoSnapshots) {
 			return "", nil
@@ -277,12 +295,34 @@ func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error
 	return latest.ID, nil
 }
 
-// cacheSnapshotID stores the most recently written snapshot ID so that
-// subsequent writes can skip the Latest() store scan.
-func (d *dataset) cacheSnapshotID(id DatasetSnapshotID) {
-	d.mu.Lock()
-	d.lastSnapshotID = id
-	d.mu.Unlock()
+// readLatestPointer reads the persistent latest-snapshot pointer file.
+// Returns the snapshot ID or ErrNotFound if the pointer does not exist.
+func (d *dataset) readLatestPointer(ctx context.Context) (DatasetSnapshotID, error) {
+	pointerPath := d.layout.latestPointerPath(d.id)
+	rc, err := d.store.Get(ctx, pointerPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rc.Close() }()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("lode: failed to read latest pointer: %w", err)
+	}
+
+	id := DatasetSnapshotID(strings.TrimSpace(string(data)))
+	if id == "" {
+		return "", ErrNotFound
+	}
+	return id, nil
+}
+
+// writeLatestPointer persists the snapshot ID as the latest pointer.
+// Uses Delete+Put because Store.Put is no-overwrite.
+func (d *dataset) writeLatestPointer(ctx context.Context, id DatasetSnapshotID) error {
+	pointerPath := d.layout.latestPointerPath(d.id)
+	_ = d.store.Delete(ctx, pointerPath) // ignore error; path may not exist
+	return d.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
 
 func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*DatasetSnapshot, error) {
@@ -367,11 +407,18 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		manifest.ChecksumAlgorithm = d.checksum.Name()
 	}
 
+	// Pointer must be written before manifest to prevent stale-but-existing
+	// pointers on cold start. If this fails, no manifest is written and the
+	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+	// harmless (Exists check falls through to scan on the next cold start).
+	if err := d.writeLatestPointer(ctx, snapshotID); err != nil {
+		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	}
+
 	if err := d.writeManifests(ctx, snapshotID, manifest, partitionKeys); err != nil {
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
-
-	d.cacheSnapshotID(snapshotID)
+	d.lastSnapshotID = snapshotID
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -469,14 +516,58 @@ func (d *dataset) Read(ctx context.Context, id DatasetSnapshotID) ([]any, error)
 }
 
 func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
-	snapshots, err := d.Snapshots(ctx)
-	if err != nil {
-		return nil, err
+	// Pointer-first: O(1) via persistent latest file.
+	id, err := d.readLatestPointer(ctx)
+	if err == nil {
+		snap, snapErr := d.Snapshot(ctx, id)
+		if snapErr == nil {
+			return snap, nil
+		}
+		// Pointer references a nonexistent snapshot — fall through to scan.
 	}
-	if len(snapshots) == 0 {
+
+	return d.latestByScan(ctx)
+}
+
+// latestByScan finds the latest snapshot via a single List + single Get.
+// Snapshot IDs are nanosecond timestamps, so the lexicographically largest
+// manifest path contains the latest snapshot.
+func (d *dataset) latestByScan(ctx context.Context) (*DatasetSnapshot, error) {
+	prefix := d.layout.segmentsPrefix(d.id)
+	paths, err := d.store.List(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("lode: failed to list snapshots: %w", err)
+	}
+
+	// Find the lexicographically largest snapshot ID from manifest paths.
+	var latestID DatasetSnapshotID
+	var latestPath string
+	for _, p := range paths {
+		if !d.layout.isManifest(p) {
+			continue
+		}
+		id := d.layout.parseSegmentID(p)
+		if id == "" {
+			continue
+		}
+		if string(id) > string(latestID) {
+			latestID = id
+			latestPath = p
+		}
+	}
+	if latestID == "" {
 		return nil, ErrNoSnapshots
 	}
-	return snapshots[len(snapshots)-1], nil
+
+	snap, err := d.loadSnapshotFromPath(ctx, latestID, latestPath)
+	if err != nil {
+		return nil, fmt.Errorf("lode: failed to load latest snapshot: %w", err)
+	}
+
+	// Self-heal: write the pointer so subsequent calls are O(1).
+	_ = d.writeLatestPointer(ctx, latestID)
+
+	return snap, nil
 }
 
 func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWriter, error) {
@@ -710,12 +801,20 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		manifest.ChecksumAlgorithm = d.checksum.Name()
 	}
 
+	// Pointer must be written before manifest to prevent stale-but-existing
+	// pointers on cold start. If this fails, no manifest is written and the
+	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+	// harmless (Exists check falls through to scan on the next cold start).
+	if err := d.writeLatestPointer(ctx, snapshotID); err != nil {
+		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
+		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	}
+
 	if err := d.writeManifests(ctx, snapshotID, manifest, []string{""}); err != nil {
 		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
-
-	d.cacheSnapshotID(snapshotID)
+	d.lastSnapshotID = snapshotID
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -889,6 +988,10 @@ func (d *dataset) writeManifests(ctx context.Context, snapshotID DatasetSnapshot
 			firstPartPath := d.layout.manifestPathInPartition(d.id, snapshotID, firstNonEmptyPart)
 
 			if firstPartPath != canonicalPath {
+				// Always write canonical manifest for O(1) Snapshot(ctx, id) lookup.
+				pathSet[canonicalPath] = true
+				manifestPaths = append(manifestPaths, canonicalPath)
+
 				for _, pk := range partitionKeys {
 					if pk != "" {
 						partPath := d.layout.manifestPathInPartition(d.id, snapshotID, pk)
@@ -1123,12 +1226,20 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 		manifest.ChecksumAlgorithm = sw.ds.checksum.Name()
 	}
 
+	// Pointer must be written before manifest to prevent stale-but-existing
+	// pointers on cold start. If this fails, no manifest is written and the
+	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+	// harmless (Exists check falls through to scan on the next cold start).
+	if err := sw.ds.writeLatestPointer(ctx, sw.snapshotID); err != nil {
+		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
+		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	}
+
 	if err := sw.ds.writeManifests(ctx, sw.snapshotID, manifest, []string{""}); err != nil {
 		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
-
-	sw.ds.cacheSnapshotID(sw.snapshotID)
+	sw.ds.lastSnapshotID = sw.snapshotID
 
 	// Mark committed only after full success
 	sw.mu.Lock()
