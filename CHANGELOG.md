@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.3] - 2026-02-12
+
+### Fixed
+
+- **O(N) cold-start `Latest()` on remote stores**: `Latest()` previously downloaded every manifest in the dataset to find the most recent snapshot. On Cloudflare R2 with ~5,800 manifests this took ~30 minutes. A persistent `latest` pointer file now provides O(1) resolution: 1 Get (pointer) + 1 Get (manifest). ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#118](https://github.com/pithecene-io/lode/issues/118), [#119](https://github.com/pithecene-io/lode/issues/119))
+- **O(N) `Snapshot(ctx, id)` on HiveLayout**: `Snapshot()` scanned all partition directories to find a manifest matching the given ID. A canonical manifest is now written at the non-partitioned path for O(1) lookup, with scan fallback for pre-v0.7.3 data. ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#121](https://github.com/pithecene-io/lode/issues/121))
+- **O(N) `latestByScan` downloaded ALL manifests**: Even the scan fallback path loaded every manifest. It now sorts paths lexicographically and loads only the last one: 1 List + 1 Get. ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#122](https://github.com/pithecene-io/lode/issues/122))
+- **O(B) `Volume.ReadAt` block lookup**: `findCoveringBlocks` used linear scan over all blocks. Now uses binary search on sorted blocks for O(log B) start-index lookup. Blocks are sorted at commit time via a merge-insert algorithm. ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#123](https://github.com/pithecene-io/lode/issues/123))
+- **O(N) `ListManifests` / `ListPartitions`**: Both methods downloaded every manifest to extract IDs and partition paths. Snapshot IDs and partition paths are now extracted from store listing paths. ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#124](https://github.com/pithecene-io/lode/issues/124), [#125](https://github.com/pithecene-io/lode/issues/125))
+- **O(N log N) `validateNoOverlaps` on pre-sorted blocks**: Skips redundant sort when blocks are already sorted (the common case after `mergeBlocks`). ([#127](https://github.com/pithecene-io/lode/pull/127), closes [#126](https://github.com/pithecene-io/lode/issues/126))
+
+### Added
+
+- **Persistent latest pointer**: Datasets and Volumes write a `latest` file containing the most recent snapshot ID. Cold-start `Latest()` reads this pointer (1 Get) instead of scanning all manifests. The pointer is written before the manifest (pointer-before-manifest protocol) to ensure cross-process correctness.
+- **Pointer-before-manifest protocol**: Pointer write failure aborts the commit — no manifest is written. A pointer ahead of reality is harmless (Exists verification falls through to scan). This eliminates stale-but-existing pointer bugs across process restarts.
+- **Canonical manifest for HiveLayout**: `Snapshot(ctx, id)` is now O(1) via a canonical manifest at the non-partitioned path, alongside the partition-specific copies.
+- **Binary search for Volume block lookup**: Blocks are stored sorted by offset in the manifest. `findCoveringBlocks` uses `sort.Search` for O(log B) lookup instead of O(B) linear scan.
+- **Merge-insert for cumulative blocks**: `mergeBlocks` merges pre-sorted existing blocks with new blocks in O(N + K log K) instead of re-sorting the entire set.
+- **Benchmarks**: `BenchmarkFindCoveringBlocks` (O(log B) at 10–10K blocks), `BenchmarkMergeBlocks` (O(N + K log K) at 10–10K existing blocks)
+
+### Upgrade Notes
+
+- **No API changes**: All improvements are internal and transparent
+- **No migration required**: Pre-v0.7.3 datasets and volumes work without modification
+- **Automatic self-healing**: On first write after upgrade, the `latest` pointer is created. On first `Snapshot(ctx, id)` for HiveLayout, scan fallback works for pre-v0.7.3 data; the canonical manifest is created on the next write.
+- **Safe to upgrade from v0.7.2**
+
+### References
+
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md) — Benchmark inventory and results
+- [docs/contracts/CONTRACT_TEST_MATRIX.md](docs/contracts/CONTRACT_TEST_MATRIX.md) — Performance test coverage
+
+---
+
 ## [0.7.2] - 2026-02-09
 
 ### Changed
@@ -346,7 +380,8 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/pithecene-io/lode/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/pithecene-io/lode/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/pithecene-io/lode/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pithecene-io/lode/compare/v0.6.0...v0.7.0
