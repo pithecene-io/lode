@@ -161,7 +161,7 @@ func (r *reader) ListPartitions(ctx context.Context, dataset DatasetID, opts Par
 	}
 
 	if !hasAnyManifest {
-		return nil, nil
+		return nil, ErrNotFound
 	}
 
 	return partitions, nil
