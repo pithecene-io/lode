@@ -477,21 +477,27 @@ manifest references them.
 
 *Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Read-after-write Visibility, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Commit Semantics*
 
-### Single-Writer Requirement
+### Concurrency and CAS
 
-**Lode does not implement concurrent multi-writer conflict resolution (v0.6).**
+**When the store implements `ConditionalWriter`, Lode detects concurrent
+commits and returns `ErrSnapshotConflict`.**
 
-Callers MUST ensure at most one writer is active per dataset or volume at any
-time. Concurrent writes from multiple processes may produce inconsistent
-history (e.g., two snapshots with the same parent).
+- Multiple writers MAY safely write to the same dataset or volume without
+  external coordination when using a CAS-capable store.
+- On conflict, callers re-read `Latest()`, merge or rebuild state, and re-commit.
+  Data files are immutable and already persisted — retry cost is one manifest
+  write plus one pointer swap.
+- CAS is always-on when available; no configuration required.
 
-External coordination (locks, queues, leader election) is the caller's responsibility.
+**When the store does not implement `ConditionalWriter`**, callers MUST ensure
+at most one writer is active per dataset or volume at any time (single-writer
+requirement). External coordination (locks, queues, leader election) is the
+caller's responsibility.
 
 See the concurrency matrices in `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
-for a full breakdown of supported patterns, unsafe patterns, and future direction
-(CAS-based optimistic concurrency, parallel staging transaction API).
+for a full breakdown of supported patterns.
 
-*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency, [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md) §Concurrency*
+*Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency, [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md) §Concurrency, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §ConditionalWriter Capability*
 
 ### Large Upload Guarantees
 
@@ -574,6 +580,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
 | `ErrRangeMissing` | Volume ReadAt range not fully committed | Volume |
 | `ErrOverlappingBlocks` | Committed blocks overlap in cumulative manifest | Volume |
+| `ErrSnapshotConflict` | Another writer committed since parent was resolved (CAS) | Dataset, Volume |
 | `ErrSchemaViolation` | Record doesn't conform to Parquet schema | Parquet Codec |
 | `ErrInvalidFormat` | Malformed or corrupted Parquet file | Parquet Codec |
 
@@ -582,6 +589,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 **Retry-safe:**
 - Storage I/O errors (network, timeout) — may retry
 - `ErrNotFound` during race — may retry if expecting eventual consistency
+- `ErrSnapshotConflict` — re-read `Latest()`, merge state, re-commit
 
 **Non-retry (configuration/logic error):**
 - `ErrDatasetsNotModeled` — reconfigure with different layout

@@ -242,11 +242,37 @@ See [CONTRACT_VOLUME.md](CONTRACT_VOLUME.md) for full Volume semantics.
 
 ---
 
+### 10. Concurrency Errors
+
+These indicate a conflict detected during commit via optimistic concurrency.
+
+| Error | Source | Meaning |
+|-------|--------|---------|
+| `lode.ErrSnapshotConflict` | Dataset.Write, Dataset.StreamWrite, Dataset.StreamWriteRecords, Volume.Commit | Another writer committed since parent was resolved |
+
+**ErrSnapshotConflict Behavior**:
+- Returned only when the store implements `ConditionalWriter`.
+- The commit's expected parent snapshot ID does not match the current
+  latest pointer value — another writer committed in between.
+- Data files are immutable and already persisted; retry cost is one
+  manifest write plus one pointer swap.
+
+**Retry Guidance**:
+1. Re-read `Latest()` to get the current head.
+2. Merge or rebuild state against the new head.
+3. Re-commit.
+
+When the store does not implement `ConditionalWriter`, this error is
+never returned; callers must ensure single-writer semantics as before.
+
+---
+
 ## Error Handling Guidelines
 
 ### Retry-Safe Errors
 - Storage I/O errors (network, timeout) — may retry.
 - `ErrNotFound` during race — may retry if expecting eventual consistency.
+- `ErrSnapshotConflict` — re-read `Latest()`, merge state, re-commit.
 
 ### Non-Retry Errors
 - `ErrDatasetsNotModeled` — reconfigure with different layout.

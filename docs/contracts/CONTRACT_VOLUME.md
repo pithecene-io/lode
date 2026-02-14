@@ -241,6 +241,8 @@ Volume accepts a minimal set of options:
 - Range reads MUST NOT return partial data without error.
 - `Latest` on empty volume MUST return `ErrNoSnapshots`.
 - `Snapshot` for unknown ID MUST return `ErrNotFound`.
+- Stale parent at Commit MUST return `ErrSnapshotConflict` when the store
+  implements `ConditionalWriter`.
 
 ---
 
@@ -254,20 +256,30 @@ Snapshot history for a Volume is linear.
 |---------|---------|--------|---------|-------------|--------|
 | Single writer | 1 process | Non-overlapping blocks | Linear (guaranteed) | ✅ Supported | — |
 | Multi-process, serialized | N processes, external coordination | Non-overlapping blocks | Linear (caller-enforced) | ✅ Supported (caller owns coordination) | CAS built into Lode |
-| Multi-process, uncoordinated | N processes, no coordination | Non-overlapping blocks | **May fork** (undefined) | ⚠️ Unsafe | CAS + retry merges naturally |
+| Multi-process, uncoordinated | N processes, no coordination | Non-overlapping blocks | Linear (CAS-enforced) | ✅ Safe (CAS) | — |
 
-**v0.6 behavior:**
-- Single-writer semantics per volume apply unless callers provide external
-  coordination.
-- Concurrent uncoordinated writers MAY produce conflicting parent relationships
-  or overlapping intent; Lode does not resolve these conflicts automatically.
+### Optimistic Concurrency (CAS)
 
-**Future direction (not v0.6):**
-- Optimistic concurrency (CAS): Commit detects stale parent and returns a
-  conflict error. Callers retry by re-reading Latest(), merging their new
-  blocks with the updated cumulative manifest, and re-committing.
-- Volume's non-overlapping byte blocks merge naturally on retry, making CAS
-  particularly well-suited for this paradigm.
+When the storage adapter implements `ConditionalWriter`, Volume detects
+concurrent commits and returns `ErrSnapshotConflict`.
+
+The mechanism is identical to Dataset CAS (see `CONTRACT_WRITE_API.md`
+§Optimistic Concurrency):
+- Commit captures expected parent at resolve time.
+- Pointer update uses `CompareAndSwap` when available.
+- Stale parent → `ErrSnapshotConflict`.
+- Fallback to Delete+Put when `ConditionalWriter` is not implemented.
+
+**Volume CAS retry merges naturally:**
+- Non-overlapping blocks from concurrent writers can be merged on retry
+  without conflict: re-read `Latest()`, union new blocks with the updated
+  cumulative manifest, re-commit.
+- Overlapping blocks remain invalid regardless of CAS (see `ErrOverlappingBlocks`).
+
+**Single-writer compatibility:**
+- Single-writer workflows are unaffected.
+- External coordination remains valid but is no longer required when
+  using a CAS-capable store.
 
 ---
 

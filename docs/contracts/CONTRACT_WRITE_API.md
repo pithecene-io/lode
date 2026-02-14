@@ -18,7 +18,7 @@ It is authoritative for any `Dataset` implementation.
 
 - Query execution or filtering.
 - Background compaction.
-- Concurrent multi-writer conflict resolution.
+- Distributed coordination, consensus, or lock management.
 
 ---
 
@@ -111,33 +111,44 @@ Snapshot history for a Dataset is linear.
 |---------|---------|-----------|---------|-------------|--------|
 | Single writer | 1 process | 1 per Write | Linear (guaranteed) | ✅ Supported | — |
 | Multi-process, serialized | N processes, external coordination | N (one per writer) | Linear (caller-enforced) | ✅ Supported (caller owns coordination) | CAS built into Lode |
-| Multi-process, uncoordinated | N processes, no coordination | N (one per writer) | **May fork** (undefined) | ⚠️ Unsafe | CAS eliminates forking |
+| Multi-process, uncoordinated | N processes, no coordination | N (one per writer) | Linear (CAS-enforced) | ✅ Safe (CAS) | — |
 | Parallel staging, single commit | 1 process, N goroutines | 1 (all shards merged) | Linear (guaranteed) | ❌ Not available | Transaction API |
 
-### v0.6 Behavior
+### Optimistic Concurrency (CAS)
 
-Lode does not implement concurrent multi-writer conflict resolution.
+When the storage adapter implements `ConditionalWriter`, Lode detects
+concurrent commits and returns `ErrSnapshotConflict`.
 
-**Single writer or external coordination required.**
+**Mechanism:**
+- At commit time, the writer captures the expected parent snapshot ID.
+- When writing the latest pointer, if the store implements `ConditionalWriter`,
+  the commit uses `CompareAndSwap` instead of Delete+Put.
+- If the pointer content differs from the expected parent (another writer
+  committed since `Latest()` was read), the commit returns `ErrSnapshotConflict`.
+- If the store does not implement `ConditionalWriter`, the current Delete+Put
+  behavior applies and single-writer semantics remain the caller's responsibility.
 
-- Concurrent writes from multiple processes to the same dataset may produce
-  inconsistent history (e.g., two snapshots with the same parent).
-- Callers MUST ensure at most one writer is active per dataset at any time.
-- External coordination (locks, queues, leader election) is the caller's
-  responsibility.
+**Retry pattern:**
+1. Receive `ErrSnapshotConflict`.
+2. Re-read `Latest()` to get the current head.
+3. Merge or rebuild state against the new head.
+4. Re-commit.
 
-Lode guarantees safety within a single writer but does not detect or resolve
-conflicts between multiple concurrent writers.
+Data files are immutable and already persisted — retry cost is one manifest
+write plus one pointer swap.
 
-### Future Direction (not v0.6)
+**Activation:**
+- Always-on when the adapter implements `ConditionalWriter`.
+- Silent fallback to Delete+Put when it does not.
+- No configuration required.
 
-**Multi-process CAS (optimistic concurrency):**
-- Commit detects stale parent (another writer committed since Latest was read)
-  and returns a conflict error.
-- Callers retry: re-read Latest, re-write manifest with correct parent.
-  Data files are already written (immutable orphans) — retry cost is one
-  manifest write.
-- Each writer produces its own snapshot; history remains linear via CAS.
+**Single-writer compatibility:**
+- Single-writer workflows are unaffected. CAS succeeds on every commit
+  when no concurrent writer is active.
+- External coordination remains valid but is no longer required when
+  using a CAS-capable store.
+
+### Future Direction
 
 **Parallel staging (transaction API):**
 - Multiple goroutines stage data files concurrently within a single
@@ -175,6 +186,8 @@ Implementations MUST use the following error sentinels where applicable:
 - `ErrCodecNotStreamable` when `StreamWriteRecords` codec lacks streaming support
 - `ErrNilIterator` when `StreamWriteRecords` is called with a nil iterator
 - `ErrPartitioningNotSupported` when `StreamWriteRecords` is used with non-noop partitioning
+- `ErrSnapshotConflict` when another writer committed since parent was resolved
+  (only when store implements `ConditionalWriter`)
 
 Streaming-specific error taxonomy and handling guidance are defined in
 `CONTRACT_ERRORS.md`.
@@ -201,6 +214,10 @@ Parent resolution MUST NOT use List when a valid pointer exists.
 | `Write` (P partitions) | 2P + 3 | O(R + encoded) |
 | `StreamWrite` | 4 fixed | O(1) streaming |
 | `StreamWriteRecords` | 4 fixed | O(1) streaming |
+
+When the store implements `ConditionalWriter`, each commit adds **+1 read**
+(the `CompareAndSwap` operation reads the current pointer before conditional write).
+This is constant overhead per commit, not per record or per file.
 
 Hot-path writes MUST NOT trigger Store.List.
 
