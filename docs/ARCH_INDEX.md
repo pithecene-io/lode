@@ -15,6 +15,8 @@ Do not update for internal refactors.
 ## Root
 
 - `AGENTS.md` — development guardrails and agent constraints
+- `CHANGELOG.md` — release history
+- `CLAUDE.md` — repository constitution and AI governance
 - `Taskfile.yaml` — task orchestration and developer workflows
 - `go.mod` — Go module definition
 - `mise.toml` — toolchain and task runner configuration
@@ -43,6 +45,8 @@ Plans, contracts, and research notes. Contracts define **system behavior**.
 - `contracts/CONTRACT_EXAMPLES.md` — example and callsite conventions
 - `contracts/CONTRACT_VOLUME.md` — contract for Volume persistence model
 - `contracts/CONTRACT_COMPLEXITY.md` — complexity bounds for all public operations
+- `BENCHMARKS.md` — benchmark results and performance baselines
+- `SNIPPET_POLICY.md` — markdown code fence conventions
 
 Contracts are authoritative over code.
 
@@ -77,6 +81,32 @@ Example usage and integration references.
 - `parquet/` — Parquet codec with schema-typed fields
 - `volume_sparse/` — sparse Volume: stage, commit, read with gaps
 - `s3_experimental/` — S3 adapter example (name retained for continuity)
+
+---
+
+## scripts/
+
+Build and maintenance scripts.
+
+- `verify-snippets.sh` — validates runnable code fences in documentation
+
+---
+
+## ai/
+
+AI governance: repo-local skill definitions.
+
+- `skills/repo-convention-enforcer/v1/` — structural convention validator (SKILL.md format)
+
+---
+
+## .github/
+
+CI/CD workflows (GitHub Actions).
+
+- `workflows/ci.yml` — continuous integration
+- `workflows/nightly.yml` — nightly checks
+- `workflows/release.yml` — release automation
 
 ---
 
