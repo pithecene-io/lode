@@ -63,7 +63,7 @@ Lode is built around a small set of invariants:
 **Shared invariants:**
 - **Manifest presence is the commit signal** — a snapshot is visible only after its manifest is persisted
 - **Metadata is explicit, persisted, and self-describing (never inferred)**
-- **Single-writer semantics required** — Lode does not resolve concurrent writer conflicts
+- **Safe concurrent writes** — CAS-capable stores detect conflicts automatically; others require single-writer discipline
 
 If you know the snapshot ID, you know exactly what data you are reading.
 
@@ -187,7 +187,7 @@ What Lode explicitly does NOT provide:
 
 | Non-goal | Why |
 |----------|-----|
-| Multi-writer conflict resolution | Requires distributed coordination; use external locks |
+| Distributed coordination | Lode detects conflicts (CAS) but does not provide locks, consensus, or leader election |
 | Query execution | Lode structures data; query engines consume it |
 | Background compaction | No implicit mutations; callers control lifecycle |
 | Automatic cleanup | Partial objects from failed writes may remain |
@@ -202,7 +202,7 @@ Common pitfalls when using Lode:
 
 - **Metadata defaults to empty** — `nil` metadata is coalesced to `Metadata{}`; pass `nil` or `Metadata{}` for empty metadata.
 - **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
-- **Single-writer only** — Concurrent writers to the same dataset or volume may corrupt history.
+- **Concurrent writes need CAS-capable stores** — Without `ConditionalWriter`, concurrent writers may corrupt history. Built-in FS, Memory, and S3 adapters all support CAS.
 - **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
 - **StreamWriteRecords requires streaming codec** — Not all codecs support streaming.
 
@@ -301,6 +301,7 @@ This keeps Lode's core APIs explicit and predictable.
 | [`stream_write_records`](examples/stream_write_records) | Streaming record writes with iterator | `go run ./examples/stream_write_records` |
 | [`parquet`](examples/parquet) | Parquet codec with schema-typed fields | `go run ./examples/parquet` |
 | [`volume_sparse`](examples/volume_sparse) | Sparse Volume: stage, commit, read with gaps | `go run ./examples/volume_sparse` |
+| [`optimistic_concurrency`](examples/optimistic_concurrency) | CAS conflict detection and retry pattern | `go run ./examples/optimistic_concurrency` |
 | [`s3_experimental`](examples/s3_experimental) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3_experimental` |
 
 Each example is self-contained and runnable. See the example source for detailed comments.

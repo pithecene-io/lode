@@ -76,6 +76,7 @@ Example usage and integration references.
 - `stream_write_records/` — streaming record writes with iterator
 - `parquet/` — Parquet codec with schema-typed fields
 - `volume_sparse/` — sparse Volume: stage, commit, read with gaps
+- `optimistic_concurrency/` — CAS conflict detection and retry pattern
 - `s3_experimental/` — S3 adapter example (name retained for continuity)
 
 ---

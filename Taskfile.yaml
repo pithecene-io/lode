@@ -37,6 +37,7 @@ tasks:
       - go run ./examples/manifest_driven
       - go run ./examples/stream_write_records
       - go run ./examples/parquet
+      - go run ./examples/optimistic_concurrency
 
   snippets:
     desc: Verify runnable markdown snippets
