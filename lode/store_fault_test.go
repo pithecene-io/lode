@@ -52,6 +52,13 @@ type faultStore struct {
 	// Post-call hooks: called after operation completes (before returning)
 	afterPut    func(path string, err error)
 	afterDelete func(path string, err error)
+
+	// CAS fault injection (CompareAndSwap)
+	casErr      error
+	casErrMatch string
+	casCalls    []string
+	casBlock    chan struct{}
+	beforeCAS   func(path string)
 }
 
 // newFaultStore creates a fault-injection wrapper around the given store.
@@ -111,6 +118,34 @@ func (f *faultStore) SetAfterDelete(hook func(path string, err error)) {
 	f.afterDelete = hook
 }
 
+// SetCASError sets an error to be returned by CompareAndSwap calls.
+// If match is non-empty, error is only returned for paths containing match.
+func (f *faultStore) SetCASError(err error, match ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.casErr = err
+	if len(match) > 0 {
+		f.casErrMatch = match[0]
+	} else {
+		f.casErrMatch = ""
+	}
+}
+
+// SetCASBlock sets a channel that CompareAndSwap will block on before proceeding.
+// Close the channel to unblock.
+func (f *faultStore) SetCASBlock(ch chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.casBlock = ch
+}
+
+// SetBeforeCAS sets a hook called after recording but before blocking.
+func (f *faultStore) SetBeforeCAS(hook func(path string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeCAS = hook
+}
+
 // --- Call observation ---
 
 // PutCalls returns paths passed to Put.
@@ -141,6 +176,13 @@ func (f *faultStore) GetCalls() []string {
 	return append([]string(nil), f.getCalls...)
 }
 
+// CASCalls returns paths passed to CompareAndSwap.
+func (f *faultStore) CASCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.casCalls...)
+}
+
 // Reset clears all recorded calls.
 func (f *faultStore) Reset() {
 	f.mu.Lock()
@@ -150,6 +192,7 @@ func (f *faultStore) Reset() {
 	f.deleteCalls = nil
 	f.existsCalls = nil
 	f.listCalls = nil
+	f.casCalls = nil
 }
 
 // --- Store interface implementation ---
@@ -267,6 +310,36 @@ func (f *faultStore) ReadRange(ctx context.Context, path string, offset, length 
 
 func (f *faultStore) ReaderAt(ctx context.Context, path string) (io.ReaderAt, error) {
 	return f.inner.ReaderAt(ctx, path)
+}
+
+// CompareAndSwap forwards to the inner store's ConditionalWriter implementation
+// with full fault injection support (error injection, blocking, hooks).
+func (f *faultStore) CompareAndSwap(ctx context.Context, path, expected, replacement string) error {
+	f.mu.Lock()
+	injectedErr := f.casErr
+	errMatch := f.casErrMatch
+	block := f.casBlock
+	beforeHook := f.beforeCAS
+	f.casCalls = append(f.casCalls, path)
+	f.mu.Unlock()
+
+	if beforeHook != nil {
+		beforeHook(path)
+	}
+
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	if injectedErr != nil && (errMatch == "" || strings.Contains(path, errMatch)) {
+		return injectedErr
+	}
+
+	return f.inner.(ConditionalWriter).CompareAndSwap(ctx, path, expected, replacement)
 }
 
 // --- Factory helper ---

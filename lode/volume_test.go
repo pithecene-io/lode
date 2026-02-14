@@ -1864,13 +1864,11 @@ func TestVolume_Commit_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Inject Put error only on the "latest" pointer path.
-	fs.mu.Lock()
-	fs.putErr = errors.New("injected: pointer write failure")
-	fs.putErrMatch = "latest"
-	fs.mu.Unlock()
+	// Inject CAS error on the "latest" pointer path.
+	// writeLatestPointer uses CompareAndSwap when the store implements ConditionalWriter.
+	fs.SetCASError(errors.New("injected: pointer write failure"), "latest")
 
-	// Record Put calls before the failed commit.
+	// Record calls before the failed commit.
 	fs.Reset()
 
 	// Second commit should fail because pointer write is required.
@@ -1891,11 +1889,8 @@ func TestVolume_Commit_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		}
 	}
 
-	// Clear the error and commit again — should succeed with snap-1 as parent.
-	fs.mu.Lock()
-	fs.putErr = nil
-	fs.putErrMatch = ""
-	fs.mu.Unlock()
+	// Clear the CAS error and commit again — should succeed with snap-1 as parent.
+	fs.SetCASError(nil)
 
 	block2b, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2b")))
 	if err != nil {

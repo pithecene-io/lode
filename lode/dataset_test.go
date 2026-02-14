@@ -2846,14 +2846,11 @@ func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Inject Put error only on the "latest" pointer path.
-	// writeLatestPointer does Delete + Put; the Put will fail.
-	fs.mu.Lock()
-	fs.putErr = errors.New("injected: pointer write failure")
-	fs.putErrMatch = "latest"
-	fs.mu.Unlock()
+	// Inject CAS error on the "latest" pointer path.
+	// writeLatestPointer uses CompareAndSwap when the store implements ConditionalWriter.
+	fs.SetCASError(errors.New("injected: pointer write failure"), "latest")
 
-	// Record Put calls before the failed write.
+	// Record calls before the failed write.
 	fs.Reset()
 
 	// Second write should fail because pointer write is required.
@@ -2870,11 +2867,8 @@ func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		}
 	}
 
-	// Clear the error and write again — should succeed with snap-1 as parent.
-	fs.mu.Lock()
-	fs.putErr = nil
-	fs.putErrMatch = ""
-	fs.mu.Unlock()
+	// Clear the CAS error and write again — should succeed with snap-1 as parent.
+	fs.SetCASError(nil)
 
 	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
 	if err != nil {
