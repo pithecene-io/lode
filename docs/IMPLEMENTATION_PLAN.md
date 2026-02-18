@@ -271,6 +271,28 @@ Any change that affects contract behavior must:
 - [ ] Define docs/examples for chunk/region safety expectations
 - [ ] Evaluate native Zarr encoding path after reference-based workflow is validated
 
+### Priority Track D — Vector Artifact Storage
+
+**Status**: Validated — no new API surface required.
+
+Lode's existing persistence primitives cover the full vector artifact lifecycle:
+- Embedding batches as raw blob snapshots (`Write`)
+- Serialized indices via `StreamWrite` (large binary payloads)
+- `Latest()` as an atomic active-index pointer
+- Snapshot history for rollback and version progression
+- Explicit metadata for provenance and rebuild contracts
+
+**Scope boundary**: Lode is durability infrastructure, not a vector database.
+It stores embedding batches and serialized indices as opaque blobs.
+Similarity search, index construction, and query execution remain the caller's responsibility.
+
+**Deliverables**:
+- [x] `examples/vector_artifacts/` — end-to-end pipeline example
+
+**Deferred**:
+- Custom codec or format work for vector-specific encodings (not needed; raw blobs suffice)
+- ANN index introspection or validation (execution concern, out of scope)
+
 ---
 
 ## Phase 6 — Dual Persistence Paradigms (v0.6+)
