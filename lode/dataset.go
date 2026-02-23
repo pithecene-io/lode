@@ -351,10 +351,21 @@ func (d *dataset) writeLatestPointer(ctx context.Context, expected string, newID
 	return d.store.Put(ctx, pointerPath, strings.NewReader(string(newID)))
 }
 
-// overwriteLatestPointer unconditionally writes the pointer via Delete+Put.
-// Used only for best-effort self-heal in latestByScan, not for commit paths.
-func (d *dataset) overwriteLatestPointer(ctx context.Context, id DatasetSnapshotID) error {
+// selfHealPointer attempts to write the pointer for scan-fallback recovery.
+// When the store supports CAS, uses CompareAndSwap with the observed pointer
+// content. CAS failure (ErrSnapshotConflict) is swallowed — it means a
+// concurrent commit already advanced the pointer, which is the desired state.
+// Falls back to Delete+Put only when CAS is not available.
+func (d *dataset) selfHealPointer(ctx context.Context, observed string, id DatasetSnapshotID) error {
 	pointerPath := d.layout.latestPointerPath(d.id)
+	if cw, ok := d.store.(ConditionalWriter); ok {
+		err := cw.CompareAndSwap(ctx, pointerPath, observed, string(id))
+		if errors.Is(err, ErrSnapshotConflict) {
+			return nil // concurrent commit advanced pointer; self-heal unnecessary
+		}
+		return err
+	}
+	// Fallback: Delete+Put (single-writer assumption, no CAS available)
 	_ = d.store.Delete(ctx, pointerPath)
 	return d.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
@@ -552,6 +563,8 @@ func (d *dataset) Read(ctx context.Context, id DatasetSnapshotID) ([]any, error)
 
 func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 	// Pointer-first: O(1) via persistent latest file.
+	// Track observed pointer content for CAS-safe self-heal.
+	var observedPointer string
 	id, err := d.readLatestPointer(ctx)
 	if err == nil {
 		snap, snapErr := d.Snapshot(ctx, id)
@@ -563,6 +576,7 @@ func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 			return snap, nil
 		}
 		// Pointer references a nonexistent snapshot — fall through to scan.
+		observedPointer = string(id)
 	}
 
 	snap, err := d.latestByScan(ctx)
@@ -571,8 +585,8 @@ func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 	}
 
 	// Self-heal: write the pointer so subsequent calls are O(1).
-	// Best-effort, bypasses CAS — this is not a commit path.
-	_ = d.overwriteLatestPointer(ctx, snap.ID)
+	// Uses CAS when available to avoid rewinding a concurrently advanced pointer.
+	_ = d.selfHealPointer(ctx, observedPointer, snap.ID)
 
 	// Refresh CAS cache. After self-heal the pointer contains snap.ID.
 	d.lastSnapshotID = snap.ID

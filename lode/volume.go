@@ -129,10 +129,21 @@ func (v *volume) writeLatestPointer(ctx context.Context, expected string, newID 
 	return v.store.Put(ctx, pointerPath, strings.NewReader(string(newID)))
 }
 
-// overwriteLatestPointer unconditionally writes the pointer via Delete+Put.
-// Used only for best-effort self-heal in latestByScan, not for commit paths.
-func (v *volume) overwriteLatestPointer(ctx context.Context, id VolumeSnapshotID) error {
+// selfHealPointer attempts to write the pointer for scan-fallback recovery.
+// When the store supports CAS, uses CompareAndSwap with the observed pointer
+// content. CAS failure (ErrSnapshotConflict) is swallowed — it means a
+// concurrent commit already advanced the pointer, which is the desired state.
+// Falls back to Delete+Put only when CAS is not available.
+func (v *volume) selfHealPointer(ctx context.Context, observed string, id VolumeSnapshotID) error {
 	pointerPath := volumeLatestPointerPath(v.id)
+	if cw, ok := v.store.(ConditionalWriter); ok {
+		err := cw.CompareAndSwap(ctx, pointerPath, observed, string(id))
+		if errors.Is(err, ErrSnapshotConflict) {
+			return nil // concurrent commit advanced pointer; self-heal unnecessary
+		}
+		return err
+	}
+	// Fallback: Delete+Put (single-writer assumption, no CAS available)
 	_ = v.store.Delete(ctx, pointerPath)
 	return v.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
@@ -489,6 +500,8 @@ func findCoveringBlocks(blocks []BlockRef, offset, length int64) ([]BlockRef, er
 // Latest returns the most recently committed snapshot.
 func (v *volume) Latest(ctx context.Context) (*VolumeSnapshot, error) {
 	// Pointer-first: O(1) via persistent latest file.
+	// Track observed pointer content for CAS-safe self-heal.
+	var observedPointer string
 	id, err := v.readLatestPointer(ctx)
 	if err == nil {
 		snap, snapErr := v.Snapshot(ctx, id)
@@ -500,6 +513,7 @@ func (v *volume) Latest(ctx context.Context) (*VolumeSnapshot, error) {
 			return snap, nil
 		}
 		// Pointer references a nonexistent snapshot — fall through to scan.
+		observedPointer = string(id)
 	}
 
 	snap, err := v.latestByScan(ctx)
@@ -508,8 +522,8 @@ func (v *volume) Latest(ctx context.Context) (*VolumeSnapshot, error) {
 	}
 
 	// Self-heal: write the pointer so subsequent calls are O(1).
-	// Best-effort, bypasses CAS — this is not a commit path.
-	_ = v.overwriteLatestPointer(ctx, snap.ID)
+	// Uses CAS when available to avoid rewinding a concurrently advanced pointer.
+	_ = v.selfHealPointer(ctx, observedPointer, snap.ID)
 
 	// Refresh CAS cache. After self-heal the pointer contains snap.ID.
 	v.lastSnapshotID = snap.ID
