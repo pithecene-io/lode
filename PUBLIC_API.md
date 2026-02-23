@@ -390,6 +390,7 @@ Common errors when using streaming APIs:
 - Layouts that do not model datasets (e.g., flat) return `ErrDatasetsNotModeled`.
 - `ReaderAt` may return an `io.ReaderAt` that also implements `io.Closer`; close it when done.
 - Checksums are computed and recorded in manifests only when configured.
+- Concurrent `Write`/`StreamWrite` calls to the same dataset are safe only with a CAS-capable store (`ConditionalWriter`). Without CAS, serialize writes externally. See `CONTRACT_WRITE_API.md` §Concurrent Blob Write Safety.
 - `StreamWrite` is only valid when no codec is configured; otherwise it returns an error.
 - `StreamWriteRecords` requires a streaming-capable codec; otherwise it returns an error.
 - `StreamWriteRecords` does not support partitioning (single-pass streaming cannot partition).

@@ -148,6 +148,25 @@ write plus one pointer swap.
 - External coordination remains valid but is no longer required when
   using a CAS-capable store.
 
+### Concurrent Blob Write Safety
+
+Individual `Store.Put` calls to distinct paths are safe to issue concurrently.
+Data files use unique snapshot-scoped paths and are immutable once written.
+
+However, each `Write` or `StreamWrite` call creates a new snapshot, which
+updates the latest pointer. **The serialization point is the pointer update,
+not the data write.**
+
+| Store capability | Concurrent snapshot creation | Guidance |
+|------------------|------------------------------|----------|
+| Implements `ConditionalWriter` | Safe — CAS detects conflicts, returns `ErrSnapshotConflict` | Caller retries with new parent |
+| Does not implement `ConditionalWriter` | Unsafe — pointer race, undefined visibility order | Serialize writes externally |
+
+Consumers who need to write multiple blob files as part of a single logical
+operation should serialize snapshot creation (one `Write` or `StreamWrite`
+per file, sequentially) or use a CAS-capable store and handle
+`ErrSnapshotConflict` with retry logic.
+
 ### Future Direction
 
 **Parallel staging (transaction API):**
