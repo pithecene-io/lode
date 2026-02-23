@@ -89,7 +89,7 @@ func run() error {
 	// pointer to snap2. CAS detects the mismatch.
 	_, err = ds1.Write(ctx, lode.R(lode.D{"writer": "ds1", "seq": 2}), lode.Metadata{"step": "conflict"})
 	if !errors.Is(err, lode.ErrSnapshotConflict) {
-		return fmt.Errorf("expected ErrSnapshotConflict, got: %v", err)
+		return fmt.Errorf("expected ErrSnapshotConflict, got: %w", err)
 	}
 	fmt.Printf("ds1 detected conflict: %v\n", err)
 	fmt.Printf("  (ds1 expected pointer to contain snap1, but ds2 updated it to snap2)\n\n")

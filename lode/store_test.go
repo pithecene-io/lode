@@ -746,5 +746,7 @@ func TestMemoryStore_CompareAndSwap_ConflictNotExist(t *testing.T) {
 // Compile-time interface assertions
 // -----------------------------------------------------------------------------
 
-var _ ConditionalWriter = (*fsStore)(nil)
-var _ ConditionalWriter = (*memoryStore)(nil)
+var (
+	_ ConditionalWriter = (*fsStore)(nil)
+	_ ConditionalWriter = (*memoryStore)(nil)
+)

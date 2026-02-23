@@ -1168,11 +1168,11 @@ type streamWriter struct {
 	parentID        DatasetSnapshotID
 	expectedPointer string // current pointer content for CAS
 	filePath        string
-	pipeWriter  *io.PipeWriter
-	compWriter  io.WriteCloser
-	countWriter *countingWriter
-	hasher      HashWriter
-	putDone     chan error
+	pipeWriter      *io.PipeWriter
+	compWriter      io.WriteCloser
+	countWriter     *countingWriter
+	hasher          HashWriter
+	putDone         chan error
 
 	mu        sync.Mutex
 	committed bool
