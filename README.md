@@ -311,12 +311,10 @@ Each example is self-contained and runnable. See the example source for detailed
 
 ## Status
 
-Lode is at **v0.7.4** and under active development.
+Lode is at **v0.8.0** and under active development.
 APIs are stabilizing; some changes are possible before v1.0.
 
-The upcoming v0.8.0 release adds CAS optimistic concurrency for safe concurrent writes without
-external coordination, plus quality hardening across code, tests, CI, and docs.
-Built-in Memory and S3 adapters support CAS; FS supports CAS on Unix (non-Unix falls back to single-writer). No migration required.
+v0.8.0 adds CAS optimistic concurrency for safe concurrent writes without external coordination, plus quality hardening across code, tests, CI, and docs. Built-in Memory and S3 adapters support CAS; FS supports CAS on Unix (non-Unix falls back to single-writer). No migration required.
 
 If you are evaluating Lode, focus on:
 - snapshot semantics (Dataset and Volume)
