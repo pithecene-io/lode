@@ -672,29 +672,29 @@ func validateVolumeManifest(m *VolumeManifest) error {
 	if m == nil {
 		return &manifestValidationError{Field: "manifest", Message: "is nil"}
 	}
-	if m.SchemaName == "" {
-		return &manifestValidationError{Field: "schema_name", Message: "is required"}
+	// Table-driven field validation. Each entry maps a boolean condition
+	// (true = invalid) to the field name and error message.
+	type fieldCheck struct {
+		invalid bool
+		field   string
+		message string
 	}
-	if m.FormatVersion == "" {
-		return &manifestValidationError{Field: "format_version", Message: "is required"}
+
+	checks := []fieldCheck{
+		{m.SchemaName == "", "schema_name", "is required"},
+		{m.FormatVersion == "", "format_version", "is required"},
+		{m.VolumeID == "", "volume_id", "is required"},
+		{m.SnapshotID == "", "snapshot_id", "is required"},
+		{m.CreatedAt.IsZero(), "created_at", "is required"},
+		{m.Metadata == nil, "metadata", "must not be nil (use empty map for no metadata)"},
+		{m.Blocks == nil, "blocks", "must not be nil (use empty slice for no blocks)"},
+		{m.TotalLength <= 0, "total_length", "must be positive"},
 	}
-	if m.VolumeID == "" {
-		return &manifestValidationError{Field: "volume_id", Message: "is required"}
-	}
-	if m.SnapshotID == "" {
-		return &manifestValidationError{Field: "snapshot_id", Message: "is required"}
-	}
-	if m.CreatedAt.IsZero() {
-		return &manifestValidationError{Field: "created_at", Message: "is required"}
-	}
-	if m.Metadata == nil {
-		return &manifestValidationError{Field: "metadata", Message: "must not be nil (use empty map for no metadata)"}
-	}
-	if m.Blocks == nil {
-		return &manifestValidationError{Field: "blocks", Message: "must not be nil (use empty slice for no blocks)"}
-	}
-	if m.TotalLength <= 0 {
-		return &manifestValidationError{Field: "total_length", Message: "must be positive"}
+
+	for _, c := range checks {
+		if c.invalid {
+			return &manifestValidationError{Field: c.field, Message: c.message}
+		}
 	}
 
 	for i, b := range m.Blocks {
