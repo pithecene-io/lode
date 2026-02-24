@@ -765,12 +765,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		record := records.Record()
 
 		if err := encoder.WriteRecord(record); err != nil {
-			// Abort on error
-			_ = encoder.Close()
-			_ = compWriter.Close()
-			_ = pw.CloseWithError(err)
-			<-putDone
-			_ = d.store.Delete(ctx, filePath)
+			cleanupStreamWrite(ctx, d.store, filePath, encoder, compWriter, pw, putDone, err)
 			return nil, fmt.Errorf("lode: failed to write record: %w", err)
 		}
 
@@ -790,20 +785,13 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 
 	// Check for iterator errors
 	if err := records.Err(); err != nil {
-		_ = encoder.Close()
-		_ = compWriter.Close()
-		_ = pw.CloseWithError(err)
-		<-putDone
-		_ = d.store.Delete(ctx, filePath)
+		cleanupStreamWrite(ctx, d.store, filePath, encoder, compWriter, pw, putDone, err)
 		return nil, fmt.Errorf("lode: record iterator error: %w", err)
 	}
 
 	// Close encoder (finalizes format)
 	if err := encoder.Close(); err != nil {
-		_ = compWriter.Close()
-		_ = pw.CloseWithError(err)
-		<-putDone
-		_ = d.store.Delete(ctx, filePath)
+		cleanupStreamWrite(ctx, d.store, filePath, nil, compWriter, pw, putDone, err)
 		return nil, fmt.Errorf("lode: failed to close encoder: %w", err)
 	}
 
@@ -815,9 +803,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 
 	// Close compression (flushes final data)
 	if err := compWriter.Close(); err != nil {
-		_ = pw.CloseWithError(err)
-		<-putDone
-		_ = d.store.Delete(ctx, filePath)
+		cleanupStreamWrite(ctx, d.store, filePath, nil, nil, pw, putDone, err)
 		return nil, fmt.Errorf("lode: failed to close compressor: %w", err)
 	}
 
@@ -885,6 +871,25 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		ID:       snapshotID,
 		Manifest: manifest,
 	}, nil
+}
+
+// cleanupStreamWrite tears down the streaming write pipeline on error.
+// Arguments may be nil when the failure occurs before the corresponding
+// resource is created; nil values are skipped.
+func cleanupStreamWrite(ctx context.Context, store Store, filePath string, encoder RecordStreamEncoder, compWriter io.WriteCloser, pw *io.PipeWriter, putDone <-chan error, cause error) {
+	if encoder != nil {
+		_ = encoder.Close()
+	}
+	if compWriter != nil {
+		_ = compWriter.Close()
+	}
+	if pw != nil {
+		_ = pw.CloseWithError(cause)
+	}
+	if putDone != nil {
+		<-putDone
+	}
+	_ = store.Delete(ctx, filePath)
 }
 
 func (d *dataset) partitionRecords(records []any) (map[string][]any, error) {
