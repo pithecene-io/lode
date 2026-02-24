@@ -70,7 +70,7 @@ func run() error {
 		fmt.Printf("S3 service not reachable at %s\n", endpoint)
 		fmt.Println("Start services first: task s3:up")
 		fmt.Println("Skipping example.")
-		return nil
+		return nil //nolint:nilerr // intentional: skip example gracefully when S3 is unreachable
 	}
 
 	// Create Lode S3 store
