@@ -202,7 +202,7 @@ Common pitfalls when using Lode:
 
 - **Metadata defaults to empty** — `nil` metadata is coalesced to `Metadata{}`; pass `nil` or `Metadata{}` for empty metadata.
 - **Raw mode expects `[]byte`** — Without a codec, `Write` expects exactly one `[]byte` element.
-- **Concurrent writes need CAS-capable stores** — Without `ConditionalWriter`, concurrent writers may corrupt history. Built-in FS, Memory, and S3 adapters all support CAS.
+- **Concurrent writes need CAS-capable stores** — Without `ConditionalWriter`, concurrent writers may corrupt history. Built-in Memory and S3 adapters support CAS; FS supports CAS on Unix only (non-Unix FS falls back to single-writer Delete+Put).
 - **Cleanup is best-effort** — Failed streams may leave partial objects in storage.
 - **StreamWriteRecords requires streaming codec** — Not all codecs support streaming.
 
@@ -316,7 +316,7 @@ APIs are stabilizing; some changes are possible before v1.0.
 
 v0.8.0 adds CAS optimistic concurrency for safe concurrent writes without
 external coordination, plus quality hardening across code, tests, CI, and docs.
-Built-in FS, Memory, and S3 adapters all support CAS. No migration required.
+Built-in Memory and S3 adapters support CAS; FS supports CAS on Unix (non-Unix falls back to single-writer). No migration required.
 
 If you are evaluating Lode, focus on:
 - snapshot semantics (Dataset and Volume)
