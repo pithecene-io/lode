@@ -368,13 +368,10 @@ Common errors when using streaming APIs:
 | `ErrCodecNotStreamable` | `StreamWriteRecords` | Codec doesn't support streaming | Use streaming codec (JSONL) or `Write` |
 | `ErrNilIterator` | `StreamWriteRecords` | Iterator is nil | Provide valid `RecordIterator` |
 | `ErrPartitioningNotSupported` | `StreamWriteRecords` | Partitioning configured | Use `Write` for partitioned data |
-| "metadata must be non-nil" | Both | Nil metadata passed | Use `lode.Metadata{}` for empty |
-
 **On failure:**
 - No manifest is written (snapshot does not exist)
 - Partial data may remain in storage (best-effort cleanup)
 - Use `errors.Is()` to check sentinel errors (`ErrCodec*`, `ErrNil*`, `ErrPartitioning*`)
-- Note: metadata error is not a sentinel; check with `strings.Contains()` or handle as configuration error
 
 *Contract reference: [`CONTRACT_ERRORS.md`](docs/contracts/CONTRACT_ERRORS.md)*
 
@@ -382,7 +379,7 @@ Common errors when using streaming APIs:
 
 ## Usage Gotchas (Important)
 
-- `metadata` must be non-nil on every write (use `{}` for empty metadata).
+- `nil` metadata is coalesced to `Metadata{}` (pass `nil` or `Metadata{}` for empty).
 - Raw blob mode (no codec) requires exactly one `[]byte` element in `Write`.
 - Raw blob mode cannot use partitioning (no record fields to extract keys).
 - `WithHiveLayout` requires at least one partition key (validated on apply).
@@ -483,8 +480,10 @@ manifest references them.
 **When the store implements `ConditionalWriter`, Lode detects concurrent
 commits and returns `ErrSnapshotConflict`.**
 
-- Multiple writers MAY safely write to the same dataset or volume without
-  external coordination when using a CAS-capable store.
+- Multiple **separate process instances** (or separate `Dataset`/`Volume` values)
+  MAY safely write to the same dataset or volume without external coordination
+  when using a CAS-capable store. A single `Dataset` or `Volume` value is NOT
+  safe for concurrent use by multiple goroutines.
 - On conflict, callers re-read `Latest()`, merge or rebuild state, and re-commit.
   Data files are immutable and already persisted — retry cost is one manifest
   write plus one pointer swap.

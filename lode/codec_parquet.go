@@ -133,7 +133,11 @@ func NewParquetCodec(schema ParquetSchema, opts ...ParquetOption) (Codec, error)
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.pqSchema = buildParquetSchema(schema)
+	pqSchema, err := buildParquetSchema(schema)
+	if err != nil {
+		return nil, err
+	}
+	c.pqSchema = pqSchema
 
 	// Extract field order from the built schema
 	c.fieldOrder = make([]string, len(schema.Fields))
@@ -456,15 +460,19 @@ func (c *parquetCodec) convertFromParquetValue(val parquet.Value, field ParquetF
 }
 
 // buildParquetSchema creates a parquet-go schema from our schema definition.
-func buildParquetSchema(schema ParquetSchema) *parquet.Schema {
+func buildParquetSchema(schema ParquetSchema) (*parquet.Schema, error) {
 	group := make(parquet.Group, len(schema.Fields))
 	for _, field := range schema.Fields {
-		group[field.Name] = buildFieldNode(field)
+		node, err := buildFieldNode(field)
+		if err != nil {
+			return nil, err
+		}
+		group[field.Name] = node
 	}
-	return parquet.NewSchema("record", group)
+	return parquet.NewSchema("record", group), nil
 }
 
-func buildFieldNode(field ParquetField) parquet.Node {
+func buildFieldNode(field ParquetField) (parquet.Node, error) {
 	var node parquet.Node
 
 	switch field.Type {
@@ -485,15 +493,14 @@ func buildFieldNode(field ParquetField) parquet.Node {
 	case ParquetTimestamp:
 		node = parquet.Timestamp(parquet.Nanosecond)
 	default:
-		// This should never happen if NewParquetCodec validates correctly
-		panic(fmt.Sprintf("invalid ParquetType %d for field %q", field.Type, field.Name))
+		return nil, fmt.Errorf("%w: invalid ParquetType %d for field %q", ErrSchemaViolation, field.Type, field.Name)
 	}
 
 	if field.Nullable {
 		node = parquet.Optional(node)
 	}
 
-	return node
+	return node, nil
 }
 
 // -----------------------------------------------------------------------------
