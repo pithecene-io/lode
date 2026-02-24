@@ -100,7 +100,7 @@ func setupTestBucket(t *testing.T, backend s3Backend) *Store {
 	}
 
 	t.Cleanup(func() {
-		cleanupCtx := context.Background()
+		cleanupCtx := t.Context()
 		out, _ := client.ListObjectsV2(cleanupCtx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
 		for _, obj := range out.Contents {
 			_, _ = client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
