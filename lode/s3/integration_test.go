@@ -100,7 +100,9 @@ func setupTestBucket(t *testing.T, backend s3Backend) *Store {
 	}
 
 	t.Cleanup(func() {
-		cleanupCtx := t.Context()
+		// Intentional: t.Context() is canceled before t.Cleanup runs,
+		// so cleanup operations need an independent context.
+		cleanupCtx := context.Background()
 		out, _ := client.ListObjectsV2(cleanupCtx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
 		for _, obj := range out.Contents {
 			_, _ = client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{

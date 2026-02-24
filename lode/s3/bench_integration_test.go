@@ -40,7 +40,9 @@ func setupBenchBucket(b *testing.B, newClient func(context.Context) (*s3.Client,
 	}
 
 	b.Cleanup(func() {
-		cleanupCtx := b.Context()
+		// Intentional: b.Context() is canceled before b.Cleanup runs,
+		// so cleanup operations need an independent context.
+		cleanupCtx := context.Background()
 		out, _ := client.ListObjectsV2(cleanupCtx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
 		for _, obj := range out.Contents {
 			_, _ = client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
