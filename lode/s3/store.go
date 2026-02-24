@@ -26,17 +26,17 @@
 // The multipart path (>5GB) uses If-None-Match on CompleteMultipartUpload for
 // atomic no-overwrite guarantees. This feature requires backend support:
 //
-//	| Backend       | Conditional Completion | Status      |
-//	|---------------|------------------------|-------------|
-//	| AWS S3        | Supported              | ✅ Verified  |
-//	| MinIO         | Unknown                | ⚠️ Untested  |
-//	| LocalStack    | Unknown                | ⚠️ Untested  |
-//	| Cloudflare R2 | Unknown                | ⚠️ Untested  |
+//	| Backend       | Conditional Completion | Status                |
+//	|---------------|------------------------|-----------------------|
+//	| Cloudflare R2 | Supported              | ✅ Production verified |
+//	| AWS S3        | Supported              | ✅ Expected compatible |
+//	| MinIO         | Unknown                | ⚠️ Test backend only   |
+//	| LocalStack    | Unknown                | ⚠️ Test backend only   |
 //
-// For untested backends: if the backend does not support If-None-Match on
-// CompleteMultipartUpload, large uploads (>5GB) may fail with unexpected errors.
-// Test with large uploads before relying on this path in production, or ensure
-// single-writer semantics at the application level.
+// For backends marked ⚠️: these are used for integration testing only. If
+// deploying against a backend not listed as verified, test with large uploads
+// (>5GB) before relying on the multipart path, or ensure single-writer
+// semantics at the application level.
 //
 // # Consistency
 //

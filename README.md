@@ -303,7 +303,7 @@ This keeps Lode's core APIs explicit and predictable.
 | [`volume_sparse`](examples/volume_sparse) | Sparse Volume: stage, commit, read with gaps | `go run ./examples/volume_sparse` |
 | [`vector_artifacts`](examples/vector_artifacts) | Vector artifact pipeline: embeddings, indices, pointers | `go run ./examples/vector_artifacts` |
 | [`optimistic_concurrency`](examples/optimistic_concurrency) | CAS conflict detection and retry pattern | `go run ./examples/optimistic_concurrency` |
-| [`s3_experimental`](examples/s3_experimental) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3_experimental` |
+| [`s3`](examples/s3) | S3 adapter with LocalStack/MinIO | `go run ./examples/s3` |
 
 Each example is self-contained and runnable. See the example source for detailed comments.
 

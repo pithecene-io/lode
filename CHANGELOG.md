@@ -380,7 +380,7 @@ Post-v0.3.0 improvements planned:
 ### References
 
 - [PUBLIC_API.md](PUBLIC_API.md) — S3 adapter documentation
-- [examples/s3_experimental/](examples/s3_experimental/) — S3 usage examples
+- [examples/s3/](examples/s3/) — S3 usage examples
 
 ---
 

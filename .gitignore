@@ -13,7 +13,7 @@ bench-*.txt
 /manifest_driven
 /optimistic_concurrency
 /parquet
-/s3_experimental
+/s3
 /stream_write_records
 /vector_artifacts
 /volume_sparse

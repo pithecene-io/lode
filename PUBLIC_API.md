@@ -530,18 +530,18 @@ uploading parts for objects that already exist.
 **Backend Compatibility Caveat:**
 
 The atomic guarantee for large uploads (>5GB) depends on backend support for
-`If-None-Match` on `CompleteMultipartUpload`. This has been verified on AWS S3
-but is assumed (untested) for other S3-compatible backends:
+`If-None-Match` on `CompleteMultipartUpload`:
 
 | Backend | Conditional Multipart | Status |
 |---------|----------------------|--------|
-| AWS S3 | Supported | ✅ Verified |
-| MinIO | Unknown | ⚠️ Untested |
-| LocalStack | Unknown | ⚠️ Untested |
-| Cloudflare R2 | Unknown | ⚠️ Untested |
+| Cloudflare R2 | Supported | ✅ Production verified |
+| AWS S3 | Supported | ✅ Expected compatible |
+| MinIO | Unknown | ⚠️ Test backend only |
+| LocalStack | Unknown | ⚠️ Test backend only |
 
-If using an untested backend with large uploads: either verify support experimentally,
-or ensure single-writer semantics at the application level.
+For backends marked ⚠️: these are used for integration testing only. If deploying
+against a backend not listed as verified, test with large uploads (>5GB) before
+relying on the multipart path, or ensure single-writer semantics at the application level.
 
 *Contract reference: [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §Put Upload Paths, [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Storage-Level Concurrency*
 
