@@ -63,6 +63,16 @@ func run() error {
 		o.UsePathStyle = true
 	})
 
+	// Verify connectivity before proceeding. S3-compatible services
+	// must be running (e.g., `task s3:up`).
+	_, err = client.ListBuckets(ctx, &awss3.ListBucketsInput{})
+	if err != nil {
+		fmt.Printf("S3 service not reachable at %s\n", endpoint)
+		fmt.Println("Start services first: task s3:up")
+		fmt.Println("Skipping example.")
+		return nil
+	}
+
 	// Create Lode S3 store
 	store, err := s3.New(client, s3.Config{
 		Bucket: bucket,

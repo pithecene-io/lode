@@ -8,7 +8,7 @@ without loading all data into memory.
 1. **Pull-based streaming**: Records are pulled from an iterator one at a time
 2. **Memory efficiency**: Only one record in memory at a time (iterator controls pace)
 3. **Atomic completion**: Either all records are written and manifest created, or nothing
-4. **Metadata explicitness**: Metadata must be non-nil (empty `{}` is valid)
+4. **Metadata explicitness**: `nil` metadata is coalesced to `Metadata{}` (pass `nil` or `{}` for empty)
 
 Note: Commit visibility (snapshot invisible before manifest) is documented behavior but
 not explicitly demonstrated here. See `manifest_driven` example for visibility semantics.
@@ -36,12 +36,6 @@ Do NOT use `StreamWriteRecords` when:
 | `ErrNilIterator` | Passed `nil` as iterator | Provide a valid `RecordIterator` |
 | `ErrCodecNotStreamable` | Codec doesn't support streaming | Use a streaming codec (e.g., JSONL) or use `Write` |
 | `ErrPartitioningNotSupported` | Dataset has partitioning configured | Use `Write` for partitioned data |
-
-**Configuration errors** (not sentinels):
-
-| Error message | Cause | Fix |
-|---------------|-------|-----|
-| "metadata must be non-nil" | Passed `nil` metadata | Use `lode.Metadata{}` for empty metadata |
 
 ### Iterator Errors
 
@@ -102,7 +96,7 @@ Read back 5 records:
 2. Records are pulled from iterator one at a time (memory efficient)
 3. Manifest is written only after successful completion
 4. If iterator returns error, no manifest is written (no snapshot)
-5. Metadata must be non-nil (use empty map {} if no metadata)
+5. nil metadata is coalesced to Metadata{} (pass nil or {} for empty)
 6. Partitioning is NOT supported (single-pass streaming cannot partition)
 
 === SUCCESS ===

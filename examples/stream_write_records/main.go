@@ -127,7 +127,7 @@ func run() error {
 	fmt.Println("2. Records are pulled from iterator one at a time (memory efficient)")
 	fmt.Println("3. Manifest is written only after successful completion")
 	fmt.Println("4. If iterator returns error, no manifest is written (no snapshot)")
-	fmt.Println("5. Metadata must be non-nil (use empty map {} if no metadata)")
+	fmt.Println("5. nil metadata is coalesced to Metadata{} (pass nil or {} for empty)")
 	fmt.Println("6. Partitioning is NOT supported (single-pass streaming cannot partition)")
 	fmt.Println()
 
