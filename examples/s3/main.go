@@ -7,7 +7,7 @@
 // - The bucket must exist (e.g., `aws --endpoint-url=http://localhost:4566 s3 mb s3://lode-example`)
 // - Environment variables (optional, defaults provided below)
 //
-// Run with: go run ./examples/s3_experimental
+// Run with: go run ./examples/s3
 package main
 
 import (
@@ -70,7 +70,7 @@ func run() error {
 		fmt.Printf("S3 service not reachable at %s\n", endpoint)
 		fmt.Println("Start services first: task s3:up")
 		fmt.Println("Skipping example.")
-		return nil
+		return nil //nolint:nilerr // intentional: skip example gracefully when S3 is unreachable
 	}
 
 	// Create Lode S3 store

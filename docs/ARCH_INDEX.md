@@ -82,7 +82,7 @@ Example usage and integration references.
 - `volume_sparse/` — sparse Volume: stage, commit, read with gaps
 - `optimistic_concurrency/` — CAS conflict detection and retry pattern
 - `vector_artifacts/` — vector artifact pipeline: embeddings, indices, active pointers
-- `s3_experimental/` — S3 adapter example (name retained for continuity)
+- `s3/` — S3 adapter example
 
 ---
 
