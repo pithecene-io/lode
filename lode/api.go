@@ -200,6 +200,23 @@ type Store interface {
 	ReaderAt(ctx context.Context, path string) (io.ReaderAt, error)
 }
 
+// ConditionalWriter is an optional interface that storage adapters MAY
+// implement to enable optimistic concurrency (CAS) on the latest pointer.
+//
+// When a Store implements ConditionalWriter, the commit path uses
+// CompareAndSwap instead of Delete+Put for pointer updates, enabling
+// safe concurrent writes without external coordination.
+type ConditionalWriter interface {
+	// CompareAndSwap atomically replaces the content at path if and only if
+	// the current content matches expected.
+	//
+	// If path does not exist and expected is empty, the file is created.
+	// If path does not exist and expected is non-empty, returns ErrSnapshotConflict.
+	// If path exists and content matches expected, content is replaced.
+	// If path exists and content does not match expected, returns ErrSnapshotConflict.
+	CompareAndSwap(ctx context.Context, path, expected, replacement string) error
+}
+
 // StoreFactory creates a Store. Used for deferred store construction.
 type StoreFactory func() (Store, error)
 
@@ -444,6 +461,11 @@ var (
 
 	// ErrInvalidFormat indicates the Parquet file is malformed or corrupted.
 	ErrInvalidFormat = errInvalidFormat{}
+
+	// ErrSnapshotConflict indicates another writer committed since parent
+	// was resolved. Retry-safe: re-read Latest(), merge state, re-commit.
+	// Only returned when the store implements ConditionalWriter.
+	ErrSnapshotConflict = errSnapshotConflict{}
 )
 
 type errNotFound struct{}
@@ -493,6 +515,10 @@ func (errSchemaViolation) Error() string { return "parquet: schema violation" }
 type errInvalidFormat struct{}
 
 func (errInvalidFormat) Error() string { return "parquet: invalid format" }
+
+type errSnapshotConflict struct{}
+
+func (errSnapshotConflict) Error() string { return "snapshot conflict: another writer committed" }
 
 // -----------------------------------------------------------------------------
 // DatasetReader interface

@@ -1081,3 +1081,111 @@ func (m *racingMockS3Client) CompleteMultipartUpload(ctx context.Context, params
 	}
 	return m.MockS3Client.CompleteMultipartUpload(ctx, params, opts...)
 }
+
+// -----------------------------------------------------------------------------
+// CompareAndSwap tests — S3 store
+// -----------------------------------------------------------------------------
+
+func TestStore_CompareAndSwap_CreateWhenEmpty(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	err := store.CompareAndSwap(ctx, "ptr/latest", "", "snap-1")
+	if err != nil {
+		t.Fatalf("CompareAndSwap create failed: %v", err)
+	}
+
+	rc, err := store.Get(ctx, "ptr/latest")
+	if err != nil {
+		t.Fatalf("Get after CAS create failed: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	data, _ := io.ReadAll(rc)
+	if string(data) != "snap-1" {
+		t.Errorf("expected 'snap-1', got %q", string(data))
+	}
+}
+
+func TestStore_CompareAndSwap_UpdateMatch(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	if err := store.CompareAndSwap(ctx, "ptr/latest", "", "snap-1"); err != nil {
+		t.Fatalf("initial create failed: %v", err)
+	}
+
+	if err := store.CompareAndSwap(ctx, "ptr/latest", "snap-1", "snap-2"); err != nil {
+		t.Fatalf("CompareAndSwap update failed: %v", err)
+	}
+
+	rc, err := store.Get(ctx, "ptr/latest")
+	if err != nil {
+		t.Fatalf("Get after CAS update: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	data, _ := io.ReadAll(rc)
+	if string(data) != "snap-2" {
+		t.Errorf("expected 'snap-2', got %q", string(data))
+	}
+}
+
+func TestStore_CompareAndSwap_ConflictMismatch(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	if err := store.CompareAndSwap(ctx, "ptr/latest", "", "snap-1"); err != nil {
+		t.Fatalf("initial create failed: %v", err)
+	}
+
+	err := store.CompareAndSwap(ctx, "ptr/latest", "stale", "snap-2")
+	if !errors.Is(err, lode.ErrSnapshotConflict) {
+		t.Errorf("expected ErrSnapshotConflict, got: %v", err)
+	}
+}
+
+func TestStore_CompareAndSwap_ConflictNotExist(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	err := store.CompareAndSwap(ctx, "ptr/latest", "snap-0", "snap-1")
+	if !errors.Is(err, lode.ErrSnapshotConflict) {
+		t.Errorf("expected ErrSnapshotConflict, got: %v", err)
+	}
+}
+
+func TestStore_CompareAndSwap_IfMatchUsed(t *testing.T) {
+	ctx := t.Context()
+	mock := NewMockS3Client()
+	store, _ := New(mock, Config{Bucket: "test"})
+
+	// Create initial content.
+	if err := store.CompareAndSwap(ctx, "ptr/latest", "", "snap-1"); err != nil {
+		t.Fatalf("initial create failed: %v", err)
+	}
+
+	// The first Put uses If-None-Match. Reset counter.
+	mock.ResetCounts()
+
+	// Update with matching content.
+	if err := store.CompareAndSwap(ctx, "ptr/latest", "snap-1", "snap-2"); err != nil {
+		t.Fatalf("CompareAndSwap update failed: %v", err)
+	}
+
+	// Should have called PutObject once (with If-Match).
+	if mock.PutObjectCalls != 1 {
+		t.Errorf("expected 1 PutObject call for update, got %d", mock.PutObjectCalls)
+	}
+}
+
+func TestStore_CompareAndSwap_InvalidPath(t *testing.T) {
+	ctx := t.Context()
+	store, _ := New(NewMockS3Client(), Config{Bucket: "test"})
+
+	err := store.CompareAndSwap(ctx, "", "", "snap-1")
+	if !errors.Is(err, lode.ErrInvalidPath) {
+		t.Errorf("expected ErrInvalidPath for empty key, got: %v", err)
+	}
+}
+
+// Compile-time interface assertion.
+var _ lode.ConditionalWriter = (*Store)(nil)

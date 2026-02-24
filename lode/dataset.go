@@ -195,6 +195,12 @@ type dataset struct {
 	// field, the next write would trust the stale pointer and break linear
 	// history. Single-writer constraint means no mutex is required.
 	lastSnapshotID DatasetSnapshotID
+
+	// lastWrittenPointer tracks what we last successfully wrote to the pointer
+	// file. This may differ from lastSnapshotID when a pointer write fails
+	// (the snapshot was committed but the pointer wasn't updated). Used as
+	// the CAS expected value when the store implements ConditionalWriter.
+	lastWrittenPointer string
 }
 
 // NewDataset creates a dataset with documented defaults.
@@ -259,40 +265,52 @@ func (d *dataset) ID() DatasetID {
 	return d.id
 }
 
-// resolveParentID resolves the most recent snapshot ID for parent linking.
+// resolveParent resolves the most recent snapshot ID for parent linking
+// and the expected pointer content for CAS writes.
+//
+// Returns:
+//   - parentID: the snapshot ID for the manifest's ParentSnapshotID
+//   - expectedPointer: what the pointer file currently contains (for CAS)
 //
 // Resolution order:
 //  1. In-memory cache (always correct within a process; guards against stale pointers)
 //  2. Persistent pointer + Exists verification (O(1) cold start)
 //  3. Full scan fallback (backward compat for pre-pointer datasets)
-func (d *dataset) resolveParentID(ctx context.Context) (DatasetSnapshotID, error) {
+func (d *dataset) resolveParent(ctx context.Context) (parentID DatasetSnapshotID, expectedPointer string, err error) {
 	// In-memory cache is authoritative within this process.
-	// It guards against stale-but-existing pointers after a pointer write failure.
+	// lastWrittenPointer tracks what the pointer should contain for CAS.
 	if d.lastSnapshotID != "" {
-		return d.lastSnapshotID, nil
+		return d.lastSnapshotID, d.lastWrittenPointer, nil
 	}
 
-	id, err := d.readLatestPointer(ctx)
-	if err == nil {
+	id, pointerErr := d.readLatestPointer(ctx)
+	if pointerErr == nil {
 		// Verify the referenced snapshot exists (1 Exists call).
-		// A corrupt/stale pointer must not produce a nonexistent parent.
 		manifestPath := d.layout.manifestPath(d.id, id)
 		exists, existsErr := d.store.Exists(ctx, manifestPath)
 		if existsErr == nil && exists {
-			return id, nil
+			return id, string(id), nil
 		}
 		// Pointer is stale or corrupt — fall through to scan.
+		// Remember the actual content for CAS.
 	}
 
-	// Pointer missing or stale: fall back to scan for backward compat.
-	latest, err := d.latestByScan(ctx)
-	if err != nil {
-		if errors.Is(err, ErrNoSnapshots) {
-			return "", nil
-		}
-		return "", fmt.Errorf("lode: failed to get latest snapshot: %w", err)
+	// Track what the pointer currently contains for CAS.
+	var currentPointer string
+	if pointerErr == nil {
+		currentPointer = string(id) // stale/corrupt content
 	}
-	return latest.ID, nil
+	// If pointerErr != nil (ErrNotFound), currentPointer = "" (pointer missing)
+
+	// Pointer missing or stale: fall back to scan for backward compat.
+	latest, scanErr := d.latestByScan(ctx)
+	if scanErr != nil {
+		if errors.Is(scanErr, ErrNoSnapshots) {
+			return "", currentPointer, nil
+		}
+		return "", "", fmt.Errorf("lode: failed to get latest snapshot: %w", scanErr)
+	}
+	return latest.ID, currentPointer, nil
 }
 
 // readLatestPointer reads the persistent latest-snapshot pointer file.
@@ -318,10 +336,37 @@ func (d *dataset) readLatestPointer(ctx context.Context) (DatasetSnapshotID, err
 }
 
 // writeLatestPointer persists the snapshot ID as the latest pointer.
-// Uses Delete+Put because Store.Put is no-overwrite.
-func (d *dataset) writeLatestPointer(ctx context.Context, id DatasetSnapshotID) error {
+// When the store implements ConditionalWriter, uses CompareAndSwap for
+// optimistic concurrency. Falls back to Delete+Put (single-writer assumption).
+//
+// expected is the current pointer content for CAS (may differ from parentID
+// when the pointer is stale or a previous pointer write failed).
+func (d *dataset) writeLatestPointer(ctx context.Context, expected string, newID DatasetSnapshotID) error {
 	pointerPath := d.layout.latestPointerPath(d.id)
+	if cw, ok := d.store.(ConditionalWriter); ok {
+		return cw.CompareAndSwap(ctx, pointerPath, expected, string(newID))
+	}
+	// Fallback: Delete+Put (single-writer assumption)
 	_ = d.store.Delete(ctx, pointerPath) // ignore error; path may not exist
+	return d.store.Put(ctx, pointerPath, strings.NewReader(string(newID)))
+}
+
+// selfHealPointer attempts to write the pointer for scan-fallback recovery.
+// When the store supports CAS, uses CompareAndSwap with the observed pointer
+// content. CAS failure (ErrSnapshotConflict) is swallowed — it means a
+// concurrent commit already advanced the pointer, which is the desired state.
+// Falls back to Delete+Put only when CAS is not available.
+func (d *dataset) selfHealPointer(ctx context.Context, observed string, id DatasetSnapshotID) error {
+	pointerPath := d.layout.latestPointerPath(d.id)
+	if cw, ok := d.store.(ConditionalWriter); ok {
+		err := cw.CompareAndSwap(ctx, pointerPath, observed, string(id))
+		if errors.Is(err, ErrSnapshotConflict) {
+			return nil // concurrent commit advanced pointer; self-heal unnecessary
+		}
+		return err
+	}
+	// Fallback: Delete+Put (single-writer assumption, no CAS available)
+	_ = d.store.Delete(ctx, pointerPath)
 	return d.store.Put(ctx, pointerPath, strings.NewReader(string(id)))
 }
 
@@ -330,7 +375,7 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		metadata = Metadata{}
 	}
 
-	parentID, err := d.resolveParentID(ctx)
+	parentID, expectedPointer, err := d.resolveParent(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +456,7 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 	// pointers on cold start. If this fails, no manifest is written and the
 	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
 	// harmless (Exists check falls through to scan on the next cold start).
-	if err := d.writeLatestPointer(ctx, snapshotID); err != nil {
+	if err := d.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
 		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
 	}
 
@@ -419,6 +464,7 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 	d.lastSnapshotID = snapshotID
+	d.lastWrittenPointer = string(snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -517,16 +563,36 @@ func (d *dataset) Read(ctx context.Context, id DatasetSnapshotID) ([]any, error)
 
 func (d *dataset) Latest(ctx context.Context) (*DatasetSnapshot, error) {
 	// Pointer-first: O(1) via persistent latest file.
+	// Track observed pointer content for CAS-safe self-heal.
+	var observedPointer string
 	id, err := d.readLatestPointer(ctx)
 	if err == nil {
 		snap, snapErr := d.Snapshot(ctx, id)
 		if snapErr == nil {
+			// Refresh CAS cache so retries after ErrSnapshotConflict
+			// use the current pointer content, not stale cached values.
+			d.lastSnapshotID = snap.ID
+			d.lastWrittenPointer = string(id)
 			return snap, nil
 		}
 		// Pointer references a nonexistent snapshot — fall through to scan.
+		observedPointer = string(id)
 	}
 
-	return d.latestByScan(ctx)
+	snap, err := d.latestByScan(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Self-heal: write the pointer so subsequent calls are O(1).
+	// Uses CAS when available to avoid rewinding a concurrently advanced pointer.
+	_ = d.selfHealPointer(ctx, observedPointer, snap.ID)
+
+	// Refresh CAS cache. After self-heal the pointer contains snap.ID.
+	d.lastSnapshotID = snap.ID
+	d.lastWrittenPointer = string(snap.ID)
+
+	return snap, nil
 }
 
 // latestByScan finds the latest snapshot via a single List + single Get.
@@ -564,9 +630,6 @@ func (d *dataset) latestByScan(ctx context.Context) (*DatasetSnapshot, error) {
 		return nil, fmt.Errorf("lode: failed to load latest snapshot: %w", err)
 	}
 
-	// Self-heal: write the pointer so subsequent calls are O(1).
-	_ = d.writeLatestPointer(ctx, latestID)
-
 	return snap, nil
 }
 
@@ -578,7 +641,7 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 		return nil, ErrCodecConfigured
 	}
 
-	parentID, err := d.resolveParentID(ctx)
+	parentID, expectedPointer, err := d.resolveParent(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -615,17 +678,18 @@ func (d *dataset) StreamWrite(ctx context.Context, metadata Metadata) (StreamWri
 	}()
 
 	return &streamWriter{
-		ds:          d,
-		ctx:         ctx,
-		metadata:    metadata,
-		snapshotID:  snapshotID,
-		parentID:    parentID,
-		filePath:    filePath,
-		pipeWriter:  pw,
-		compWriter:  compWriter,
-		countWriter: cw,
-		hasher:      hasher,
-		putDone:     putDone,
+		ds:              d,
+		ctx:             ctx,
+		metadata:        metadata,
+		snapshotID:      snapshotID,
+		parentID:        parentID,
+		expectedPointer: expectedPointer,
+		filePath:        filePath,
+		pipeWriter:      pw,
+		compWriter:      compWriter,
+		countWriter:     cw,
+		hasher:          hasher,
+		putDone:         putDone,
 	}, nil
 }
 
@@ -649,7 +713,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, ErrPartitioningNotSupported
 	}
 
-	parentID, err := d.resolveParentID(ctx)
+	parentID, expectedPointer, err := d.resolveParent(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -805,7 +869,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 	// pointers on cold start. If this fails, no manifest is written and the
 	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
 	// harmless (Exists check falls through to scan on the next cold start).
-	if err := d.writeLatestPointer(ctx, snapshotID); err != nil {
+	if err := d.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
 		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
 	}
@@ -815,6 +879,7 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 	d.lastSnapshotID = snapshotID
+	d.lastWrittenPointer = string(snapshotID)
 
 	return &DatasetSnapshot{
 		ID:       snapshotID,
@@ -1110,17 +1175,18 @@ func extractTimestamps(data []any) (minTs, maxTs *time.Time) {
 
 // streamWriter implements StreamWriter for raw binary streaming writes.
 type streamWriter struct {
-	ds          *dataset
-	ctx         context.Context
-	metadata    Metadata
-	snapshotID  DatasetSnapshotID
-	parentID    DatasetSnapshotID
-	filePath    string
-	pipeWriter  *io.PipeWriter
-	compWriter  io.WriteCloser
-	countWriter *countingWriter
-	hasher      HashWriter
-	putDone     chan error
+	ds              *dataset
+	ctx             context.Context
+	metadata        Metadata
+	snapshotID      DatasetSnapshotID
+	parentID        DatasetSnapshotID
+	expectedPointer string // current pointer content for CAS
+	filePath        string
+	pipeWriter      *io.PipeWriter
+	compWriter      io.WriteCloser
+	countWriter     *countingWriter
+	hasher          HashWriter
+	putDone         chan error
 
 	mu        sync.Mutex
 	committed bool
@@ -1230,7 +1296,7 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 	// pointers on cold start. If this fails, no manifest is written and the
 	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
 	// harmless (Exists check falls through to scan on the next cold start).
-	if err := sw.ds.writeLatestPointer(ctx, sw.snapshotID); err != nil {
+	if err := sw.ds.writeLatestPointer(ctx, sw.expectedPointer, sw.snapshotID); err != nil {
 		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
 		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
 	}
@@ -1240,6 +1306,7 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
 	}
 	sw.ds.lastSnapshotID = sw.snapshotID
+	sw.ds.lastWrittenPointer = string(sw.snapshotID)
 
 	// Mark committed only after full success
 	sw.mu.Lock()

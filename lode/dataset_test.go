@@ -2655,7 +2655,12 @@ func TestDataset_HiveLayout_BackwardCompat_FallbackScan(t *testing.T) {
 
 // TestDataset_Write_CorruptPointer_FallsBackToScan verifies that a corrupt
 // latest pointer (referencing a nonexistent snapshot) falls through to scan
-// in resolveParentID, preventing broken linear history.
+// in resolveParent, preventing broken linear history.
+//
+// With CAS-enabled stores (ConditionalWriter), resolveParent correctly identifies
+// the parent via scan, but the CAS write detects the external pointer modification
+// and returns ErrSnapshotConflict. This is correct: external modification IS a
+// concurrent write from CAS's perspective.
 func TestDataset_Write_CorruptPointer_FallsBackToScan(t *testing.T) {
 	mem := NewMemory()
 	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
@@ -2664,7 +2669,7 @@ func TestDataset_Write_CorruptPointer_FallsBackToScan(t *testing.T) {
 	}
 
 	// Write first snapshot.
-	snap1, err := ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
+	_, err = ds.Write(t.Context(), R(D{"i": 1}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2678,22 +2683,20 @@ func TestDataset_Write_CorruptPointer_FallsBackToScan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Second write should succeed — resolveParentID falls back to scan.
-	snap2, err := ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
-	if err != nil {
-		t.Fatalf("Write with corrupt pointer should succeed: %v", err)
-	}
-
-	// Parent should be snap1 (from scan fallback), not the corrupt ID.
-	if snap2.Manifest.ParentSnapshotID != snap1.ID {
-		t.Errorf("expected parent %s (from scan), got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
+	// With CAS, the write detects external pointer modification as a conflict.
+	// The in-memory cache knows what it last wrote; the external change is detected.
+	_, err = ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict for externally modified pointer, got: %v", err)
 	}
 }
 
 // TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache verifies that
-// when the pointer references an older (but existing) snapshot — e.g., because
-// a pointer write failed — the in-memory cache prevents the stale pointer from
-// breaking linear history.
+// when the pointer is externally modified after a successful commit, CAS
+// detects the external modification and returns ErrSnapshotConflict.
+//
+// The in-memory cache correctly resolves the parent snapshot, but the pointer
+// was tampered with between commits. CAS treats this as concurrent modification.
 func TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 	mem := NewMemory()
 	ds, err := NewDataset("test-ds", NewMemoryFactoryFrom(mem), WithCodec(NewJSONLCodec()))
@@ -2706,16 +2709,12 @@ func TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap2, err := ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
+	_, err = ds.Write(t.Context(), R(D{"i": 2}), Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap2.Manifest.ParentSnapshotID != snap1.ID {
-		t.Fatalf("snap2 parent should be snap1")
-	}
 
-	// Corrupt the pointer to point back to snap-1 (which still exists).
-	// This simulates a pointer write failure after snap-2's commit.
+	// Externally modify the pointer to point back to snap-1.
 	pointerPath := "datasets/test-ds/latest"
 	if err := mem.Delete(t.Context(), pointerPath); err != nil {
 		t.Fatal(err)
@@ -2724,15 +2723,11 @@ func TestDataset_Write_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write snap-3: must use snap-2 as parent (from in-memory cache),
-	// NOT snap-1 (from stale pointer).
-	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
-	if err != nil {
-		t.Fatalf("Write with stale pointer should succeed: %v", err)
-	}
-	if snap3.Manifest.ParentSnapshotID != snap2.ID {
-		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
-			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
+	// With CAS, the write detects external pointer modification.
+	// The cache knows we last wrote snap-2's ID, but the pointer now contains snap-1's ID.
+	_, err = ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict for externally modified pointer, got: %v", err)
 	}
 }
 
@@ -2851,14 +2846,11 @@ func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Inject Put error only on the "latest" pointer path.
-	// writeLatestPointer does Delete + Put; the Put will fail.
-	fs.mu.Lock()
-	fs.putErr = errors.New("injected: pointer write failure")
-	fs.putErrMatch = "latest"
-	fs.mu.Unlock()
+	// Inject CAS error on the "latest" pointer path.
+	// writeLatestPointer uses CompareAndSwap when the store implements ConditionalWriter.
+	fs.SetCASError(errors.New("injected: pointer write failure"), "latest")
 
-	// Record Put calls before the failed write.
+	// Record calls before the failed write.
 	fs.Reset()
 
 	// Second write should fail because pointer write is required.
@@ -2875,11 +2867,8 @@ func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		}
 	}
 
-	// Clear the error and write again — should succeed with snap-1 as parent.
-	fs.mu.Lock()
-	fs.putErr = nil
-	fs.putErrMatch = ""
-	fs.mu.Unlock()
+	// Clear the CAS error and write again — should succeed with snap-1 as parent.
+	fs.SetCASError(nil)
 
 	snap3, err := ds.Write(t.Context(), R(D{"i": 3}), Metadata{})
 	if err != nil {
@@ -2887,5 +2876,60 @@ func TestDataset_Write_PointerWriteFailure_AbortsCommit(t *testing.T) {
 	}
 	if snap3.Manifest.ParentSnapshotID != snap1.ID {
 		t.Errorf("expected parent %s, got %s", snap1.ID, snap3.Manifest.ParentSnapshotID)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// CAS integration tests — concurrent conflict detection
+// -----------------------------------------------------------------------------
+
+// TestDataset_Write_ConcurrentConflict verifies that two datasets sharing
+// the same store detect concurrent writes via ErrSnapshotConflict.
+// Memory store implements ConditionalWriter, enabling CAS.
+//
+// Scenario: ds1 commits first. ds2 then commits, which succeeds because it
+// reads the updated pointer. But then ds1 commits again, and ds2 also tries
+// to commit — ds2's cached pointer is now stale, so CAS detects the conflict.
+func TestDataset_Write_ConcurrentConflict(t *testing.T) {
+	mem := NewMemory()
+	factory := NewMemoryFactoryFrom(mem)
+
+	ds1, err := NewDataset("shared", factory, WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatalf("NewDataset ds1: %v", err)
+	}
+	ds2, err := NewDataset("shared", factory, WithCodec(NewJSONLCodec()))
+	if err != nil {
+		t.Fatalf("NewDataset ds2: %v", err)
+	}
+
+	// Both start empty. ds1 writes first (CAS create: expected="" → snap1).
+	_, err = ds1.Write(t.Context(), R(D{"writer": "ds1", "seq": 1}), Metadata{})
+	if err != nil {
+		t.Fatalf("ds1 first write: %v", err)
+	}
+
+	// ds2 writes (reads pointer from store → sees snap1 → CAS update succeeds).
+	_, err = ds2.Write(t.Context(), R(D{"writer": "ds2", "seq": 1}), Metadata{})
+	if err != nil {
+		t.Fatalf("ds2 first write: %v", err)
+	}
+
+	// Now ds1's cached pointer is "snap1" but the pointer was updated by ds2 to "snap2".
+	// ds1's next write should detect the conflict.
+	_, err = ds1.Write(t.Context(), R(D{"writer": "ds1", "seq": 2}), Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict from ds1 (stale cache), got: %v", err)
+	}
+
+	// Documented retry path: re-read Latest(), then re-commit on the same instance.
+	_, err = ds1.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("ds1 Latest() after conflict: %v", err)
+	}
+
+	_, err = ds1.Write(t.Context(), R(D{"writer": "ds1", "seq": 2}), Metadata{})
+	if err != nil {
+		t.Fatalf("ds1 retry after Latest() should succeed, got: %v", err)
 	}
 }

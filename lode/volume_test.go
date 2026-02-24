@@ -1619,8 +1619,8 @@ func TestMergeBlocks(t *testing.T) {
 }
 
 // TestVolume_Commit_StalePointer_FallsBackToScan verifies that a stale
-// latest pointer (referencing a nonexistent snapshot) causes Commit to
-// fall back to scan, preserving linear history.
+// latest pointer (referencing a nonexistent snapshot) is detected by CAS
+// as external modification and returns ErrSnapshotConflict.
 func TestVolume_Commit_StalePointer_FallsBackToScan(t *testing.T) {
 	mem := NewMemory()
 	vol, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
@@ -1633,7 +1633,7 @@ func TestVolume_Commit_StalePointer_FallsBackToScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap1, err := vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	_, err = vol.Commit(t.Context(), []BlockRef{block1}, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1647,30 +1647,20 @@ func TestVolume_Commit_StalePointer_FallsBackToScan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Stage and commit second block — should succeed via scan fallback.
+	// With CAS, the commit detects external pointer modification.
 	block2, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2-data")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap2, err := vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
-	if err != nil {
-		t.Fatalf("Commit with stale pointer should succeed: %v", err)
-	}
-
-	// Parent should be snap1 (from scan fallback), not the stale ID.
-	if snap2.Manifest.ParentSnapshotID != snap1.ID {
-		t.Errorf("expected parent %s (from scan), got %s", snap1.ID, snap2.Manifest.ParentSnapshotID)
-	}
-	// Cumulative blocks should include both.
-	if len(snap2.Manifest.Blocks) != 2 {
-		t.Errorf("expected 2 cumulative blocks, got %d", len(snap2.Manifest.Blocks))
+	_, err = vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict for externally modified pointer, got: %v", err)
 	}
 }
 
 // TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache verifies that
-// when the pointer references an older (but existing) snapshot — e.g., because
-// a pointer write failed — the in-memory cache prevents the stale pointer from
-// breaking linear history.
+// when the pointer is externally modified after a successful commit, CAS
+// detects the external modification and returns ErrSnapshotConflict.
 func TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 	mem := NewMemory()
 	vol, err := NewVolume("test-vol", NewMemoryFactoryFrom(mem), 1024*1024)
@@ -1692,15 +1682,12 @@ func TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap2, err := vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	_, err = vol.Commit(t.Context(), []BlockRef{block2}, Metadata{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap2.Manifest.ParentSnapshotID != snap1.ID {
-		t.Fatalf("snap2 parent should be snap1")
-	}
 
-	// Corrupt the pointer to point back to snap-1 (which still exists).
+	// Externally modify the pointer to point back to snap-1.
 	pointerPath := "volumes/test-vol/latest"
 	if err := mem.Delete(t.Context(), pointerPath); err != nil {
 		t.Fatal(err)
@@ -1709,23 +1696,14 @@ func TestVolume_Commit_StaleButExistingPointer_UsesInMemoryCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Commit snap-3: must use snap-2 as parent (from in-memory cache),
-	// NOT snap-1 (from stale pointer).
+	// With CAS, the commit detects external pointer modification.
 	block3, err := vol.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-3")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap3, err := vol.Commit(t.Context(), []BlockRef{block3}, Metadata{})
-	if err != nil {
-		t.Fatalf("Commit with stale pointer should succeed: %v", err)
-	}
-	if snap3.Manifest.ParentSnapshotID != snap2.ID {
-		t.Errorf("expected parent %s (from in-memory cache), got %s (stale pointer would give %s)",
-			snap2.ID, snap3.Manifest.ParentSnapshotID, snap1.ID)
-	}
-	// Cumulative blocks should include all three.
-	if len(snap3.Manifest.Blocks) != 3 {
-		t.Errorf("expected 3 cumulative blocks, got %d", len(snap3.Manifest.Blocks))
+	_, err = vol.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict for externally modified pointer, got: %v", err)
 	}
 }
 
@@ -1886,13 +1864,11 @@ func TestVolume_Commit_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Inject Put error only on the "latest" pointer path.
-	fs.mu.Lock()
-	fs.putErr = errors.New("injected: pointer write failure")
-	fs.putErrMatch = "latest"
-	fs.mu.Unlock()
+	// Inject CAS error on the "latest" pointer path.
+	// writeLatestPointer uses CompareAndSwap when the store implements ConditionalWriter.
+	fs.SetCASError(errors.New("injected: pointer write failure"), "latest")
 
-	// Record Put calls before the failed commit.
+	// Record calls before the failed commit.
 	fs.Reset()
 
 	// Second commit should fail because pointer write is required.
@@ -1913,11 +1889,8 @@ func TestVolume_Commit_PointerWriteFailure_AbortsCommit(t *testing.T) {
 		}
 	}
 
-	// Clear the error and commit again — should succeed with snap-1 as parent.
-	fs.mu.Lock()
-	fs.putErr = nil
-	fs.putErrMatch = ""
-	fs.mu.Unlock()
+	// Clear the CAS error and commit again — should succeed with snap-1 as parent.
+	fs.SetCASError(nil)
 
 	block2b, err := vol.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-2b")))
 	if err != nil {
@@ -1993,5 +1966,78 @@ func BenchmarkMergeBlocks(b *testing.B) {
 				_ = mergeBlocks(existing, newBlocks)
 			}
 		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// CAS integration tests — concurrent conflict detection
+// -----------------------------------------------------------------------------
+
+// TestVolume_Commit_ConcurrentConflict verifies that two volume instances
+// sharing the same store detect concurrent commits via ErrSnapshotConflict.
+// Memory store implements ConditionalWriter, enabling CAS.
+//
+// Scenario: v1 commits first. v2 then commits, which succeeds because it
+// reads the updated pointer. But then v1 commits again — its cached pointer
+// is now stale because v2 updated it, so CAS detects the conflict.
+func TestVolume_Commit_ConcurrentConflict(t *testing.T) {
+	mem := NewMemory()
+	factory := NewMemoryFactoryFrom(mem)
+
+	v1, err := NewVolume("shared", factory, 1024)
+	if err != nil {
+		t.Fatalf("NewVolume v1: %v", err)
+	}
+	v2, err := NewVolume("shared", factory, 1024)
+	if err != nil {
+		t.Fatalf("NewVolume v2: %v", err)
+	}
+
+	// Both start empty. v1 commits first (CAS create: expected="" → snap1).
+	block1, err := v1.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-a")))
+	if err != nil {
+		t.Fatalf("v1 stage: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 first commit: %v", err)
+	}
+
+	// v2 commits (reads pointer from store → sees snap1 → CAS update succeeds).
+	block2, err := v2.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-b")))
+	if err != nil {
+		t.Fatalf("v2 stage: %v", err)
+	}
+	_, err = v2.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatalf("v2 first commit: %v", err)
+	}
+
+	// Now v1's cached pointer is "snap1" but v2 updated it to "snap2".
+	// v1's next commit should detect the conflict.
+	block3, err := v1.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-c")))
+	if err != nil {
+		t.Fatalf("v1 stage 2: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict from v1 (stale cache), got: %v", err)
+	}
+
+	// Documented retry path: re-read Latest(), then re-commit on the same instance.
+	_, err = v1.Latest(t.Context())
+	if err != nil {
+		t.Fatalf("v1 Latest() after conflict: %v", err)
+	}
+
+	// Re-stage and commit. Commit merges parent blocks internally,
+	// so only the new block is passed.
+	block4, err := v1.StageWriteAt(t.Context(), 300, bytes.NewReader([]byte("block-d")))
+	if err != nil {
+		t.Fatalf("v1 stage 3: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block4}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 retry after Latest() should succeed, got: %v", err)
 	}
 }

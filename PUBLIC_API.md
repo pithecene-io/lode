@@ -500,6 +500,21 @@ for a full breakdown of supported patterns.
 
 *Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency, [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md) §Concurrency, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §ConditionalWriter Capability*
 
+### Performance
+
+CAS adds negligible overhead. Benchmarks on the in-memory adapter
+(20 sequential writes per iteration, AMD Ryzen 9 5900XT):
+
+| Metric | Delete+Put (main) | CAS (ConditionalWriter) | Delta |
+|--------|-------------------|-------------------------|-------|
+| ns/op  | 161,603           | 136,200                 | −16%  |
+| B/op   | 110,587           | 98,710                  | −11%  |
+| allocs | 740               | 720                     | −3%   |
+
+CAS replaces Delete+Put (2 store calls) with a single CompareAndSwap,
+reducing both latency and allocation count. Stores without ConditionalWriter
+retain the existing Delete+Put path with no change.
+
 ### Large Upload Guarantees
 
 For uploads exceeding the storage adapter's atomic threshold (e.g., 5GB for S3),

@@ -46,6 +46,12 @@ func (s *latencyStore) ReaderAt(ctx context.Context, path string) (io.ReaderAt, 
 	return s.inner.ReaderAt(ctx, path)
 }
 
+// CompareAndSwap forwards to the inner store's ConditionalWriter implementation.
+// This ensures benchmarks exercise the CAS commit path, not the Delete+Put fallback.
+func (s *latencyStore) CompareAndSwap(ctx context.Context, path, expected, replacement string) error {
+	return s.inner.(ConditionalWriter).CompareAndSwap(ctx, path, expected, replacement)
+}
+
 // BenchmarkDataset_SequentialWrites measures the cost of N sequential writes.
 //
 // With the persistent latest pointer (issues #118/#119), writes 2..N resolve

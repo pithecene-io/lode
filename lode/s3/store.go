@@ -452,6 +452,84 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// CompareAndSwap atomically replaces the content at path if and only if
+// the current content matches expected. See lode.ConditionalWriter for semantics.
+//
+// Uses GetObject to read current content + capture ETag, then PutObject with
+// If-Match to atomically replace. Maps PreconditionFailed/ConditionalRequestConflict
+// to ErrSnapshotConflict.
+func (s *Store) CompareAndSwap(ctx context.Context, key, expected, replacement string) error {
+	fullKey, err := s.validateKey(key)
+	if err != nil {
+		return err
+	}
+
+	// Read current content and capture ETag.
+	out, getErr := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(fullKey),
+	})
+
+	if getErr != nil {
+		if !isNotFound(getErr) {
+			return fmt.Errorf("s3: get object for CAS: %w", getErr)
+		}
+		// Path does not exist.
+		if expected != "" {
+			return lode.ErrSnapshotConflict
+		}
+		// First commit: create with If-None-Match to guard against races.
+		_, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(s.bucket),
+			Key:           aws.String(fullKey),
+			Body:          strings.NewReader(replacement),
+			ContentLength: aws.Int64(int64(len(replacement))),
+			IfNoneMatch:   aws.String("*"),
+		})
+		if putErr != nil {
+			return s.mapCASError(putErr)
+		}
+		return nil
+	}
+	defer func() { _ = out.Body.Close() }()
+
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return fmt.Errorf("s3: reading CAS content: %w", err)
+	}
+
+	if string(data) != expected {
+		return lode.ErrSnapshotConflict
+	}
+
+	// Content matches: replace with If-Match to guard against concurrent updates.
+	etag := aws.ToString(out.ETag)
+	_, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(fullKey),
+		Body:          strings.NewReader(replacement),
+		ContentLength: aws.Int64(int64(len(replacement))),
+		IfMatch:       aws.String(etag),
+	})
+	if putErr != nil {
+		return s.mapCASError(putErr)
+	}
+	return nil
+}
+
+// mapCASError maps S3 precondition errors to ErrSnapshotConflict.
+func (s *Store) mapCASError(err error) error {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		code := apiErr.ErrorCode()
+		if code == "PreconditionFailed" || code == "412" ||
+			code == "ConditionalRequestConflict" || code == "409" {
+			return lode.ErrSnapshotConflict
+		}
+	}
+	return fmt.Errorf("s3: CAS put: %w", err)
+}
+
 // ReadRange reads a byte range from the given path.
 // Returns ErrNotFound if the path does not exist.
 // Returns ErrInvalidPath for negative offset/length, overflow, or invalid paths.
@@ -707,6 +785,11 @@ func (m *MockS3Client) ResetCounts() {
 	m.uploadPartCalls = 0
 }
 
+// objectETag returns a deterministic ETag for the given data.
+func objectETag(data []byte) string {
+	return fmt.Sprintf("\"%x\"", len(data))
+}
+
 // PutObject implements API.PutObject for testing.
 func (m *MockS3Client) PutObject(_ context.Context, params *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	key := aws.ToString(params.Key)
@@ -724,6 +807,17 @@ func (m *MockS3Client) PutObject(_ context.Context, params *s3.PutObjectInput, _
 	if aws.ToString(params.IfNoneMatch) == "*" {
 		if _, exists := m.objects[key]; exists {
 			return nil, &smithyAPIError{code: "PreconditionFailed", message: "object already exists"}
+		}
+	}
+
+	// Handle If-Match: <etag> (conditional update for CAS)
+	if ifMatch := aws.ToString(params.IfMatch); ifMatch != "" {
+		existing, exists := m.objects[key]
+		if !exists {
+			return nil, &smithyAPIError{code: "PreconditionFailed", message: "object does not exist"}
+		}
+		if objectETag(existing) != ifMatch {
+			return nil, &smithyAPIError{code: "PreconditionFailed", message: "etag mismatch"}
 		}
 	}
 
@@ -762,6 +856,7 @@ func (m *MockS3Client) GetObject(_ context.Context, params *s3.GetObjectInput, _
 
 	return &s3.GetObjectOutput{
 		Body: io.NopCloser(bytes.NewReader(data)),
+		ETag: aws.String(objectETag(data)),
 	}, nil
 }
 

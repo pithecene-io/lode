@@ -330,44 +330,44 @@ func TestStreamWrite_BlockedPut_ContextCancel_NoManifest(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Block Put operations and signal when the pointer Put is entered.
-	// With pointer-before-manifest protocol, the first Put during Commit
-	// is the "latest" pointer, not the manifest.
-	putBlock := make(chan struct{})
-	pointerPutEntered := make(chan struct{}, 1)
-	fs.SetPutBlock(putBlock)
+	// Block CAS (CompareAndSwap) and signal when the pointer CAS is entered.
+	// With CAS-aware pointer-before-manifest protocol, the pointer write
+	// uses CompareAndSwap, not Put.
+	casBlock := make(chan struct{})
+	pointerCASEntered := make(chan struct{}, 1)
+	fs.SetCASBlock(casBlock)
 
-	// Use beforePut hook for deterministic synchronization (no busy-spin)
-	fs.SetBeforePut(func(path string) {
+	// Use beforeCAS hook for deterministic synchronization (no busy-spin)
+	fs.SetBeforeCAS(func(path string) {
 		if strings.Contains(path, "latest") {
 			select {
-			case pointerPutEntered <- struct{}{}:
+			case pointerCASEntered <- struct{}{}:
 			default:
 				// Already signaled
 			}
 		}
 	})
 
-	// Start commit in goroutine (will block on pointer Put)
+	// Start commit in goroutine (will block on pointer CAS)
 	commitDone := make(chan error, 1)
 	go func() {
 		_, err := sw.Commit(ctx)
 		commitDone <- err
 	}()
 
-	// Wait for commit to reach the blocked pointer Put (deterministic sync)
+	// Wait for commit to reach the blocked pointer CAS (deterministic sync)
 	select {
-	case <-pointerPutEntered:
-		// Pointer Put has been called and is now blocked
+	case <-pointerCASEntered:
+		// Pointer CAS has been called and is now blocked
 	case <-time.After(2 * time.Second):
-		t.Fatal("commit did not reach pointer Put")
+		t.Fatal("commit did not reach pointer CAS")
 	}
 
-	// Cancel context while Put is blocked
+	// Cancel context while CAS is blocked
 	cancel()
 
-	// Unblock Put (it should see canceled context)
-	close(putBlock)
+	// Unblock CAS (it should see canceled context)
+	close(casBlock)
 
 	// Wait for commit to complete
 	select {
