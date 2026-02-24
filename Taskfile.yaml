@@ -38,6 +38,8 @@ tasks:
       - go run ./examples/stream_write_records
       - go run ./examples/parquet
       - go run ./examples/optimistic_concurrency
+      - go run ./examples/volume_sparse
+      - go run ./examples/vector_artifacts
 
   snippets:
     desc: Verify runnable markdown snippets
