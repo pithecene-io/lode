@@ -120,6 +120,57 @@ For streaming writes that use the multipart/chunked path:
 
 ---
 
+## ConditionalWriter Capability
+
+`ConditionalWriter` is an optional interface that storage adapters MAY implement
+to enable optimistic concurrency (CAS) on the latest pointer.
+
+```go
+type ConditionalWriter interface {
+    CompareAndSwap(ctx context.Context, path string, expected string, replacement string) error
+}
+```
+
+### Semantics
+
+| Path State | Expected | Behavior |
+|------------|----------|----------|
+| Does not exist | `""` (empty) | Create file with `replacement` content |
+| Does not exist | Non-empty | Return `ErrSnapshotConflict` |
+| Exists, content == expected | Any | Atomically replace content with `replacement` |
+| Exists, content != expected | Any | Return `ErrSnapshotConflict` |
+
+- The operation MUST be atomic: concurrent `CompareAndSwap` calls on the same
+  path MUST NOT both succeed.
+- `expected == ""` means "path must not exist or be empty" — this handles
+  the first-commit edge case.
+
+### Implementation Notes
+
+**Filesystem adapter:**
+- Acquire `flock` on a companion `.lock` file adjacent to the target path.
+- Under lock: read current content, compare, write replacement.
+- Release lock.
+
+**S3 adapter:**
+- `GetObject` to read current content and capture ETag.
+- `PutObject` with `If-Match` (update) or `If-None-Match: *` (create).
+- If the ETag has changed, return `ErrSnapshotConflict`.
+
+**Memory adapter:**
+- Mutex-protected read-compare-write.
+
+### Adapter Compatibility
+
+Adapters that do not implement `ConditionalWriter` are valid. The commit
+path falls back to Delete+Put and callers must ensure single-writer
+semantics as before.
+
+When an adapter does implement `ConditionalWriter`, the commit path uses
+`CompareAndSwap` automatically. No caller configuration is required.
+
+---
+
 ## Consistency Notes
 
 Adapters MUST document:

@@ -36,14 +36,14 @@ as `(private)` instead of by number.
 - **Contact:** @justapithecus
 - **Usage profile:** Dataset
 - **Storage backend:** AWS S3 (S3 adapter targeting Cloudflare R2)
-- **Status:** In progress
+- **Status:** In progress (~2 weeks production operation)
 
 | Criterion | Validated | Date | Notes |
 |-----------|:---------:|------|-------|
-| Dataset write round-trip | | | |
+| Dataset write round-trip | ✅ | 2026-02-23 | Hive-partitioned writes and reads over S3-compatible backend at >100k object scale |
 | Volume write round-trip | N/A | — | Dataset-only integration |
-| Error sentinels observed | | | |
-| API friction (none = pass) | | | |
+| Error sentinels observed | ✅ | 2026-02-23 | `ErrNoSnapshots` handled on cold start; latest-pointer resolution exercised |
+| API friction (none = pass) | ❌ | 2026-02-23 | Blob file completeness not verifiable without prefix scan (see §9); concurrent write safety now documented but still operational friction for non-CAS stores |
 
 <!--
 ### <project-name or redacted alias>
@@ -124,31 +124,31 @@ as `(private)` instead of by number.
 
 - [ ] At least one consumer writing Dataset snapshots to S3 for 2+ weeks
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Quarry production pipeline writing Hive-partitioned Dataset snapshots to S3-compatible backend (R2) since 2026-02-10. 13 days elapsed as of 2026-02-23; threshold is 14 days. Eligible on 2026-02-24.
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Hive-partitioned event and blob storage, deterministic segment layout confirmed idempotent across re-runs. Pending 1 more day to meet 2-week threshold.
+> Issue: (private)
 
 - [ ] At least one consumer reading Dataset snapshots back (round-trip) for 2+ weeks
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Quarry reads Dataset snapshots via prefix listing and segment data files. Full round-trip confirmed but read path requires prefix scan + post-filter (no segment enumeration shortcut).
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Partial — reads work but rely on prefix listing rather than manifest-driven discovery for blob files.
+> Issue: (private)
 
 - [ ] At least 100 Dataset snapshots committed and read with no corruption
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** _not yet recorded — snapshot count not yet confirmed_
+> Date: — | Observer: — | Project: quarry
+> Summary: No corruption observed during dogfooding period; exact count pending.
+> Issue: (private)
 
 - [ ] No Dataset API changes required to support integration
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** No API changes required during integration. Two performance fixes (v0.7.1 O(n²) write, v0.7.3 latest pointer) were internal improvements, not API changes.
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: API surface stable throughout integration. Consumer workarounds address missing features (blob manifest), not API defects.
+> Issue: (private)
 
 ### 4. Volume Dogfooding
 
@@ -182,12 +182,12 @@ as `(private)` instead of by number.
 
 ### 5. Error Path Validation
 
-- [ ] ErrNoSnapshots observed and handled correctly by a downstream consumer
+- [x] ErrNoSnapshots observed and handled correctly by a downstream consumer
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Quarry handles `ErrNoSnapshots` on cold start (empty dataset, no committed snapshots).
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Sentinel correctly returned and handled. Latest-pointer self-healing scan fallback exercised on first access.
+> Issue: (private)
 
 - [ ] ErrPathExists observed in real storage confirming immutability enforcement
 
@@ -207,10 +207,10 @@ as `(private)` instead of by number.
 
 - [ ] AWS S3 used for Dataset and Volume writes/reads during dogfooding with no adapter errors
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Quarry uses the S3 adapter targeting Cloudflare R2 (S3-compatible). Dataset writes/reads confirmed working at >100k object scale. No adapter errors observed. Volume not exercised (Dataset-only integration).
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Partial — S3 adapter verified on R2 for Dataset path. Volume and native AWS S3 not yet exercised.
+> Issue: (private)
 
 - [ ] Non-AWS backend caveat documented in README and PUBLIC_API.md as known v1.0 limitation
 
@@ -221,12 +221,12 @@ as `(private)` instead of by number.
 
 ### 7. Known Limitations Accepted
 
-- [ ] Single-writer semantics documented as v1.0 limitation in README + PUBLIC_API.md + contracts
+- [ ] Concurrency model documented in README + PUBLIC_API.md + contracts (single-writer when store lacks `ConditionalWriter`; CAS-based optimistic concurrency when available)
 
 > **Evidence:** _not yet recorded_
 > Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> Summary: CAS optimistic concurrency implemented in #135 (pending merge). Contracts and PUBLIC_API.md already document `ConditionalWriter` and `ErrSnapshotConflict`. README documentation pending.
+> Issue: #135
 
 - [ ] Context cancellation cleanup nondeterminism documented as best-effort, no correctness impact
 
@@ -272,28 +272,44 @@ as `(private)` instead of by number.
 > Summary: —
 > Issue: #___
 
-### 9. Data Correctness
+### 9. Blob File Completeness
+
+- [ ] Blob files written alongside structured data within a snapshot are enumerable without prefix-scanning storage
+
+> **Evidence:** _not yet recorded_
+> Date: — | Observer: — | Project: —
+> Summary: —
+> Issue: #___
+
+- [ ] Consumers can verify which blob files were successfully persisted for a given commit
+
+> **Evidence:** _not yet recorded_
+> Date: — | Observer: — | Project: —
+> Summary: —
+> Issue: #___
+
+### 10. Data Correctness
 
 - [ ] Zero silent data corruption during dogfooding (Dataset or Volume)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** No corruption observed during ~2 weeks of Quarry production pipeline operation on R2.
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Partial — no corruption observed but formal verification (checksum audit) not yet performed.
+> Issue: (private)
 
 - [ ] Zero manifest deserialization failures on same-version data
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** No manifest deserialization failures observed during Quarry dogfooding.
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Partial — no failures observed; systematic audit not yet performed.
+> Issue: (private)
 
 - [ ] Zero snapshot history inconsistencies (forked history, missing parent, duplicate ID)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Persistent latest pointer (v0.7.3) resolved prior cold-start scan issue. No history inconsistencies observed since.
+> Date: 2026-02-23 | Observer: @justapithecus | Project: quarry
+> Summary: Partial — no inconsistencies observed; O(n²) parent resolution and latest-pointer bugs (pre-v0.7.3) could have caused issues in earlier versions.
+> Issue: (private)
 
 ---
 
@@ -301,13 +317,13 @@ as `(private)` instead of by number.
 
 The following are explicitly **not blockers** for the v1.0 release:
 
-- Content-addressable storage (CAS)
+- Content-addressable storage
 - Zarr codec support
 - New codecs beyond Parquet
 - Performance benchmarking or optimization
 - New storage adapters beyond S3
 - Compaction or garbage collection
-- Multi-writer / distributed coordination
+- Distributed coordination (consensus, lock management)
 - Query planning or execution
 
 These may become goals for v1.1+ but must not gate the initial stability release.
