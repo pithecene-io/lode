@@ -7,13 +7,13 @@ bench-*.txt
 # Go test and compiled binaries
 *.test
 *.test.exe
-blob_upload
-default_layout
-hive_layout
-manifest_driven
-optimistic_concurrency
-parquet
-s3_experimental
-stream_write_records
-vector_artifacts
-volume_sparse
+/blob_upload
+/default_layout
+/hive_layout
+/manifest_driven
+/optimistic_concurrency
+/parquet
+/s3_experimental
+/stream_write_records
+/vector_artifacts
+/volume_sparse

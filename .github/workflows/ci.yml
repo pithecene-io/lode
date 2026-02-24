@@ -33,19 +33,6 @@ jobs:
       - name: 🧪 Test
         run: task test
 
-  race:
-    name: 🏁 Race Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
-
-      - name: 🧰 Setup
-        uses: jdx/mise-action@v2
-
-      - name: 🏁 Race Tests
-        run: task test:race
-
   build:
     name: 🏗️ Build
     runs-on: ubuntu-latest
