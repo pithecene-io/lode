@@ -123,10 +123,15 @@ If no annotation is present, the snippet is assumed **illustrative** by default.
 | 152-163 | go | Illustrative | Timestamped implementation example |
 | 254-262 | go | Illustrative | Bootstrap helper pattern |
 | 341-346 | go | Illustrative | errors.Is usage pattern |
-| 392-407 | go | Illustrative | AWS S3 client setup |
-| 412-434 | go | Illustrative | LocalStack client setup |
-| 438-451 | go | Illustrative | MinIO client setup |
-| 455-467 | go | Illustrative | Cloudflare R2 client setup |
+| 392-407 | go | Illustrative | AWS S3 client setup (Storage Prerequisites) |
+| 412-434 | go | Illustrative | LocalStack client setup (Storage Prerequisites) |
+| 438-451 | go | Illustrative | MinIO client setup (Storage Prerequisites) |
+| 455-467 | go | Illustrative | Cloudflare R2 client setup (Storage Prerequisites) |
+| 576-581 | go | Illustrative | errors.Is sentinel check pattern |
+| 634-649 | go | Illustrative | AWS S3 client setup (S3 Adapter) |
+| 654-676 | go | Illustrative | LocalStack client setup (S3 Adapter) |
+| 681-694 | go | Illustrative | MinIO client setup (S3 Adapter) |
+| 699-711 | go | Illustrative | Cloudflare R2 client setup (S3 Adapter) |
 
 ### examples/blob_upload/README.md
 

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CAS optimistic concurrency**: `ConditionalWriter` interface and `CompareAndSwap` method on FS, Memory, and S3 stores. Dataset and Volume commit paths use CAS when available, falling back to Delete+Put for single-writer stores. `ErrSnapshotConflict` sentinel for conflict detection and retry. ([#134](https://github.com/pithecene-io/lode/pull/134), [#135](https://github.com/pithecene-io/lode/pull/135))
+- **Optimistic concurrency example**: `examples/optimistic_concurrency/` demonstrates CAS conflict detection and retry pattern. ([#135](https://github.com/pithecene-io/lode/pull/135))
+- **Vector artifact pipeline example**: `examples/vector_artifacts/` demonstrates embeddings, indices, and active pointers. ([#138](https://github.com/pithecene-io/lode/pull/138))
+- **AI governance**: `CLAUDE.md` repository constitution and `ai/skills/` repo-local skill definitions. ([#136](https://github.com/pithecene-io/lode/pull/136))
+- **Race detection in CI**: `-race` testing added as a parallel CI job. ([#141](https://github.com/pithecene-io/lode/pull/141))
+- **Test hardening**: Store coverage (Exists, List, path safety), sentinel error messages, and Parquet type conversion. ([#145](https://github.com/pithecene-io/lode/pull/145), [#146](https://github.com/pithecene-io/lode/pull/146))
+
+### Changed
+
+- **Table-driven manifest validation**: `validateVolumeManifest` refactored from sequential checks to validation table. ([#143](https://github.com/pithecene-io/lode/pull/143))
+- **StreamWriteRecords cleanup helper**: Deduplicated 4 cleanup sequences into `cleanupStreamWrite()`. ([#144](https://github.com/pithecene-io/lode/pull/144))
+- **S3 test context**: Replaced `context.Background()` with `t.Context()`/`b.Context()` in S3 integration test cleanup. ([#142](https://github.com/pithecene-io/lode/pull/142))
+
+### Upgrade Notes
+
+- **CAS is always-on**: When the store implements `ConditionalWriter`, CAS is used automatically. No configuration required.
+- **Retry on conflict**: Callers that write concurrently should handle `ErrSnapshotConflict` by re-reading `Latest()`, merging state, and re-committing.
+- **No migration required**: Existing data and stores work without modification. Stores without `ConditionalWriter` retain the existing Delete+Put single-writer path.
+
 ---
 
 ## [0.7.4] - 2026-02-12
