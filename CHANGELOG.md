@@ -9,20 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.8.0] - 2026-02-24
+
 ### Added
 
 - **CAS optimistic concurrency**: `ConditionalWriter` interface and `CompareAndSwap` method on FS, Memory, and S3 stores. Dataset and Volume commit paths use CAS when available, falling back to Delete+Put for single-writer stores. `ErrSnapshotConflict` sentinel for conflict detection and retry. ([#134](https://github.com/pithecene-io/lode/pull/134), [#135](https://github.com/pithecene-io/lode/pull/135))
 - **Optimistic concurrency example**: `examples/optimistic_concurrency/` demonstrates CAS conflict detection and retry pattern. ([#135](https://github.com/pithecene-io/lode/pull/135))
 - **Vector artifact pipeline example**: `examples/vector_artifacts/` demonstrates embeddings, indices, and active pointers. ([#138](https://github.com/pithecene-io/lode/pull/138))
+- **S3 adapter promoted from experimental**: Documentation, ARCH_INDEX, and README updated. ([#154](https://github.com/pithecene-io/lode/pull/154))
 - **AI governance**: `CLAUDE.md` repository constitution and `ai/skills/` repo-local skill definitions. ([#136](https://github.com/pithecene-io/lode/pull/136))
 - **Race detection in CI**: `-race` testing added as a parallel CI job. ([#141](https://github.com/pithecene-io/lode/pull/141))
 - **Test hardening**: Store coverage (Exists, List, path safety), sentinel error messages, and Parquet type conversion. ([#145](https://github.com/pithecene-io/lode/pull/145), [#146](https://github.com/pithecene-io/lode/pull/146))
+
+### Fixed
+
+- **Windows build**: Extract `fsStore.CompareAndSwap` into build-constrained files. Panic replaced with error return in `buildFieldNode`. Metadata docs corrected to reflect nil coalescing. S3 test cleanup lifecycle fixed. ([#149](https://github.com/pithecene-io/lode/pull/149))
+- **Example metadata docs, S3 connectivity detection, `.gitignore` anchoring, and CI race scope**. ([#150](https://github.com/pithecene-io/lode/pull/150))
 
 ### Changed
 
 - **Table-driven manifest validation**: `validateVolumeManifest` refactored from sequential checks to validation table. ([#143](https://github.com/pithecene-io/lode/pull/143))
 - **StreamWriteRecords cleanup helper**: Deduplicated 4 cleanup sequences into `cleanupStreamWrite()`. ([#144](https://github.com/pithecene-io/lode/pull/144))
 - **S3 test context**: Replaced `context.Background()` with `t.Context()`/`b.Context()` in S3 integration test cleanup. ([#142](https://github.com/pithecene-io/lode/pull/142))
+- **CI workflows hardened** with explicit least-privilege permissions. ([#151](https://github.com/pithecene-io/lode/pull/151), [#152](https://github.com/pithecene-io/lode/pull/152), [#153](https://github.com/pithecene-io/lode/pull/153))
 
 ### Upgrade Notes
 
@@ -434,7 +445,8 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/pithecene-io/lode/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/pithecene-io/lode/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/pithecene-io/lode/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/pithecene-io/lode/compare/v0.7.1...v0.7.2
