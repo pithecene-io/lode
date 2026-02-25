@@ -30,6 +30,7 @@ func TestNewDataset_RawBlobWithPartitioner_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for raw blob mode with partitioner, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "raw blob mode") {
 		t.Errorf("expected error message about raw blob mode, got: %v", err)
 	}
@@ -52,6 +53,7 @@ func TestNewHiveLayout_ZeroKeys_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for zero keys, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "at least one partition key") {
 		t.Errorf("expected 'at least one partition key' in error, got: %v", err)
 	}
@@ -73,6 +75,7 @@ func TestWithHiveLayout_ZeroKeys_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for zero keys, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "at least one partition key") {
 		t.Errorf("expected 'at least one partition key' in error, got: %v", err)
 	}
@@ -127,6 +130,7 @@ func TestNewDataset_NilLayout_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil layout, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "layout must not be nil") {
 		t.Errorf("expected 'layout must not be nil' error, got: %v", err)
 	}
@@ -137,6 +141,7 @@ func TestNewDataset_NilCompressor_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil compressor, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "compressor must not be nil") {
 		t.Errorf("expected 'compressor must not be nil' error, got: %v", err)
 	}
@@ -151,6 +156,7 @@ func TestNewDatasetReader_NilFactory_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil factory, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "store factory is required") {
 		t.Errorf("expected 'store factory is required' error, got: %v", err)
 	}
@@ -165,6 +171,7 @@ func TestNewDatasetReader_FactoryReturnsNil_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for factory returning nil, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "returned nil store") {
 		t.Errorf("expected 'returned nil store' error, got: %v", err)
 	}
@@ -175,6 +182,7 @@ func TestNewDatasetReader_NilLayout_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil layout, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "layout must not be nil") {
 		t.Errorf("expected 'layout must not be nil' error, got: %v", err)
 	}
@@ -207,6 +215,7 @@ func TestDataset_Read_CodecMismatch_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for codec mismatch, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "codec mismatch") {
 		t.Errorf("expected 'codec mismatch' error, got: %v", err)
 	}
@@ -235,6 +244,7 @@ func TestDataset_Read_CompressorMismatch_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for compressor mismatch, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "compressor mismatch") {
 		t.Errorf("expected 'compressor mismatch' error, got: %v", err)
 	}
@@ -703,8 +713,8 @@ func TestDatasetReader_WithCompressor_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for WithCompressor on reader, got nil")
 	}
-	if !strings.Contains(err.Error(), "not valid for reader") {
-		t.Errorf("expected 'not valid for reader' error, got: %v", err)
+	if !errors.Is(err, ErrOptionNotValidForDatasetReader) {
+		t.Errorf("expected ErrOptionNotValidForDatasetReader, got: %v", err)
 	}
 }
 
@@ -714,8 +724,8 @@ func TestDatasetReader_WithCodec_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for WithCodec on reader, got nil")
 	}
-	if !strings.Contains(err.Error(), "not valid for reader") {
-		t.Errorf("expected 'not valid for reader' error, got: %v", err)
+	if !errors.Is(err, ErrOptionNotValidForDatasetReader) {
+		t.Errorf("expected ErrOptionNotValidForDatasetReader, got: %v", err)
 	}
 }
 
@@ -725,8 +735,8 @@ func TestDatasetReader_WithChecksum_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for WithChecksum on reader, got nil")
 	}
-	if !strings.Contains(err.Error(), "not valid for reader") {
-		t.Errorf("expected 'not valid for reader' error, got: %v", err)
+	if !errors.Is(err, ErrOptionNotValidForDatasetReader) {
+		t.Errorf("expected ErrOptionNotValidForDatasetReader, got: %v", err)
 	}
 }
 
@@ -806,6 +816,7 @@ func TestDataset_RawBlobWrite_MultipleElements_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for multiple elements in raw blob mode, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "exactly one data element") {
 		t.Errorf("expected 'exactly one data element' error, got: %v", err)
 	}
@@ -822,6 +833,7 @@ func TestDataset_RawBlobWrite_WrongType_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong type in raw blob mode, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "requires []byte") {
 		t.Errorf("expected '[]byte' error, got: %v", err)
 	}
@@ -1433,6 +1445,7 @@ func TestDataset_StreamWriteRecords_NoCodec_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for no codec, got nil")
 	}
+	// TODO: convert to errors.Is() when sentinel is introduced
 	if !strings.Contains(err.Error(), "requires a codec") {
 		t.Errorf("expected 'requires a codec' error, got: %v", err)
 	}
@@ -1583,8 +1596,8 @@ func TestDataset_StreamWriteRecords_IteratorError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from iterator, got nil")
 	}
-	if !strings.Contains(err.Error(), "iterator failure") {
-		t.Errorf("expected iterator failure error, got: %v", err)
+	if !errors.Is(err, iterErr) {
+		t.Errorf("expected wrapped iterErr, got: %v", err)
 	}
 
 	// Verify no snapshot created

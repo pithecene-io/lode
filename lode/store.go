@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"math"
@@ -44,7 +45,7 @@ func NewFSFactory(root string) StoreFactory {
 func NewFS(root string) (Store, error) {
 	info, err := os.Stat(root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: fs stat root: %w", err)
 	}
 	if !info.IsDir() {
 		return nil, os.ErrNotExist
@@ -64,7 +65,7 @@ func (f *fsStore) Put(_ context.Context, path string, r io.Reader) error {
 
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return fmt.Errorf("lode: fs put: %w", err)
 	}
 
 	file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -72,12 +73,14 @@ func (f *fsStore) Put(_ context.Context, path string, r io.Reader) error {
 		if os.IsExist(err) {
 			return ErrPathExists
 		}
-		return err
+		return fmt.Errorf("lode: fs put: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer closer(file)()
 
-	_, err = io.Copy(file, r)
-	return err
+	if _, err = io.Copy(file, r); err != nil {
+		return fmt.Errorf("lode: fs put: %w", err)
+	}
+	return nil
 }
 
 func (f *fsStore) Get(_ context.Context, path string) (io.ReadCloser, error) {
@@ -90,7 +93,7 @@ func (f *fsStore) Get(_ context.Context, path string) (io.ReadCloser, error) {
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("lode: fs get: %w", err)
 	}
 	return file, nil
 }
@@ -107,7 +110,7 @@ func (f *fsStore) Exists(_ context.Context, path string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("lode: fs exists: %w", err)
 }
 
 func (f *fsStore) List(_ context.Context, prefix string) ([]string, error) {
@@ -128,12 +131,12 @@ func (f *fsStore) List(_ context.Context, prefix string) ([]string, error) {
 			if os.IsNotExist(err) {
 				return nil
 			}
-			return err
+			return fmt.Errorf("lode: fs list: %w", err)
 		}
 		if !d.IsDir() {
 			relPath, err := filepath.Rel(f.root, path)
 			if err != nil {
-				return err
+				return fmt.Errorf("lode: fs list: %w", err)
 			}
 			paths = append(paths, filepath.ToSlash(relPath))
 		}
@@ -154,7 +157,10 @@ func (f *fsStore) Delete(_ context.Context, path string) error {
 	if err != nil && os.IsNotExist(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("lode: fs delete: %w", err)
+	}
+	return nil
 }
 
 func (f *fsStore) ReadRange(_ context.Context, path string, offset, length int64) ([]byte, error) {
@@ -176,14 +182,14 @@ func (f *fsStore) ReadRange(_ context.Context, path string, offset, length int64
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("lode: fs read range: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer closer(file)()
 
 	data := make([]byte, int(length))
 	n, err := file.ReadAt(data, offset)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+		return nil, fmt.Errorf("lode: fs read range: %w", err)
 	}
 
 	return data[:n], nil
@@ -200,7 +206,7 @@ func (f *fsStore) ReaderAt(_ context.Context, path string) (io.ReaderAt, error) 
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("lode: fs reader at: %w", err)
 	}
 
 	// Note: The caller is responsible for closing via type assertion if needed.

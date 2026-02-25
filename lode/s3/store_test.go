@@ -175,7 +175,7 @@ func TestStore_PutAtomicFromFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 
 	if _, err := tmpFile.Write(data); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
@@ -219,7 +219,7 @@ func TestStore_PutMultipartFromFile_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 
 	if _, err := tmpFile.Write(data); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
@@ -291,7 +291,7 @@ func TestStore_PutMultipartFromFile_PreExisting_ReturnsErrPathExists(t *testing.
 
 	// Now try multipart to same path - should fail at preflight
 	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 	_, _ = tmpFile.Write([]byte("new data"))
 	_, _ = tmpFile.Seek(0, 0)
 
@@ -328,7 +328,7 @@ func TestStore_PutMultipartFromFile_ContentIntegrity(t *testing.T) {
 	}
 
 	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 	_, _ = tmpFile.Write(data)
 	_, _ = tmpFile.Seek(0, 0)
 
@@ -342,7 +342,7 @@ func TestStore_PutMultipartFromFile_ContentIntegrity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	retrieved, err := io.ReadAll(rc)
 	if err != nil {
@@ -378,7 +378,7 @@ func TestStore_PutMultipartFromFile_FailureTriggersAbort(t *testing.T) {
 	data := make([]byte, size)
 
 	tmpFile, _ := os.CreateTemp(t.TempDir(), "test-*")
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 	_, _ = tmpFile.Write(data)
 	_, _ = tmpFile.Seek(0, 0)
 
@@ -595,7 +595,7 @@ func TestStore_PutMultipartFromFile_ConditionalCompletion_ReturnsErrPathExists(t
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
-	defer func() { _ = tmpFile.Close() }()
+	defer closer(tmpFile)()
 
 	// Write data
 	data := []byte("test multipart conditional completion")
@@ -638,7 +638,7 @@ func TestStore_Get_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	data, _ := io.ReadAll(rc)
 	if string(data) != string(content) {
@@ -1099,7 +1099,7 @@ func TestStore_CompareAndSwap_CreateWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after CAS create failed: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "snap-1" {
 		t.Errorf("expected 'snap-1', got %q", string(data))
@@ -1122,7 +1122,7 @@ func TestStore_CompareAndSwap_UpdateMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after CAS update: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "snap-2" {
 		t.Errorf("expected 'snap-2', got %q", string(data))

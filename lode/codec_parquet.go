@@ -224,7 +224,7 @@ func (c *parquetCodec) Decode(r io.Reader) ([]any, error) {
 
 	// Read all rows
 	reader := parquet.NewReader(file)
-	defer func() { _ = reader.Close() }()
+	defer closer(reader)()
 
 	records := make([]any, 0, numRows)
 	rows := make([]parquet.Row, 100)

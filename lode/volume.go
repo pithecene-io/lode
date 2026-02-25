@@ -99,7 +99,7 @@ func (v *volume) readLatestPointer(ctx context.Context) (VolumeSnapshotID, error
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -616,7 +616,7 @@ func (v *volume) loadSnapshot(ctx context.Context, id VolumeSnapshotID, manifest
 		}
 		return nil, fmt.Errorf("lode: failed to get volume manifest: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest VolumeManifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {

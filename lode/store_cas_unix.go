@@ -23,7 +23,7 @@ func (f *fsStore) CompareAndSwap(_ context.Context, path, expected, replacement 
 
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return fmt.Errorf("lode: cas mkdir: %w", err)
 	}
 
 	// Acquire advisory lock on companion .lock file.
@@ -32,7 +32,7 @@ func (f *fsStore) CompareAndSwap(_ context.Context, path, expected, replacement 
 	if err != nil {
 		return fmt.Errorf("lode: open lock file: %w", err)
 	}
-	defer func() { _ = lockFile.Close() }()
+	defer closer(lockFile)()
 
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lode: flock: %w", err)
@@ -42,7 +42,7 @@ func (f *fsStore) CompareAndSwap(_ context.Context, path, expected, replacement 
 	// Under lock: read current content and compare.
 	current, err := os.ReadFile(fullPath)
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("lode: cas read pointer: %w", err)
 	}
 	fileExists := err == nil
 
@@ -67,16 +67,16 @@ func (f *fsStore) CompareAndSwap(_ context.Context, path, expected, replacement 
 	if _, err := tmp.WriteString(replacement); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
-		return err
+		return fmt.Errorf("lode: cas write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
-		return err
+		return fmt.Errorf("lode: cas close temp: %w", err)
 	}
 
 	if err := os.Rename(tmpName, fullPath); err != nil {
 		_ = os.Remove(tmpName)
-		return err
+		return fmt.Errorf("lode: cas rename: %w", err)
 	}
 
 	return nil

@@ -16,7 +16,6 @@ import (
 	"log"
 	"os"
 
-	"github.com/pithecene-io/lode/internal/testutil"
 	"github.com/pithecene-io/lode/lode"
 )
 
@@ -34,7 +33,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	defer testutil.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 

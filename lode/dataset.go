@@ -321,7 +321,7 @@ func (d *dataset) readLatestPointer(ctx context.Context) (DatasetSnapshotID, err
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -432,44 +432,9 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		return files[i].Path < files[j].Path
 	})
 
-	manifest := &Manifest{
-		SchemaName:       manifestSchemaName,
-		FormatVersion:    manifestFormatVersion,
-		DatasetID:        d.id,
-		SnapshotID:       snapshotID,
-		CreatedAt:        time.Now().UTC(),
-		Metadata:         metadata,
-		Files:            files,
-		ParentSnapshotID: parentID,
-		RowCount:         rowCount,
-		MinTimestamp:     minTs,
-		MaxTimestamp:     maxTs,
-		Codec:            codecName,
-		Compressor:       d.compressor.Name(),
-		Partitioner:      d.layout.partitioner().name(),
-	}
-	if d.checksum != nil {
-		manifest.ChecksumAlgorithm = d.checksum.Name()
-	}
+	manifest := d.buildManifest(snapshotID, parentID, metadata, files, rowCount, codecName, minTs, maxTs)
 
-	// Pointer must be written before manifest to prevent stale-but-existing
-	// pointers on cold start. If this fails, no manifest is written and the
-	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
-	// harmless (Exists check falls through to scan on the next cold start).
-	if err := d.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
-		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
-	}
-
-	if err := d.writeManifests(ctx, snapshotID, manifest, partitionKeys); err != nil {
-		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
-	}
-	d.lastSnapshotID = snapshotID
-	d.lastWrittenPointer = string(snapshotID)
-
-	return &DatasetSnapshot{
-		ID:       snapshotID,
-		Manifest: manifest,
-	}, nil
+	return d.commitSnapshot(ctx, expectedPointer, snapshotID, manifest, partitionKeys, "")
 }
 
 func (d *dataset) Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetSnapshot, error) {
@@ -482,7 +447,7 @@ func (d *dataset) Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetS
 		}
 		return nil, fmt.Errorf("lode: failed to get manifest: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest Manifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
@@ -831,46 +796,9 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 	}
 
 	// Build manifest
-	manifest := &Manifest{
-		SchemaName:       manifestSchemaName,
-		FormatVersion:    manifestFormatVersion,
-		DatasetID:        d.id,
-		SnapshotID:       snapshotID,
-		CreatedAt:        time.Now().UTC(),
-		Metadata:         metadata,
-		Files:            []FileRef{fileRef},
-		ParentSnapshotID: parentID,
-		RowCount:         rowCount,
-		MinTimestamp:     minTs,
-		MaxTimestamp:     maxTs,
-		Codec:            d.codec.Name(),
-		Compressor:       d.compressor.Name(),
-		Partitioner:      d.layout.partitioner().name(),
-	}
-	if d.checksum != nil {
-		manifest.ChecksumAlgorithm = d.checksum.Name()
-	}
+	manifest := d.buildManifest(snapshotID, parentID, metadata, []FileRef{fileRef}, rowCount, d.codec.Name(), minTs, maxTs)
 
-	// Pointer must be written before manifest to prevent stale-but-existing
-	// pointers on cold start. If this fails, no manifest is written and the
-	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
-	// harmless (Exists check falls through to scan on the next cold start).
-	if err := d.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
-		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
-		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
-	}
-
-	if err := d.writeManifests(ctx, snapshotID, manifest, []string{""}); err != nil {
-		_ = d.store.Delete(ctx, filePath) // best-effort cleanup
-		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
-	}
-	d.lastSnapshotID = snapshotID
-	d.lastWrittenPointer = string(snapshotID)
-
-	return &DatasetSnapshot{
-		ID:       snapshotID,
-		Manifest: manifest,
-	}, nil
+	return d.commitSnapshot(ctx, expectedPointer, snapshotID, manifest, []string{""}, filePath)
 }
 
 // cleanupStreamWrite tears down the streaming write pipeline on error.
@@ -907,6 +835,80 @@ func (d *dataset) partitionRecords(records []any) (map[string][]any, error) {
 	return partitions, nil
 }
 
+// commitSnapshot writes the latest pointer and manifest, updates in-memory
+// state, and returns the completed snapshot. If cleanupPath is non-empty,
+// the data file is deleted on error (best-effort).
+func (d *dataset) commitSnapshot(ctx context.Context, expectedPointer string, snapshotID DatasetSnapshotID, manifest *Manifest, partitionKeys []string, cleanupPath string) (*DatasetSnapshot, error) {
+	// Pointer must be written before manifest to prevent stale-but-existing
+	// pointers on cold start. If this fails, no manifest is written and the
+	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+	// harmless (Exists check falls through to scan on the next cold start).
+	if err := d.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
+		if cleanupPath != "" {
+			_ = d.store.Delete(ctx, cleanupPath)
+		}
+		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	}
+
+	if err := d.writeManifests(ctx, snapshotID, manifest, partitionKeys); err != nil {
+		if cleanupPath != "" {
+			_ = d.store.Delete(ctx, cleanupPath)
+		}
+		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
+	}
+	d.lastSnapshotID = snapshotID
+	d.lastWrittenPointer = string(snapshotID)
+
+	return &DatasetSnapshot{
+		ID:       snapshotID,
+		Manifest: manifest,
+	}, nil
+}
+
+// buildManifest constructs a Manifest with common fields derived from the
+// dataset configuration. Only fields that vary across call sites are parameters.
+func (d *dataset) buildManifest(
+	snapshotID DatasetSnapshotID,
+	parentID DatasetSnapshotID,
+	metadata Metadata,
+	files []FileRef,
+	rowCount int64,
+	codec string,
+	minTs, maxTs *time.Time,
+) *Manifest {
+	m := &Manifest{
+		SchemaName:       manifestSchemaName,
+		FormatVersion:    manifestFormatVersion,
+		DatasetID:        d.id,
+		SnapshotID:       snapshotID,
+		CreatedAt:        time.Now().UTC(),
+		Metadata:         metadata,
+		Files:            files,
+		ParentSnapshotID: parentID,
+		RowCount:         rowCount,
+		MinTimestamp:     minTs,
+		MaxTimestamp:     maxTs,
+		Codec:            codec,
+		Compressor:       d.compressor.Name(),
+		Partitioner:      d.layout.partitioner().name(),
+	}
+	if d.checksum != nil {
+		m.ChecksumAlgorithm = d.checksum.Name()
+	}
+	return m
+}
+
+// checksumBytes computes a checksum of data using the dataset's configured checksum
+// algorithm. Returns empty string if no checksum is configured.
+func (d *dataset) checksumBytes(data []byte) string {
+	if d.checksum == nil {
+		return ""
+	}
+	hasher := d.checksum.NewHasher()
+	_, _ = hasher.Write(data)
+	return hasher.Sum()
+}
+
 func (d *dataset) writeRawBlob(ctx context.Context, snapshotID DatasetSnapshotID, data []byte) (FileRef, error) {
 	fileName := "blob" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, "", fileName)
@@ -914,21 +916,21 @@ func (d *dataset) writeRawBlob(ctx context.Context, snapshotID DatasetSnapshotID
 	var buf bytes.Buffer
 	compWriter, err := d.compressor.Compress(&buf)
 	if err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	if _, err := compWriter.Write(data); err != nil {
 		_ = compWriter.Close()
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	if err := compWriter.Close(); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	compressedData := buf.Bytes()
 	if err := d.store.Put(ctx, filePath, bytes.NewReader(compressedData)); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	fileRef := FileRef{
@@ -936,12 +938,7 @@ func (d *dataset) writeRawBlob(ctx context.Context, snapshotID DatasetSnapshotID
 		SizeBytes: int64(len(compressedData)),
 	}
 
-	// Compute checksum on stored (compressed) bytes
-	if d.checksum != nil {
-		hasher := d.checksum.NewHasher()
-		_, _ = hasher.Write(compressedData)
-		fileRef.Checksum = hasher.Sum()
-	}
+	fileRef.Checksum = d.checksumBytes(compressedData)
 
 	return fileRef, nil
 }
@@ -953,21 +950,21 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 	var buf bytes.Buffer
 	compWriter, err := d.compressor.Compress(&buf)
 	if err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	if err := d.codec.Encode(compWriter, records); err != nil {
 		_ = compWriter.Close()
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	if err := compWriter.Close(); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	data := buf.Bytes()
 	if err := d.store.Put(ctx, filePath, bytes.NewReader(data)); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	fileRef := FileRef{
@@ -975,12 +972,7 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 		SizeBytes: int64(len(data)),
 	}
 
-	// Compute checksum on stored (compressed) bytes
-	if d.checksum != nil {
-		hasher := d.checksum.NewHasher()
-		_, _ = hasher.Write(data)
-		fileRef.Checksum = hasher.Sum()
-	}
+	fileRef.Checksum = d.checksumBytes(data)
 
 	// Collect per-file stats if the codec supports it
 	if sc, ok := d.codec.(StatisticalCodec); ok {
@@ -993,19 +985,19 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 func (d *dataset) readRawBlob(ctx context.Context, filePath string) ([]byte, error) {
 	rc, err := d.store.Get(ctx, filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
-	defer func() { _ = decompReader.Close() }()
+	defer closer(decompReader)()
 
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(decompReader); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -1013,15 +1005,15 @@ func (d *dataset) readRawBlob(ctx context.Context, filePath string) ([]byte, err
 func (d *dataset) readDataFile(ctx context.Context, filePath string) ([]any, error) {
 	rc, err := d.store.Get(ctx, filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
-	defer func() { _ = decompReader.Close() }()
+	defer closer(decompReader)()
 
 	return d.codec.Decode(decompReader)
 }
@@ -1109,7 +1101,7 @@ func (d *dataset) loadSnapshotFromPath(ctx context.Context, id DatasetSnapshotID
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest Manifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
@@ -1279,49 +1271,19 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 	}
 
 	// Build manifest
-	manifest := &Manifest{
-		SchemaName:       manifestSchemaName,
-		FormatVersion:    manifestFormatVersion,
-		DatasetID:        sw.ds.id,
-		SnapshotID:       sw.snapshotID,
-		CreatedAt:        time.Now().UTC(),
-		Metadata:         sw.metadata,
-		Files:            []FileRef{fileRef},
-		ParentSnapshotID: sw.parentID,
-		RowCount:         1,
-		Codec:            "",
-		Compressor:       sw.ds.compressor.Name(),
-		Partitioner:      sw.ds.layout.partitioner().name(),
-	}
-	if sw.ds.checksum != nil {
-		manifest.ChecksumAlgorithm = sw.ds.checksum.Name()
-	}
+	manifest := sw.ds.buildManifest(sw.snapshotID, sw.parentID, sw.metadata, []FileRef{fileRef}, 1, "", nil, nil)
 
-	// Pointer must be written before manifest to prevent stale-but-existing
-	// pointers on cold start. If this fails, no manifest is written and the
-	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
-	// harmless (Exists check falls through to scan on the next cold start).
-	if err := sw.ds.writeLatestPointer(ctx, sw.expectedPointer, sw.snapshotID); err != nil {
-		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
-		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+	snapshot, err := sw.ds.commitSnapshot(ctx, sw.expectedPointer, sw.snapshotID, manifest, []string{""}, sw.filePath)
+	if err != nil {
+		return nil, err
 	}
-
-	if err := sw.ds.writeManifests(ctx, sw.snapshotID, manifest, []string{""}); err != nil {
-		_ = sw.ds.store.Delete(ctx, sw.filePath) // best-effort cleanup
-		return nil, fmt.Errorf("lode: failed to write manifest: %w", err)
-	}
-	sw.ds.lastSnapshotID = sw.snapshotID
-	sw.ds.lastWrittenPointer = string(sw.snapshotID)
 
 	// Mark committed only after full success
 	sw.mu.Lock()
 	sw.committed = true
 	sw.mu.Unlock()
 
-	return &DatasetSnapshot{
-		ID:       sw.snapshotID,
-		Manifest: manifest,
-	}, nil
+	return snapshot, nil
 }
 
 func (sw *streamWriter) Abort(ctx context.Context) error {

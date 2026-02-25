@@ -63,7 +63,7 @@ reader, _ := lode.NewDatasetReader(
 )
 ```
 
-### Volume (v0.6)
+### Volume
 
 `NewVolume(id, storeFactory, totalLength, opts...)` creates a sparse, range-addressable
 byte space with manifest-driven commit semantics.
@@ -113,13 +113,14 @@ not apply to the target (dataset vs reader) returns an error.
 
 ### Option Applicability Matrix
 
-| Option | Dataset | DatasetReader | Notes |
-|--------|:-------:|:------:|-------|
-| `WithHiveLayout(keys...)` | ✅ | ✅ | Preferred for Hive layout |
-| `WithLayout(layout)` | ✅ | ✅ | For any layout |
-| `WithCompressor(c)` | ✅ | ❌ | Write-time compression |
-| `WithCodec(c)` | ✅ | ❌ | Record encoding |
-| `WithChecksum(c)` | ✅ | ❌ | File checksums |
+| Option | Dataset | DatasetReader | Volume | Notes |
+|--------|:-------:|:------:|:------:|-------|
+| `WithHiveLayout(keys...)` | ✅ | ✅ | ❌ | Preferred for Hive layout |
+| `WithLayout(layout)` | ✅ | ✅ | ❌ | For any layout |
+| `WithCompressor(c)` | ✅ | ❌ | ❌ | Write-time compression |
+| `WithCodec(c)` | ✅ | ❌ | ❌ | Record encoding |
+| `WithChecksum(c)` | ✅ | ❌ | ❌ | File checksums |
+| `WithVolumeChecksum(c)` | ❌ | ❌ | ✅ | Volume block checksums |
 
 Passing a dataset-only option to `NewDatasetReader` returns an error at construction time.
 
@@ -326,7 +327,7 @@ Codecs that do not implement `StatisticalCodec` (e.g., JSONL) produce no stats �
 ## Metadata
 
 Writes always take explicit caller-supplied metadata. Empty metadata is
-valid; nil metadata is not.
+valid; nil metadata is coalesced to `Metadata{}`.
 
 ---
 
@@ -607,6 +608,8 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | `ErrCodecConfigured` | StreamWrite called with codec configured | Dataset |
 | `ErrCodecNotStreamable` | StreamWriteRecords with non-streaming codec | Dataset |
 | `ErrNilIterator` | Nil iterator passed to StreamWriteRecords | Dataset |
+| `ErrOptionNotValidForDataset` | Option not applicable to Dataset | Dataset |
+| `ErrOptionNotValidForDatasetReader` | Option not applicable to DatasetReader | DatasetReader |
 | `ErrPartitioningNotSupported` | StreamWriteRecords with partitioning | Dataset |
 | `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
 | `ErrRangeMissing` | Volume ReadAt range not fully committed | Volume |

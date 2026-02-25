@@ -491,7 +491,7 @@ func (s *Store) CompareAndSwap(ctx context.Context, key, expected, replacement s
 		}
 		return nil
 	}
-	defer func() { _ = out.Body.Close() }()
+	defer closer(out.Body)()
 
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
@@ -584,7 +584,7 @@ func (s *Store) ReadRange(ctx context.Context, key string, offset, length int64)
 		}
 		return nil, fmt.Errorf("s3: range read: %w", err)
 	}
-	defer func() { _ = out.Body.Close() }()
+	defer closer(out.Body)()
 
 	data, err := io.ReadAll(out.Body)
 	if err != nil {
@@ -658,7 +658,7 @@ func (r *readerAt) ReadAt(p []byte, off int64) (n int, err error) {
 		}
 		return 0, fmt.Errorf("s3: range read: %w", err)
 	}
-	defer func() { _ = out.Body.Close() }()
+	defer closer(out.Body)()
 
 	n, err = io.ReadFull(out.Body, p)
 	if errors.Is(err, io.ErrUnexpectedEOF) {
