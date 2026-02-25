@@ -477,42 +477,58 @@ manifest references them.
 
 ### Concurrency and CAS
 
-**When the store implements `ConditionalWriter`, Lode detects concurrent
-commits and returns `ErrSnapshotConflict`.**
+Lode uses optimistic concurrency (CAS) to detect conflicting writes.
+Whether CAS is available depends on which storage adapter you use:
 
-- Multiple **separate process instances** (or separate `Dataset`/`Volume` values)
-  MAY safely write to the same dataset or volume without external coordination
-  when using a CAS-capable store. A single `Dataset` or `Volume` value is NOT
-  safe for concurrent use by multiple goroutines.
-- On conflict, callers re-read `Latest()`, merge or rebuild state, and re-commit.
-  Data files are immutable and already persisted — retry cost is one manifest
-  write plus one pointer swap.
-- CAS is always-on when available; no configuration required.
+#### Adapter CAS Support
 
-**When the store does not implement `ConditionalWriter`**, callers MUST ensure
-at most one writer is active per dataset or volume at any time (single-writer
-requirement). External coordination (locks, queues, leader election) is the
-caller's responsibility.
+| Adapter | CAS | Concurrent writers | What happens on conflict |
+|---------|-----|--------------------|--------------------------|
+| **Memory** | ✅ | Safe without coordination | `ErrSnapshotConflict` — retry with `Latest()` |
+| **S3** | ✅ | Safe without coordination | `ErrSnapshotConflict` — retry with `Latest()` |
+| **FS (Unix)** | ✅ | Safe without coordination | `ErrSnapshotConflict` — retry with `Latest()` |
+| **FS (non-Unix)** | ❌ | Single-writer only | Undefined — serialize writes externally |
+| **Custom adapter** | Depends | Implement `ConditionalWriter` for CAS | Falls back to Delete+Put without it |
 
-See the concurrency matrices in `CONTRACT_WRITE_API.md` and `CONTRACT_VOLUME.md`
-for a full breakdown of supported patterns.
+CAS is always-on when the adapter supports it. No configuration required.
+
+#### With CAS (Memory, S3, FS on Unix)
+
+Multiple **separate process instances** (or separate `Dataset`/`Volume` values)
+MAY safely write to the same dataset or volume without external coordination.
+A single `Dataset` or `Volume` value is NOT safe for concurrent use by multiple
+goroutines.
+
+On conflict:
+1. Catch `ErrSnapshotConflict`
+2. Re-read state via `Latest()`
+3. Merge or rebuild, then re-commit
+
+Data files are immutable and already persisted — retry cost is one manifest
+write plus one pointer swap.
+
+#### Without CAS (FS on non-Unix, custom adapters without `ConditionalWriter`)
+
+Callers MUST ensure at most one writer is active per dataset or volume at any
+time. External coordination (locks, queues, leader election) is the caller's
+responsibility. Without this, concurrent writers may corrupt snapshot history.
 
 *Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md) §Concurrency, [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md) §Concurrency, [`CONTRACT_STORAGE.md`](docs/contracts/CONTRACT_STORAGE.md) §ConditionalWriter Capability*
 
 ### Performance
 
-CAS adds negligible overhead. Benchmarks on the in-memory adapter
-(20 sequential writes per iteration, AMD Ryzen 9 5900XT):
-
-| Metric | Delete+Put (main) | CAS (ConditionalWriter) | Delta |
-|--------|-------------------|-------------------------|-------|
-| ns/op  | 161,603           | 136,200                 | −16%  |
-| B/op   | 110,587           | 98,710                  | −11%  |
-| allocs | 740               | 720                     | −3%   |
-
-CAS replaces Delete+Put (2 store calls) with a single CompareAndSwap,
-reducing both latency and allocation count. Stores without ConditionalWriter
+CAS replaces Delete+Put (2 store calls) with a single `CompareAndSwap`,
+reducing both latency and allocation count. Stores without `ConditionalWriter`
 retain the existing Delete+Put path with no change.
+
+Benchmarks on the in-memory adapter (20 sequential writes per iteration,
+AMD Ryzen 9 5900XT):
+
+| Metric | Delete+Put | CAS (ConditionalWriter) | Delta |
+|--------|------------|-------------------------|-------|
+| ns/op  | 161,603    | 136,200                 | −16%  |
+| B/op   | 110,587    | 98,710                  | −11%  |
+| allocs | 740        | 720                     | −3%   |
 
 ### Large Upload Guarantees
 
