@@ -867,7 +867,15 @@ func (d *dataset) commitSnapshot(ctx context.Context, expectedPointer string, sn
 
 // buildManifest constructs a Manifest with common fields derived from the
 // dataset configuration. Only fields that vary across call sites are parameters.
-func (d *dataset) buildManifest(snapshotID DatasetSnapshotID, parentID DatasetSnapshotID, metadata Metadata, files []FileRef, rowCount int64, codec string, minTs, maxTs *time.Time) *Manifest {
+func (d *dataset) buildManifest(
+	snapshotID DatasetSnapshotID,
+	parentID DatasetSnapshotID,
+	metadata Metadata,
+	files []FileRef,
+	rowCount int64,
+	codec string,
+	minTs, maxTs *time.Time,
+) *Manifest {
 	m := &Manifest{
 		SchemaName:       manifestSchemaName,
 		FormatVersion:    manifestFormatVersion,

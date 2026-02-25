@@ -41,7 +41,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	fmt.Printf("Storage root: %s\n\n", tmpDir)
 
