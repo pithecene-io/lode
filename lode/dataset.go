@@ -321,7 +321,7 @@ func (d *dataset) readLatestPointer(ctx context.Context) (DatasetSnapshotID, err
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
@@ -447,7 +447,7 @@ func (d *dataset) Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetS
 		}
 		return nil, fmt.Errorf("lode: failed to get manifest: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest Manifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
@@ -987,13 +987,13 @@ func (d *dataset) readRawBlob(ctx context.Context, filePath string) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
 		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
-	defer func() { _ = decompReader.Close() }()
+	defer closer(decompReader)()
 
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(decompReader); err != nil {
@@ -1007,13 +1007,13 @@ func (d *dataset) readDataFile(ctx context.Context, filePath string) ([]any, err
 	if err != nil {
 		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
 		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
-	defer func() { _ = decompReader.Close() }()
+	defer closer(decompReader)()
 
 	return d.codec.Decode(decompReader)
 }
@@ -1101,7 +1101,7 @@ func (d *dataset) loadSnapshotFromPath(ctx context.Context, id DatasetSnapshotID
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest Manifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {

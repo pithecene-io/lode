@@ -75,7 +75,7 @@ func (f *fsStore) Put(_ context.Context, path string, r io.Reader) error {
 		}
 		return fmt.Errorf("lode: fs put: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer closer(file)()
 
 	if _, err = io.Copy(file, r); err != nil {
 		return fmt.Errorf("lode: fs put: %w", err)
@@ -184,7 +184,7 @@ func (f *fsStore) ReadRange(_ context.Context, path string, offset, length int64
 		}
 		return nil, fmt.Errorf("lode: fs read range: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer closer(file)()
 
 	data := make([]byte, int(length))
 	n, err := file.ReadAt(data, offset)

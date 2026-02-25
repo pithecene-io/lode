@@ -57,7 +57,7 @@ func TestDatasetReader_OpenObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenObject: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	got, err := io.ReadAll(rc)
 	if err != nil {

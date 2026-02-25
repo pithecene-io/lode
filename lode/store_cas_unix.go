@@ -32,7 +32,7 @@ func (f *fsStore) CompareAndSwap(_ context.Context, path, expected, replacement 
 	if err != nil {
 		return fmt.Errorf("lode: open lock file: %w", err)
 	}
-	defer func() { _ = lockFile.Close() }()
+	defer closer(lockFile)()
 
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lode: flock: %w", err)

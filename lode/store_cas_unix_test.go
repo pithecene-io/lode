@@ -39,7 +39,7 @@ func TestFSStore_CompareAndSwap_CreateWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after CAS create failed: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "snap-1" {
 		t.Errorf("expected 'snap-1', got %q", string(data))
@@ -75,7 +75,7 @@ func TestFSStore_CompareAndSwap_UpdateMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after CAS update failed: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "snap-2" {
 		t.Errorf("expected 'snap-2', got %q", string(data))
@@ -112,7 +112,7 @@ func TestFSStore_CompareAndSwap_ConflictMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after conflict: %v", err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "snap-1" {
 		t.Errorf("expected 'snap-1' (unchanged), got %q", string(data))

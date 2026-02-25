@@ -248,7 +248,7 @@ func (r *reader) loadManifest(ctx context.Context, manifestPath string) (*Manife
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rc.Close() }()
+	defer closer(rc)()
 
 	var manifest Manifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
