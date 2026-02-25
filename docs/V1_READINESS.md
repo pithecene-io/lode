@@ -124,9 +124,9 @@ as `(private)` instead of by number.
 
 - [ ] At least one consumer writing Dataset snapshots to S3 for 2+ weeks
 
-> **Evidence:** Quarry production pipeline writing Hive-partitioned Dataset snapshots to S3-compatible backend (R2) since 2026-02-10. 13 days elapsed as of 2026-02-23; threshold is 14 days. Eligible on 2026-02-24.
-> Date: 2026-02-23 | Observer: @pithecene-io | Project: quarry
-> Summary: Hive-partitioned event and blob storage, deterministic segment layout confirmed idempotent across re-runs. Pending 1 more day to meet 2-week threshold.
+> **Evidence:** Quarry production pipeline writing Hive-partitioned Dataset snapshots to S3-compatible backend (R2) since 2026-02-10. 15 days elapsed as of 2026-02-25; threshold met.
+> Date: 2026-02-25 | Observer: @pithecene-io | Project: quarry
+> Summary: Hive-partitioned event and blob storage, deterministic segment layout confirmed idempotent across re-runs. 2-week threshold met.
 > Issue: (private)
 
 - [ ] At least one consumer reading Dataset snapshots back (round-trip) for 2+ weeks
@@ -258,12 +258,11 @@ as `(private)` instead of by number.
 > Summary: —
 > Issue: #___
 
-- [ ] All examples pass (`task examples`)
+- [x] All examples pass (`task examples`)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** `task examples` passes all 10 examples (default_layout, hive_layout, blob_upload, manifest_driven, stream_write_records, parquet, volume_sparse, vector_artifacts, optimistic_concurrency, s3). Verified during v0.8.0 release and audit sweep PR.
+> Date: 2026-02-25 | Observer: @pithecene-io | Project: lode
+> Summary: All examples compile and run successfully. `internal/testutil` dependency removed in audit sweep (#157).
 
 - [ ] CHANGELOG includes v1.0 entry summarizing stability commitment
 

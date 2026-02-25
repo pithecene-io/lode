@@ -217,7 +217,7 @@ Volume accepts a minimal set of options:
 - `WithVolumeChecksum(c Checksum)` — opt-in integrity checksums on staged
   blocks. Reuses the existing `Checksum` interface.
 
-`VolumeOption` is extensible for future versions.
+`VolumeOption` is extensible via additional option constructors.
 
 ### API Constraints
 
@@ -227,8 +227,7 @@ Volume accepts a minimal set of options:
 - `Commit` MUST validate no overlaps in the full cumulative block set.
 - `ReadAt` MUST return `ErrRangeMissing` if any sub-range is uncommitted.
 - `VolumeReader` methods parallel Dataset's read surface.
-- `Volume` composes `VolumeWriter` + `VolumeReader` (leads the composition
-  pattern that Dataset will adopt in v0.7).
+- `Volume` composes `VolumeWriter` + `VolumeReader`.
 
 ---
 

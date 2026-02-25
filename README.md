@@ -180,7 +180,7 @@ What Lode commits to:
 | **Immutable snapshots** | Once written, data files and manifests never change |
 | **Atomic commits** | Manifest presence is the commit signal; no partial visibility |
 | **Explicit metadata** | Every snapshot has caller-supplied metadata (never inferred) |
-| **Safe writes** | Overwrites are prevented (atomic for small files; best-effort for large) |
+| **Safe writes** | Overwrites are prevented; atomic on all built-in adapters. Large uploads (>5GB) use conditional multipart on S3 ([details](PUBLIC_API.md#large-upload-guarantees)). |
 | **Backend-agnostic** | Same semantics on filesystem, memory, or S3 |
 
 What Lode explicitly does NOT provide:

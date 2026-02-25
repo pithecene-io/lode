@@ -42,13 +42,13 @@ func BenchmarkDataset_Read(b *testing.B) {
 func BenchmarkDataset_StreamWrite(b *testing.B) {
 	payload := []byte(strings.Repeat("x", 1024))
 
+	ds, err := NewDataset("bench-stream", NewMemoryFactory())
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ds, err := NewDataset("bench-stream", NewMemoryFactory())
-		if err != nil {
-			b.Fatal(err)
-		}
-
 		sw, err := ds.StreamWrite(b.Context(), Metadata{})
 		if err != nil {
 			b.Fatal(err)
