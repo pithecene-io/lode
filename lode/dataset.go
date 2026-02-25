@@ -914,21 +914,21 @@ func (d *dataset) writeRawBlob(ctx context.Context, snapshotID DatasetSnapshotID
 	var buf bytes.Buffer
 	compWriter, err := d.compressor.Compress(&buf)
 	if err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	if _, err := compWriter.Write(data); err != nil {
 		_ = compWriter.Close()
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	if err := compWriter.Close(); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	compressedData := buf.Bytes()
 	if err := d.store.Put(ctx, filePath, bytes.NewReader(compressedData)); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write blob: %w", err)
 	}
 
 	fileRef := FileRef{
@@ -953,21 +953,21 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 	var buf bytes.Buffer
 	compWriter, err := d.compressor.Compress(&buf)
 	if err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	if err := d.codec.Encode(compWriter, records); err != nil {
 		_ = compWriter.Close()
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	if err := compWriter.Close(); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	data := buf.Bytes()
 	if err := d.store.Put(ctx, filePath, bytes.NewReader(data)); err != nil {
-		return FileRef{}, err
+		return FileRef{}, fmt.Errorf("lode: write data file: %w", err)
 	}
 
 	fileRef := FileRef{
@@ -993,19 +993,19 @@ func (d *dataset) writeDataFile(ctx context.Context, snapshotID DatasetSnapshotI
 func (d *dataset) readRawBlob(ctx context.Context, filePath string) ([]byte, error) {
 	rc, err := d.store.Get(ctx, filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
 	defer func() { _ = decompReader.Close() }()
 
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(decompReader); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read blob: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -1013,13 +1013,13 @@ func (d *dataset) readRawBlob(ctx context.Context, filePath string) ([]byte, err
 func (d *dataset) readDataFile(ctx context.Context, filePath string) ([]any, error) {
 	rc, err := d.store.Get(ctx, filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
 
 	decompReader, err := d.compressor.Decompress(rc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lode: read data file: %w", err)
 	}
 	defer func() { _ = decompReader.Close() }()
 
