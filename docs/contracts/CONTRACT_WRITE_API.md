@@ -107,12 +107,12 @@ Snapshot history for a Dataset is linear.
 
 ### Dataset Write Concurrency Matrix
 
-| Pattern | Writers | Snapshots | History | v0.6 Status | Future |
-|---------|---------|-----------|---------|-------------|--------|
-| Single writer | 1 process | 1 per Write | Linear (guaranteed) | ✅ Supported | — |
-| Multi-process, serialized | N processes, external coordination | N (one per writer) | Linear (caller-enforced) | ✅ Supported (caller owns coordination) | CAS built into Lode |
-| Multi-process, uncoordinated | N processes, no coordination | N (one per writer) | Linear (CAS-enforced) | ✅ Safe (CAS) | — |
-| Parallel staging, single commit | 1 process, N goroutines | 1 (all shards merged) | Linear (guaranteed) | ❌ Not available | Transaction API |
+| Pattern | Writers | Snapshots | History | Status |
+|---------|---------|-----------|---------|--------|
+| Single writer | 1 process | 1 per Write | Linear (guaranteed) | ✅ Supported |
+| Multi-process, serialized | N processes, external coordination | N (one per writer) | Linear (caller-enforced) | ✅ Supported (caller owns coordination) |
+| Multi-process, uncoordinated | N processes, no coordination | N (one per writer) | Linear (CAS-enforced) | ✅ Safe (CAS) |
+| Parallel staging, single commit | 1 process, N goroutines | 1 (all shards merged) | Linear (guaranteed) | ❌ Not available |
 
 ### Optimistic Concurrency (CAS)
 

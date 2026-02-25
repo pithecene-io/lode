@@ -1,6 +1,6 @@
 # Lode Complexity Bounds — Contract
 
-Status: Active (v0.7). All known violations resolved.
+Status: Active (v0.8). All known violations resolved.
 
 ---
 

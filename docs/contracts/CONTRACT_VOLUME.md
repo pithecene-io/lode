@@ -3,7 +3,7 @@
 This document defines the contract for the `Volume` persistence paradigm.
 It is authoritative for all Volume implementations.
 
-Status: **Active** (v0.6.0)
+Status: **Active** (v0.8.0)
 
 ---
 
@@ -144,7 +144,7 @@ Required behavior:
 
 ---
 
-## Public API Surface (v0.6)
+## Public API Surface
 
 The public Volume API is explicit, minimal, and composed from
 `VolumeWriter` + `VolumeReader` sub-interfaces:
@@ -251,11 +251,11 @@ Snapshot history for a Volume is linear.
 
 ### Volume Write Concurrency Matrix
 
-| Pattern | Writers | Blocks | History | v0.6 Status | Future |
-|---------|---------|--------|---------|-------------|--------|
-| Single writer | 1 process | Non-overlapping blocks | Linear (guaranteed) | ✅ Supported | — |
-| Multi-process, serialized | N processes, external coordination | Non-overlapping blocks | Linear (caller-enforced) | ✅ Supported (caller owns coordination) | CAS built into Lode |
-| Multi-process, uncoordinated | N processes, no coordination | Non-overlapping blocks | Linear (CAS-enforced) | ✅ Safe (CAS) | — |
+| Pattern | Writers | Blocks | History | Status |
+|---------|---------|--------|---------|--------|
+| Single writer | 1 process | Non-overlapping blocks | Linear (guaranteed) | ✅ Supported |
+| Multi-process, serialized | N processes, external coordination | Non-overlapping blocks | Linear (caller-enforced) | ✅ Supported (caller owns coordination) |
+| Multi-process, uncoordinated | N processes, no coordination | Non-overlapping blocks | Linear (CAS-enforced) | ✅ Safe (CAS) |
 
 ### Optimistic Concurrency (CAS)
 
