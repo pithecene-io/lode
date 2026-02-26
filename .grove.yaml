@@ -3,7 +3,7 @@ grove:
     Structured persistence framework for object storage,
     bringing snapshots, metadata, and safe write semantics
     without running a database.
-  horizon: "generational"
+  horizon: "perennial"
   role: "library"
   phase: "consolidating"
   steward: "Andrew"
