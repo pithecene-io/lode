@@ -223,9 +223,9 @@ as `(private)` instead of by number.
 
 - [ ] Concurrency model documented in README + PUBLIC_API.md + contracts (single-writer when store lacks `ConditionalWriter`; CAS-based optimistic concurrency when available)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: CAS optimistic concurrency shipped in v0.8.0 (#135). Contracts, PUBLIC_API.md, and README document `ConditionalWriter`, `ErrSnapshotConflict`, and the adapter CAS capability matrix.
+> **Evidence:** CAS optimistic concurrency shipped in v0.8.0 (#135). Contracts, PUBLIC_API.md, and README document `ConditionalWriter`, `ErrSnapshotConflict`, and the adapter CAS capability matrix. PR #156 added the adapter CAS capability table to PUBLIC_API.md.
+> Date: 2026-02-25 | Observer: @pithecene-io | Project: lode
+> Summary: Concurrency model fully documented across README, PUBLIC_API.md, CONTRACT_WRITE_API.md, and CONTRACT_VOLUME.md. Adapter CAS capability matrix in PUBLIC_API.md.
 > Issue: #135
 
 - [ ] Context cancellation cleanup nondeterminism documented as best-effort, no correctness impact
