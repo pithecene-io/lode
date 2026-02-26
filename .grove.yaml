@@ -1,5 +1,8 @@
 grove:
-  intent: "Structured persistence framework for object storage, bringing snapshots, metadata, and safe write semantics without running a database."
+  intent: >-
+    Structured persistence framework for object storage,
+    bringing snapshots, metadata, and safe write semantics
+    without running a database.
   horizon: "generational"
   role: "library"
   phase: "consolidating"
