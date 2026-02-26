@@ -1,4 +1,6 @@
 ---
+ignore-from-file: .gitignore
+
 extends: default
 
 rules:
