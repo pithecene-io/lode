@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-03-08
+
+### Added
+
+- **Opt-in CAS retry**: `WithRetryCount(n)` enables automatic bounded retry on `ErrSnapshotConflict` within the commit path for both Dataset and Volume. Data files are written once; only the manifest re-parent and pointer CAS are retried. ([#164](https://github.com/pithecene-io/lode/pull/164), closes [#163](https://github.com/pithecene-io/lode/issues/163))
+- **Backoff customization**: `WithRetryBaseDelay(d)`, `WithRetryMaxDelay(d)`, `WithRetryJitter(j)` for full control over jittered exponential backoff. Defaults: 10ms base, 2s max, full jitter.
+- **`ErrOptionNotValidForVolume`**: Sentinel error for options that do not apply to Volume construction.
+
+### Changed
+
+- **Unified `Option` interface**: `VolumeOption` function type replaced by the shared `Option` interface (already used by Dataset and DatasetReader). `NewVolume` now takes `...Option`. Options that do not apply to a given constructor return an error at construction time. ([#164](https://github.com/pithecene-io/lode/pull/164))
+- **`WithVolumeChecksum` → `WithChecksum`**: Volume block checksums now use the same `WithChecksum(c)` option as Dataset file checksums.
+
+### Breaking Changes
+
+- **`VolumeOption` type removed**: Replace `lode.VolumeOption` with `lode.Option`.
+- **`WithVolumeChecksum` removed**: Replace `lode.WithVolumeChecksum(c)` with `lode.WithChecksum(c)`.
+
+### Upgrade Notes
+
+- **Search-and-replace migration**:
+  - `lode.VolumeOption` → `lode.Option`
+  - `lode.WithVolumeChecksum(` → `lode.WithChecksum(`
+- **Retry is opt-in**: Default behavior (0 retries) is unchanged. Existing callers see no difference unless they configure `WithRetryCount`.
+- **No data migration required**: Storage layout and manifest format are unchanged.
+
+### References
+
+- [CONTRACT_WRITE_API.md](docs/contracts/CONTRACT_WRITE_API.md) — Automatic retry semantics
+- [CONTRACT_VOLUME.md](docs/contracts/CONTRACT_VOLUME.md) — Unified Option interface, Volume retry
+- [CONTRACT_ERRORS.md](docs/contracts/CONTRACT_ERRORS.md) — Automatic retry guidance for ErrSnapshotConflict
+
+---
+
 ## [0.8.0] - 2026-02-24
 
 ### Added
@@ -445,7 +479,8 @@ Post-v0.3.0 improvements planned:
 
 ---
 
-[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/pithecene-io/lode/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/pithecene-io/lode/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/pithecene-io/lode/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/pithecene-io/lode/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/pithecene-io/lode/compare/v0.7.2...v0.7.3

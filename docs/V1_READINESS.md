@@ -90,7 +90,7 @@ as `(private)` instead of by number.
 > Summary: —
 > Issue: #___
 
-- [ ] Option / VolumeOption surface has not expanded since dogfooding began
+- [ ] Option surface has not expanded since dogfooding began (VolumeOption unified into Option in v0.9.0)
 
 > **Evidence:** _not yet recorded_
 > Date: — | Observer: — | Project: —
