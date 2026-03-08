@@ -143,7 +143,7 @@ write plus one pointer swap.
 On `ErrSnapshotConflict`, the writer:
 1. Sleeps with jittered exponential backoff.
 2. Calls `Latest()` to refresh the in-memory CAS cache.
-3. Re-resolves the parent and re-parents the manifest (new snapshot ID).
+3. Re-resolves the parent and re-parents the manifest (same snapshot ID).
 4. Retries the pointer CAS.
 
 Data files are written once; only the manifest and pointer are retried.

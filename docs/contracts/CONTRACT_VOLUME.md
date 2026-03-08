@@ -207,7 +207,7 @@ type Volume interface {
 }
 
 // NewVolume creates a volume with a fixed total length.
-func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...VolumeOption) (Volume, error)
+func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...Option) (Volume, error)
 ```
 
 ### Volume Options
@@ -287,7 +287,7 @@ On `ErrSnapshotConflict`, the commit:
 2. Calls `Latest()` to refresh the in-memory CAS cache.
 3. Re-resolves the parent and re-merges blocks against the new parent.
 4. Validates no overlaps in the re-merged cumulative set.
-5. Retries the pointer CAS with a new snapshot ID.
+5. Retries the pointer CAS with a fresh snapshot ID.
 
 `ErrOverlappingBlocks` terminates the retry loop immediately (non-retryable).
 If all retries are exhausted, `ErrSnapshotConflict` is returned as usual.

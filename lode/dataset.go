@@ -924,8 +924,13 @@ func cleanupStreamWrite(ctx context.Context, store Store, filePath string, encod
 // On ErrSnapshotConflict it refreshes state and retries up to d.retry.maxAttempts
 // times. Data files must already be persisted before calling.
 //
+// The snapshotID is stable across retries. Data files are written under paths
+// derived from the snapshotID, so changing it would break layout co-location
+// (manifest and data must share the same snapshot directory). On CAS failure,
+// no manifest was written for this ID — it is safe to reuse.
+//
 // Parameters:
-//   - snapshotID: initial snapshot ID (new IDs generated on retry)
+//   - snapshotID: snapshot ID (stable across retries)
 //   - files: immutable file references (stable across retries)
 //   - partitionKeys: partition keys for manifest fan-out
 //   - metadata: user metadata
@@ -955,7 +960,6 @@ func (d *dataset) commitWithRetry(
 				d.cleanupDataFile(ctx, cleanupPath)
 				return nil, err
 			}
-			snapshotID = DatasetSnapshotID(generateID())
 		}
 
 		parentID, expectedPointer, err := d.resolveParent(ctx)

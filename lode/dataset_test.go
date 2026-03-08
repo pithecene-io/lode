@@ -2998,6 +2998,14 @@ func TestDataset_Write_WithRetryCount_SucceedsAfterConflict(t *testing.T) {
 	if snap.Manifest.ParentSnapshotID == "" {
 		t.Error("expected non-empty parent snapshot ID after retry")
 	}
+
+	// Verify file paths are consistent with the committed snapshot ID.
+	// Data files must be co-located under the same snapshot directory.
+	for _, f := range snap.Manifest.Files {
+		if !strings.Contains(f.Path, string(snap.ID)) {
+			t.Errorf("file path %q does not contain committed snapshot ID %q", f.Path, snap.ID)
+		}
+	}
 }
 
 // TestDataset_Write_WithRetryCount_ExhaustsRetries verifies that when all
