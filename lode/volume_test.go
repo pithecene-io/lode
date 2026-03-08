@@ -48,7 +48,7 @@ func validVolumeManifest(volumeID VolumeID, totalLength int64) *VolumeManifest {
 }
 
 // newTestVolume is a convenience helper that creates a Volume and t.Fatal's on error.
-func newTestVolume(t *testing.T, id VolumeID, factory StoreFactory, totalLength int64, opts ...VolumeOption) Volume {
+func newTestVolume(t *testing.T, id VolumeID, factory StoreFactory, totalLength int64, opts ...Option) Volume {
 	t.Helper()
 	vol, err := NewVolume(id, factory, totalLength, opts...)
 	if err != nil {
@@ -372,7 +372,7 @@ func TestVolume_Snapshot_NotFound_ReturnsErrNotFound(t *testing.T) {
 
 func TestVolume_StageWriteAt_WithChecksum(t *testing.T) {
 	vol, err := NewVolume("test-vol", NewMemoryFactory(), 100,
-		WithVolumeChecksum(NewMD5Checksum()),
+		WithChecksum(NewMD5Checksum()),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -384,7 +384,7 @@ func TestVolume_StageWriteAt_WithChecksum(t *testing.T) {
 	}
 
 	if blk.Checksum == "" {
-		t.Error("expected non-empty checksum when WithVolumeChecksum configured")
+		t.Error("expected non-empty checksum when WithChecksum configured")
 	}
 }
 
@@ -1065,7 +1065,7 @@ func TestVolume_Snapshot_TotalLengthMismatch_ReturnsError(t *testing.T) {
 
 func TestVolume_Commit_WithChecksum_AlgorithmPersisted(t *testing.T) {
 	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 100,
-		WithVolumeChecksum(NewMD5Checksum()),
+		WithChecksum(NewMD5Checksum()),
 	)
 	blk := stageBlock(t, vol, 0, bytes.Repeat([]byte("A"), 10))
 	snap := commitBlocks(t, vol, []BlockRef{blk}, Metadata{})
@@ -1097,7 +1097,7 @@ func TestVolume_Commit_WithoutChecksum_NoAlgorithm(t *testing.T) {
 
 func TestVolume_ManifestRoundTrip_AllFieldsPreserved(t *testing.T) {
 	vol := newTestVolume(t, "test-vol", NewMemoryFactory(), 100,
-		WithVolumeChecksum(NewMD5Checksum()),
+		WithChecksum(NewMD5Checksum()),
 	)
 	ctx := t.Context()
 
@@ -2039,5 +2039,199 @@ func TestVolume_Commit_ConcurrentConflict(t *testing.T) {
 	_, err = v1.Commit(t.Context(), []BlockRef{block4}, Metadata{})
 	if err != nil {
 		t.Fatalf("v1 retry after Latest() should succeed, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// CAS retry tests (WithRetryCount)
+// -----------------------------------------------------------------------------
+
+// TestVolume_Commit_WithRetryCount_SucceedsAfterConflict verifies that a
+// volume configured with WithRetryCount automatically retries on CAS
+// conflict and succeeds with re-merged blocks.
+func TestVolume_Commit_WithRetryCount_SucceedsAfterConflict(t *testing.T) {
+	mem := NewMemory()
+	factory := NewMemoryFactoryFrom(mem)
+
+	v1, err := NewVolume("shared", factory, 1024,
+		WithRetryCount(3),
+		WithRetryJitter(0.0),
+		WithRetryBaseDelay(time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("NewVolume v1: %v", err)
+	}
+	v2, err := NewVolume("shared", factory, 1024)
+	if err != nil {
+		t.Fatalf("NewVolume v2: %v", err)
+	}
+
+	// v1 commits first.
+	block1, err := v1.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-a")))
+	if err != nil {
+		t.Fatalf("v1 stage 1: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 first commit: %v", err)
+	}
+
+	// v2 commits at a different offset, advancing the pointer.
+	block2, err := v2.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-b")))
+	if err != nil {
+		t.Fatalf("v2 stage: %v", err)
+	}
+	_, err = v2.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatalf("v2 commit: %v", err)
+	}
+
+	// v1 commits at yet another offset — stale cache triggers CAS conflict
+	// on first attempt, but retry should succeed with re-merged blocks.
+	block3, err := v1.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-c")))
+	if err != nil {
+		t.Fatalf("v1 stage 2: %v", err)
+	}
+	snap, err := v1.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 commit with retry should succeed, got: %v", err)
+	}
+
+	// Verify cumulative blocks: should contain all three blocks.
+	if len(snap.Manifest.Blocks) != 3 {
+		t.Errorf("expected 3 cumulative blocks, got %d", len(snap.Manifest.Blocks))
+	}
+}
+
+// TestVolume_Commit_WithRetryCount_Zero_CurrentBehavior verifies that
+// WithRetryCount(0) preserves the default behavior (no retry).
+func TestVolume_Commit_WithRetryCount_Zero_CurrentBehavior(t *testing.T) {
+	mem := NewMemory()
+	factory := NewMemoryFactoryFrom(mem)
+
+	v1, err := NewVolume("shared", factory, 1024, WithRetryCount(0))
+	if err != nil {
+		t.Fatalf("NewVolume v1: %v", err)
+	}
+	v2, err := NewVolume("shared", factory, 1024)
+	if err != nil {
+		t.Fatalf("NewVolume v2: %v", err)
+	}
+
+	// v1 commits first.
+	block1, err := v1.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-a")))
+	if err != nil {
+		t.Fatalf("v1 stage: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 first commit: %v", err)
+	}
+
+	// v2 commits, advancing pointer.
+	block2, err := v2.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-b")))
+	if err != nil {
+		t.Fatalf("v2 stage: %v", err)
+	}
+	_, err = v2.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatalf("v2 commit: %v", err)
+	}
+
+	// v1 should fail immediately without retry.
+	block3, err := v1.StageWriteAt(t.Context(), 200, bytes.NewReader([]byte("block-c")))
+	if err != nil {
+		t.Fatalf("v1 stage 2: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("expected ErrSnapshotConflict with retries=0, got: %v", err)
+	}
+}
+
+// TestVolume_Commit_WithRetryCount_OverlapOnRetry verifies that when a
+// concurrent writer creates an overlapping block, the retry terminates
+// with ErrOverlappingBlocks (non-retryable).
+func TestVolume_Commit_WithRetryCount_OverlapOnRetry(t *testing.T) {
+	mem := NewMemory()
+	factory := NewMemoryFactoryFrom(mem)
+
+	v1, err := NewVolume("shared", factory, 1024,
+		WithRetryCount(3),
+		WithRetryJitter(0.0),
+		WithRetryBaseDelay(time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("NewVolume v1: %v", err)
+	}
+	v2, err := NewVolume("shared", factory, 1024)
+	if err != nil {
+		t.Fatalf("NewVolume v2: %v", err)
+	}
+
+	// v1 commits block at offset 0.
+	block1, err := v1.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("block-a")))
+	if err != nil {
+		t.Fatalf("v1 stage: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block1}, Metadata{})
+	if err != nil {
+		t.Fatalf("v1 first commit: %v", err)
+	}
+
+	// v2 commits a non-overlapping block at offset 100, advancing the pointer.
+	block2, err := v2.StageWriteAt(t.Context(), 100, bytes.NewReader([]byte("block-b")))
+	if err != nil {
+		t.Fatalf("v2 stage: %v", err)
+	}
+	_, err = v2.Commit(t.Context(), []BlockRef{block2}, Metadata{})
+	if err != nil {
+		t.Fatalf("v2 commit: %v", err)
+	}
+
+	// v1 stages a block that overlaps with v2's block at [100, 107).
+	// On retry after CAS conflict, v1 refreshes state and discovers v2's
+	// block. Merging [103, 105) with [100, 107) → ErrOverlappingBlocks.
+	block3, err := v1.StageWriteAt(t.Context(), 103, bytes.NewReader([]byte("ab")))
+	if err != nil {
+		t.Fatalf("v1 stage 2: %v", err)
+	}
+	_, err = v1.Commit(t.Context(), []BlockRef{block3}, Metadata{})
+	if !errors.Is(err, ErrOverlappingBlocks) {
+		t.Fatalf("expected ErrOverlappingBlocks on retry, got: %v", err)
+	}
+}
+
+// TestVolume_WithRetryCount_OptionValidation verifies volume option validation.
+func TestVolume_WithRetryCount_OptionValidation(t *testing.T) {
+	_, err := NewVolume("test", NewMemoryFactory(), 1024, WithRetryCount(-1))
+	if err == nil {
+		t.Fatal("expected error for negative retry count")
+	}
+}
+
+// TestNewVolume_WithChecksum_UnifiedOption verifies that the unified
+// WithChecksum option works for volumes (replacing WithVolumeChecksum).
+func TestNewVolume_WithChecksum_UnifiedOption(t *testing.T) {
+	vol, err := NewVolume("test", NewMemoryFactory(), 1024, WithChecksum(NewMD5Checksum()))
+	if err != nil {
+		t.Fatalf("NewVolume with unified WithChecksum: %v", err)
+	}
+
+	block, err := vol.StageWriteAt(t.Context(), 0, bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if block.Checksum == "" {
+		t.Error("expected non-empty checksum when WithChecksum configured")
+	}
+}
+
+// TestNewVolume_WithLayout_Rejected verifies that dataset-only options
+// are rejected by NewVolume.
+func TestNewVolume_WithLayout_Rejected(t *testing.T) {
+	_, err := NewVolume("test", NewMemoryFactory(), 1024, WithLayout(NewDefaultLayout()))
+	if !errors.Is(err, ErrOptionNotValidForVolume) {
+		t.Fatalf("expected ErrOptionNotValidForVolume, got: %v", err)
 	}
 }

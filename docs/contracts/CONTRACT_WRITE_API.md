@@ -128,7 +128,7 @@ concurrent commits and returns `ErrSnapshotConflict`.
 - If the store does not implement `ConditionalWriter`, the current Delete+Put
   behavior applies and single-writer semantics remain the caller's responsibility.
 
-**Retry pattern:**
+**Manual retry pattern:**
 1. Receive `ErrSnapshotConflict`.
 2. Re-read `Latest()` to get the current head.
 3. Merge or rebuild state against the new head.
@@ -136,6 +136,22 @@ concurrent commits and returns `ErrSnapshotConflict`.
 
 Data files are immutable and already persisted — retry cost is one manifest
 write plus one pointer swap.
+
+**Automatic retry (opt-in):**
+
+`WithRetryCount(n)` enables bounded automatic retry within the commit path.
+On `ErrSnapshotConflict`, the writer:
+1. Sleeps with jittered exponential backoff.
+2. Calls `Latest()` to refresh the in-memory CAS cache.
+3. Re-resolves the parent and re-parents the manifest (same snapshot ID).
+4. Retries the pointer CAS.
+
+Data files are written once; only the manifest and pointer are retried.
+If all retries are exhausted, `ErrSnapshotConflict` is returned as usual.
+
+Retry options: `WithRetryCount(n)`, `WithRetryBaseDelay(d)`,
+`WithRetryMaxDelay(d)`, `WithRetryJitter(j)`. Defaults: 0 retries,
+10ms base, 2s max, full jitter.
 
 **Activation:**
 - Always-on when the adapter implements `ConditionalWriter`.

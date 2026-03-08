@@ -28,14 +28,16 @@ type datasetConfig struct {
 	compressor Compressor
 	codec      Codec
 	checksum   Checksum
+	retry      retryConfig
 }
 
-// Option configures dataset or reader construction.
+// Option configures dataset, reader, or volume construction.
 // Options implement methods for the constructors they support.
 // Using an option with an unsupported constructor returns an error.
 type Option interface {
 	applyDataset(*datasetConfig) error
 	applyReader(*readerConfig) error
+	applyVolume(*volumeConfig) error
 }
 
 // ErrOptionNotValidForDatasetReader indicates an option was used with NewDatasetReader
@@ -45,6 +47,10 @@ var ErrOptionNotValidForDatasetReader = errors.New("option not valid for reader"
 // ErrOptionNotValidForDataset indicates an option was used with NewDataset
 // that only applies to NewDatasetReader.
 var ErrOptionNotValidForDataset = errors.New("option not valid for dataset")
+
+// ErrOptionNotValidForVolume indicates an option was used with NewVolume
+// that only applies to Dataset or DatasetReader.
+var ErrOptionNotValidForVolume = errors.New("option not valid for volume")
 
 // layoutOption implements Option for WithLayout.
 type layoutOption struct {
@@ -66,6 +72,10 @@ func (o *layoutOption) applyDataset(cfg *datasetConfig) error {
 func (o *layoutOption) applyReader(cfg *readerConfig) error {
 	cfg.layout = o.layout
 	return nil
+}
+
+func (o *layoutOption) applyVolume(*volumeConfig) error {
+	return fmt.Errorf("WithLayout: %w", ErrOptionNotValidForVolume)
 }
 
 // hiveLayoutOption implements Option for WithHiveLayout.
@@ -106,6 +116,10 @@ func (o *hiveLayoutOption) applyReader(cfg *readerConfig) error {
 	return nil
 }
 
+func (o *hiveLayoutOption) applyVolume(*volumeConfig) error {
+	return fmt.Errorf("WithHiveLayout: %w", ErrOptionNotValidForVolume)
+}
+
 // compressorOption implements Option for WithCompressor (dataset-only).
 type compressorOption struct {
 	compressor Compressor
@@ -125,6 +139,10 @@ func (o *compressorOption) applyDataset(cfg *datasetConfig) error {
 
 func (o *compressorOption) applyReader(*readerConfig) error {
 	return fmt.Errorf("WithCompressor: %w", ErrOptionNotValidForDatasetReader)
+}
+
+func (o *compressorOption) applyVolume(*volumeConfig) error {
+	return fmt.Errorf("WithCompressor: %w", ErrOptionNotValidForVolume)
 }
 
 // codecOption implements Option for WithCodec (dataset-only).
@@ -152,6 +170,10 @@ func (o *codecOption) applyReader(*readerConfig) error {
 	return fmt.Errorf("WithCodec: %w", ErrOptionNotValidForDatasetReader)
 }
 
+func (o *codecOption) applyVolume(*volumeConfig) error {
+	return fmt.Errorf("WithCodec: %w", ErrOptionNotValidForVolume)
+}
+
 // checksumOption implements Option for WithChecksum (dataset-only).
 type checksumOption struct {
 	checksum Checksum
@@ -176,6 +198,90 @@ func (o *checksumOption) applyReader(*readerConfig) error {
 	return fmt.Errorf("WithChecksum: %w", ErrOptionNotValidForDatasetReader)
 }
 
+func (o *checksumOption) applyVolume(cfg *volumeConfig) error {
+	cfg.checksum = o.checksum
+	return nil
+}
+
+// retryOption implements Option for all WithRetry* constructors.
+// Retry options apply identically to datasets and volumes (both have a
+// retryConfig), and are never valid for readers.
+type retryOption struct {
+	name  string
+	apply func(*retryConfig) error
+}
+
+func (o *retryOption) applyDataset(cfg *datasetConfig) error { return o.apply(&cfg.retry) }
+func (o *retryOption) applyVolume(cfg *volumeConfig) error   { return o.apply(&cfg.retry) }
+
+func (o *retryOption) applyReader(*readerConfig) error {
+	return fmt.Errorf("%s: %w", o.name, ErrOptionNotValidForDatasetReader)
+}
+
+// WithRetryCount enables automatic CAS retry on snapshot conflict.
+// When n > 0, the commit path retries up to n times on ErrSnapshotConflict,
+// refreshing the parent state between attempts.
+// Default: 0 (no retry; ErrSnapshotConflict returned immediately).
+func WithRetryCount(n int) Option {
+	return &retryOption{
+		name: "WithRetryCount",
+		apply: func(r *retryConfig) error {
+			if n < 0 {
+				return errors.New("WithRetryCount: n must be non-negative")
+			}
+			r.maxAttempts = n
+			return nil
+		},
+	}
+}
+
+// WithRetryBaseDelay sets the base delay for exponential backoff on CAS retry.
+// The actual delay doubles with each attempt and is jittered.
+// Default: 10ms.
+func WithRetryBaseDelay(d time.Duration) Option {
+	return &retryOption{
+		name: "WithRetryBaseDelay",
+		apply: func(r *retryConfig) error {
+			if d <= 0 {
+				return errors.New("WithRetryBaseDelay: delay must be positive")
+			}
+			r.baseDelay = d
+			return nil
+		},
+	}
+}
+
+// WithRetryMaxDelay sets the maximum delay for exponential backoff on CAS retry.
+// Default: 2s.
+func WithRetryMaxDelay(d time.Duration) Option {
+	return &retryOption{
+		name: "WithRetryMaxDelay",
+		apply: func(r *retryConfig) error {
+			if d <= 0 {
+				return errors.New("WithRetryMaxDelay: delay must be positive")
+			}
+			r.maxDelay = d
+			return nil
+		},
+	}
+}
+
+// WithRetryJitter sets the jitter factor for CAS retry backoff.
+// 0.0 means no jitter (deterministic delay), 1.0 means full jitter.
+// Default: 1.0 (full jitter).
+func WithRetryJitter(j float64) Option {
+	return &retryOption{
+		name: "WithRetryJitter",
+		apply: func(r *retryConfig) error {
+			if j < 0 || j > 1 {
+				return errors.New("WithRetryJitter: jitter must be between 0.0 and 1.0")
+			}
+			r.jitter = j
+			return nil
+		},
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Dataset Implementation
 // -----------------------------------------------------------------------------
@@ -188,6 +294,7 @@ type dataset struct {
 	compressor Compressor
 	codec      Codec
 	checksum   Checksum
+	retry      retryConfig
 
 	// lastSnapshotID is set after each successful commit. It guards against
 	// stale-but-existing pointers: if the pointer write fails after a commit,
@@ -232,6 +339,7 @@ func NewDataset(id DatasetID, factory StoreFactory, opts ...Option) (Dataset, er
 		layout:     NewDefaultLayout(),
 		compressor: NewNoOpCompressor(),
 		codec:      nil,
+		retry:      defaultRetryConfig(),
 	}
 
 	for _, opt := range opts {
@@ -258,6 +366,7 @@ func NewDataset(id DatasetID, factory StoreFactory, opts ...Option) (Dataset, er
 		compressor: cfg.compressor,
 		codec:      cfg.codec,
 		checksum:   cfg.checksum,
+		retry:      cfg.retry,
 	}, nil
 }
 
@@ -375,11 +484,8 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		metadata = Metadata{}
 	}
 
-	parentID, expectedPointer, err := d.resolveParent(ctx)
-	if err != nil {
-		return nil, err
-	}
-
+	// Phase 1: Write data files once. File paths include the snapshot ID but
+	// data is immutable — on retry we re-parent the manifest, not re-upload.
 	snapshotID := DatasetSnapshotID(generateID())
 
 	var files []FileRef
@@ -432,9 +538,9 @@ func (d *dataset) Write(ctx context.Context, data []any, metadata Metadata) (*Da
 		return files[i].Path < files[j].Path
 	})
 
-	manifest := d.buildManifest(snapshotID, parentID, metadata, files, rowCount, codecName, minTs, maxTs)
-
-	return d.commitSnapshot(ctx, expectedPointer, snapshotID, manifest, partitionKeys, "")
+	// Phase 2: Resolve parent and commit. On CAS conflict, retry by
+	// refreshing state and re-parenting the manifest.
+	return d.commitWithRetry(ctx, snapshotID, files, partitionKeys, metadata, rowCount, codecName, minTs, maxTs, "")
 }
 
 func (d *dataset) Snapshot(ctx context.Context, id DatasetSnapshotID) (*DatasetSnapshot, error) {
@@ -678,11 +784,6 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		return nil, ErrPartitioningNotSupported
 	}
 
-	parentID, expectedPointer, err := d.resolveParent(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	snapshotID := DatasetSnapshotID(generateID())
 	fileName := "data" + d.compressor.Extension()
 	filePath := d.layout.dataFilePath(d.id, snapshotID, "", fileName)
@@ -795,10 +896,9 @@ func (d *dataset) StreamWriteRecords(ctx context.Context, records RecordIterator
 		fileRef.Checksum = hasher.Sum()
 	}
 
-	// Build manifest
-	manifest := d.buildManifest(snapshotID, parentID, metadata, []FileRef{fileRef}, rowCount, d.codec.Name(), minTs, maxTs)
-
-	return d.commitSnapshot(ctx, expectedPointer, snapshotID, manifest, []string{""}, filePath)
+	// Commit with retry. Data file is already persisted; on conflict we
+	// only re-parent the manifest and retry the pointer CAS.
+	return d.commitWithRetry(ctx, snapshotID, []FileRef{fileRef}, []string{""}, metadata, rowCount, d.codec.Name(), minTs, maxTs, filePath)
 }
 
 // cleanupStreamWrite tears down the streaming write pipeline on error.
@@ -818,6 +918,77 @@ func cleanupStreamWrite(ctx context.Context, store Store, filePath string, encod
 		<-putDone
 	}
 	_ = store.Delete(ctx, filePath)
+}
+
+// commitWithRetry resolves the parent, builds a manifest, and commits.
+// On ErrSnapshotConflict it refreshes state and retries up to d.retry.maxAttempts
+// times. Data files must already be persisted before calling.
+//
+// The snapshotID is stable across retries. Data files are written under paths
+// derived from the snapshotID, so changing it would break layout co-location
+// (manifest and data must share the same snapshot directory). On CAS failure,
+// no manifest was written for this ID — it is safe to reuse.
+//
+// Parameters:
+//   - snapshotID: snapshot ID (stable across retries)
+//   - files: immutable file references (stable across retries)
+//   - partitionKeys: partition keys for manifest fan-out
+//   - metadata: user metadata
+//   - rowCount: total row count
+//   - codec: codec name (empty for raw blob)
+//   - minTs, maxTs: timestamp bounds
+//   - cleanupPath: data file path to delete on final failure (empty = no cleanup)
+func (d *dataset) commitWithRetry(
+	ctx context.Context,
+	snapshotID DatasetSnapshotID,
+	files []FileRef,
+	partitionKeys []string,
+	metadata Metadata,
+	rowCount int64,
+	codec string,
+	minTs, maxTs *time.Time,
+	cleanupPath string,
+) (*DatasetSnapshot, error) {
+	var lastErr error
+	for attempt := range d.retry.maxAttempts + 1 {
+		if attempt > 0 {
+			if err := d.retry.retryBackoff(ctx, attempt); err != nil {
+				d.cleanupDataFile(ctx, cleanupPath)
+				return nil, err
+			}
+			if _, err := d.Latest(ctx); err != nil && !errors.Is(err, ErrNoSnapshots) {
+				d.cleanupDataFile(ctx, cleanupPath)
+				return nil, err
+			}
+		}
+
+		parentID, expectedPointer, err := d.resolveParent(ctx)
+		if err != nil {
+			d.cleanupDataFile(ctx, cleanupPath)
+			return nil, err
+		}
+
+		manifest := d.buildManifest(snapshotID, parentID, metadata, files, rowCount, codec, minTs, maxTs)
+
+		result, err := d.commitSnapshot(ctx, expectedPointer, snapshotID, manifest, partitionKeys, "")
+		if err == nil {
+			return result, nil
+		}
+		if !errors.Is(err, ErrSnapshotConflict) {
+			d.cleanupDataFile(ctx, cleanupPath)
+			return nil, err
+		}
+		lastErr = err
+	}
+	d.cleanupDataFile(ctx, cleanupPath)
+	return nil, lastErr
+}
+
+// cleanupDataFile deletes a data file on commit failure. No-op if path is empty.
+func (d *dataset) cleanupDataFile(ctx context.Context, path string) {
+	if path != "" {
+		_ = d.store.Delete(ctx, path)
+	}
 }
 
 func (d *dataset) partitionRecords(records []any) (map[string][]any, error) {
@@ -1270,15 +1441,13 @@ func (sw *streamWriter) Commit(ctx context.Context) (*DatasetSnapshot, error) {
 		fileRef.Checksum = sw.hasher.Sum()
 	}
 
-	// Build manifest
-	manifest := sw.ds.buildManifest(sw.snapshotID, sw.parentID, sw.metadata, []FileRef{fileRef}, 1, "", nil, nil)
-
-	snapshot, err := sw.ds.commitSnapshot(ctx, sw.expectedPointer, sw.snapshotID, manifest, []string{""}, sw.filePath)
+	// Commit with retry. Data file is already persisted; on conflict we
+	// only re-parent the manifest and retry the pointer CAS.
+	snapshot, err := sw.ds.commitWithRetry(ctx, sw.snapshotID, []FileRef{fileRef}, []string{""}, sw.metadata, 1, "", nil, nil, sw.filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Mark committed only after full success
 	sw.mu.Lock()
 	sw.committed = true
 	sw.mu.Unlock()

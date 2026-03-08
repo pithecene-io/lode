@@ -257,10 +257,14 @@ These indicate a conflict detected during commit via optimistic concurrency.
 - Data files are immutable and already persisted; retry cost is one
   manifest write plus one pointer swap.
 
-**Retry Guidance**:
+**Manual Retry Guidance**:
 1. Re-read `Latest()` to get the current head.
 2. Merge or rebuild state against the new head.
 3. Re-commit.
+
+**Automatic Retry**: `WithRetryCount(n)` automates this loop within the
+commit path. Data files are written once; only the manifest re-parent
+and pointer CAS are retried. See `CONTRACT_WRITE_API.md` §Automatic retry.
 
 When the store does not implement `ConditionalWriter`, this error is
 never returned; callers must ensure single-writer semantics as before.
