@@ -25,6 +25,7 @@ type volume struct {
 	store       Store
 	totalLength int64
 	checksum    Checksum
+	retry       retryConfig
 
 	// lastSnapshotID guards against stale-but-existing pointers after a
 	// pointer write failure. See dataset.lastSnapshotID for rationale.
@@ -37,7 +38,7 @@ type volume struct {
 }
 
 // NewVolume creates a volume with a fixed total length.
-func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...VolumeOption) (Volume, error) {
+func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...Option) (Volume, error) {
 	if storeFactory == nil {
 		return nil, errors.New("lode: store factory must not be nil")
 	}
@@ -56,9 +57,13 @@ func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts .
 		return nil, errors.New("lode: store factory returned nil store")
 	}
 
-	cfg := &volumeConfig{}
+	cfg := &volumeConfig{
+		retry: defaultRetryConfig(),
+	}
 	for _, opt := range opts {
-		opt(cfg)
+		if err := opt.applyVolume(cfg); err != nil {
+			return nil, fmt.Errorf("lode: %w", err)
+		}
 	}
 
 	return &volume{
@@ -66,6 +71,7 @@ func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts .
 		store:       store,
 		totalLength: totalLength,
 		checksum:    cfg.checksum,
+		retry:       cfg.retry,
 	}, nil
 }
 
@@ -204,12 +210,8 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		return nil, errors.New("lode: commit must include at least one new block")
 	}
 
-	parentID, existingBlocks, expectedPointer, err := v.resolveParent(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	// Validate all new blocks have required fields, conform to fixed layout, and are within bounds.
+	// This is invariant across retries — checked once before the commit loop.
 	for _, b := range blocks {
 		if b.Offset < 0 {
 			return nil, fmt.Errorf("lode: block offset must be non-negative (offset=%d)", b.Offset)
@@ -226,76 +228,103 @@ func (v *volume) Commit(ctx context.Context, blocks []BlockRef, metadata Metadat
 		}
 	}
 
-	// Verify at least one block is genuinely new (not already in the parent manifest).
-	existingSet := make(map[string]struct{}, len(existingBlocks))
-	for _, b := range existingBlocks {
-		existingSet[b.Path] = struct{}{}
-	}
-	hasNew := false
-	for _, b := range blocks {
-		if _, found := existingSet[b.Path]; !found {
-			hasNew = true
-			break
-		}
-	}
-	if !hasNew {
-		return nil, errors.New("lode: commit must include at least one new block (all provided blocks already committed)")
-	}
-
-	// Build cumulative block set, sorted by offset for O(log B) lookups.
-	// existingBlocks are sorted (guaranteed by prior commits). Sort only
-	// the new blocks and merge for O(N + K log K) instead of O((N+K) log(N+K)).
-	cumulativeBlocks := mergeBlocks(existingBlocks, blocks)
-
-	// Validate no overlaps in the full cumulative set.
-	if err := validateNoOverlaps(cumulativeBlocks); err != nil {
-		return nil, err
-	}
-
-	snapshotID := VolumeSnapshotID(generateID())
-
 	var checksumAlgorithm string
 	if v.checksum != nil {
 		checksumAlgorithm = v.checksum.Name()
 	}
 
-	manifest := &VolumeManifest{
-		SchemaName:        volumeManifestSchemaName,
-		FormatVersion:     volumeManifestFormatVersion,
-		VolumeID:          v.id,
-		SnapshotID:        snapshotID,
-		CreatedAt:         time.Now().UTC(),
-		Metadata:          metadata,
-		TotalLength:       v.totalLength,
-		Blocks:            cumulativeBlocks,
-		ParentSnapshotID:  parentID,
-		ChecksumAlgorithm: checksumAlgorithm,
-	}
+	// Commit loop: resolve parent, merge blocks, write pointer+manifest.
+	// On CAS conflict, re-read Latest() to get the new parent's blocks
+	// and re-merge before retrying.
+	var lastErr error
+	for attempt := range v.retry.maxAttempts + 1 {
+		if attempt > 0 {
+			if err := v.retry.retryBackoff(ctx, attempt); err != nil {
+				return nil, err
+			}
+			// Refresh in-memory CAS cache from storage.
+			if _, err := v.Latest(ctx); err != nil && !errors.Is(err, ErrNoSnapshots) {
+				return nil, err
+			}
+		}
 
-	manifestData, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("lode: failed to marshal volume manifest: %w", err)
-	}
+		parentID, existingBlocks, expectedPointer, err := v.resolveParent(ctx)
+		if err != nil {
+			return nil, err
+		}
 
-	// Pointer must be written before manifest to prevent stale-but-existing
-	// pointers on cold start. If this fails, no manifest is written and the
-	// commit is aborted. A pointer referencing a not-yet-existing snapshot is
-	// harmless (Exists check falls through to scan on the next cold start).
-	if err := v.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
-		return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
-	}
+		// Verify at least one block is genuinely new against this parent.
+		existingSet := make(map[string]struct{}, len(existingBlocks))
+		for _, b := range existingBlocks {
+			existingSet[b.Path] = struct{}{}
+		}
+		hasNew := false
+		for _, b := range blocks {
+			if _, found := existingSet[b.Path]; !found {
+				hasNew = true
+				break
+			}
+		}
+		if !hasNew {
+			return nil, errors.New("lode: commit must include at least one new block (all provided blocks already committed)")
+		}
 
-	manifestPath := volumeManifestPath(v.id, snapshotID)
-	if err := v.store.Put(ctx, manifestPath, bytes.NewReader(manifestData)); err != nil {
-		return nil, fmt.Errorf("lode: failed to write volume manifest: %w", err)
-	}
-	v.lastSnapshotID = snapshotID
-	v.lastWrittenPointer = string(snapshotID)
+		// Build cumulative block set, sorted by offset for O(log B) lookups.
+		// existingBlocks are sorted (guaranteed by prior commits). Sort only
+		// the new blocks and merge for O(N + K log K) instead of O((N+K) log(N+K)).
+		cumulativeBlocks := mergeBlocks(existingBlocks, blocks)
 
-	return &VolumeSnapshot{
-		ID:       snapshotID,
-		Manifest: manifest,
-	}, nil
+		// Validate no overlaps in the full cumulative set.
+		// Non-retryable: overlapping blocks are a logic error.
+		if err := validateNoOverlaps(cumulativeBlocks); err != nil {
+			return nil, err
+		}
+
+		snapshotID := VolumeSnapshotID(generateID())
+
+		manifest := &VolumeManifest{
+			SchemaName:        volumeManifestSchemaName,
+			FormatVersion:     volumeManifestFormatVersion,
+			VolumeID:          v.id,
+			SnapshotID:        snapshotID,
+			CreatedAt:         time.Now().UTC(),
+			Metadata:          metadata,
+			TotalLength:       v.totalLength,
+			Blocks:            cumulativeBlocks,
+			ParentSnapshotID:  parentID,
+			ChecksumAlgorithm: checksumAlgorithm,
+		}
+
+		manifestData, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("lode: failed to marshal volume manifest: %w", err)
+		}
+
+		// Pointer must be written before manifest to prevent stale-but-existing
+		// pointers on cold start. If this fails, no manifest is written and the
+		// commit is aborted. A pointer referencing a not-yet-existing snapshot is
+		// harmless (Exists check falls through to scan on the next cold start).
+		if err := v.writeLatestPointer(ctx, expectedPointer, snapshotID); err != nil {
+			if !errors.Is(err, ErrSnapshotConflict) {
+				return nil, fmt.Errorf("lode: failed to update latest pointer: %w", err)
+			}
+			lastErr = fmt.Errorf("lode: failed to update latest pointer: %w", err)
+			continue
+		}
+
+		manifestPath := volumeManifestPath(v.id, snapshotID)
+		if err := v.store.Put(ctx, manifestPath, bytes.NewReader(manifestData)); err != nil {
+			return nil, fmt.Errorf("lode: failed to write volume manifest: %w", err)
+		}
+		v.lastSnapshotID = snapshotID
+		v.lastWrittenPointer = string(snapshotID)
+
+		return &VolumeSnapshot{
+			ID:       snapshotID,
+			Manifest: manifest,
+		}, nil
+	}
+	return nil, lastErr
 }
 
 // resolveParent finds the most recent committed snapshot for parent chaining

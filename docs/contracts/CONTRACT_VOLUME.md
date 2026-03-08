@@ -161,7 +161,7 @@ type BlockRef struct {
     Offset   int64
     Length   int64
     Path     string
-    Checksum string // populated when WithVolumeChecksum is configured
+    Checksum string // populated when WithChecksum is configured
 }
 
 // VolumeSnapshot represents an immutable point-in-time view of a volume.
@@ -210,14 +210,18 @@ type Volume interface {
 func NewVolume(id VolumeID, storeFactory StoreFactory, totalLength int64, opts ...VolumeOption) (Volume, error)
 ```
 
-### VolumeOption
+### Volume Options
 
-Volume accepts a minimal set of options:
+Volume accepts the unified `Option` interface (shared with Dataset).
+Applicable options:
 
-- `WithVolumeChecksum(c Checksum)` — opt-in integrity checksums on staged
-  blocks. Reuses the existing `Checksum` interface.
+- `WithChecksum(c Checksum)` — opt-in integrity checksums on staged blocks.
+- `WithRetryCount(n)` — bounded automatic CAS retry on commit conflict.
+- `WithRetryBaseDelay(d)`, `WithRetryMaxDelay(d)`, `WithRetryJitter(j)` —
+  backoff tuning for CAS retry.
 
-`VolumeOption` is extensible via additional option constructors.
+Options that only apply to Dataset or DatasetReader return an error at
+construction time.
 
 ### API Constraints
 
@@ -274,6 +278,19 @@ The mechanism is identical to Dataset CAS (see `CONTRACT_WRITE_API.md`
   without conflict: re-read `Latest()`, union new blocks with the updated
   cumulative manifest, re-commit.
 - Overlapping blocks remain invalid regardless of CAS (see `ErrOverlappingBlocks`).
+
+**Automatic retry (opt-in):**
+
+`WithRetryCount(n)` enables bounded automatic retry within `Commit`.
+On `ErrSnapshotConflict`, the commit:
+1. Sleeps with jittered exponential backoff.
+2. Calls `Latest()` to refresh the in-memory CAS cache.
+3. Re-resolves the parent and re-merges blocks against the new parent.
+4. Validates no overlaps in the re-merged cumulative set.
+5. Retries the pointer CAS with a new snapshot ID.
+
+`ErrOverlappingBlocks` terminates the retry loop immediately (non-retryable).
+If all retries are exhausted, `ErrSnapshotConflict` is returned as usual.
 
 **Single-writer compatibility:**
 - Single-writer workflows are unaffected.

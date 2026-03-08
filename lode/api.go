@@ -683,20 +683,10 @@ type VolumeSnapshot struct {
 	Manifest *VolumeManifest
 }
 
-// VolumeOption configures volume construction.
-type VolumeOption func(*volumeConfig)
-
 // volumeConfig holds the resolved configuration for a volume.
 type volumeConfig struct {
 	checksum Checksum
-}
-
-// WithVolumeChecksum configures integrity checksums on staged blocks.
-// Reuses the existing Checksum interface.
-func WithVolumeChecksum(c Checksum) VolumeOption {
-	return func(cfg *volumeConfig) {
-		cfg.checksum = c
-	}
+	retry    retryConfig
 }
 
 // -----------------------------------------------------------------------------

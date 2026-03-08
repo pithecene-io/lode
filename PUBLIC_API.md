@@ -97,7 +97,8 @@ Volume uses a fixed internal storage layout (`volumes/<id>/...`). The
 `Layout` abstraction is Dataset-specific and does not apply to Volume.
 
 **Volume options:**
-- `WithVolumeChecksum(c)` — opt-in integrity checksums on staged blocks
+- `WithChecksum(c)` — opt-in integrity checksums on staged blocks
+- `WithRetryCount(n)` — opt-in automatic CAS retry on commit conflict
 
 *Contract reference: [`CONTRACT_VOLUME.md`](docs/contracts/CONTRACT_VOLUME.md)*
 
@@ -119,10 +120,14 @@ not apply to the target (dataset vs reader) returns an error.
 | `WithLayout(layout)` | ✅ | ✅ | ❌ | For any layout |
 | `WithCompressor(c)` | ✅ | ❌ | ❌ | Write-time compression |
 | `WithCodec(c)` | ✅ | ❌ | ❌ | Record encoding |
-| `WithChecksum(c)` | ✅ | ❌ | ❌ | File checksums |
-| `WithVolumeChecksum(c)` | ❌ | ❌ | ✅ | Volume block checksums |
+| `WithChecksum(c)` | ✅ | ❌ | ✅ | File / block checksums |
+| `WithRetryCount(n)` | ✅ | ❌ | ✅ | Bounded CAS retry on conflict |
+| `WithRetryBaseDelay(d)` | ✅ | ❌ | ✅ | Backoff base delay (default: 10ms) |
+| `WithRetryMaxDelay(d)` | ✅ | ❌ | ✅ | Backoff cap (default: 2s) |
+| `WithRetryJitter(j)` | ✅ | ❌ | ✅ | Jitter factor 0.0–1.0 (default: 1.0) |
 
-Passing a dataset-only option to `NewDatasetReader` returns an error at construction time.
+Passing an inapplicable option to `NewDatasetReader` or `NewVolume` returns
+an error at construction time.
 
 *Contract reference: [`CONTRACT_WRITE_API.md`](docs/contracts/CONTRACT_WRITE_API.md), [`CONTRACT_READ_API.md`](docs/contracts/CONTRACT_READ_API.md)*
 
@@ -500,10 +505,17 @@ MAY safely write to the same dataset or volume without external coordination.
 A single `Dataset` or `Volume` value is NOT safe for concurrent use by multiple
 goroutines.
 
-On conflict:
+On conflict (manual retry):
 1. Catch `ErrSnapshotConflict`
 2. Re-read state via `Latest()`
 3. Merge or rebuild, then re-commit
+
+On conflict (automatic retry):
+Configure `WithRetryCount(n)` at construction time. The commit path
+automatically refreshes state and re-parents the manifest on conflict,
+with jittered exponential backoff. Data files are written once — only
+the manifest and pointer CAS are retried. Customize backoff with
+`WithRetryBaseDelay`, `WithRetryMaxDelay`, and `WithRetryJitter`.
 
 Data files are immutable and already persisted — retry cost is one manifest
 write plus one pointer swap.
@@ -610,6 +622,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 | `ErrNilIterator` | Nil iterator passed to StreamWriteRecords | Dataset |
 | `ErrOptionNotValidForDataset` | Option not applicable to Dataset | Dataset |
 | `ErrOptionNotValidForDatasetReader` | Option not applicable to DatasetReader | DatasetReader |
+| `ErrOptionNotValidForVolume` | Option not applicable to Volume | Volume |
 | `ErrPartitioningNotSupported` | StreamWriteRecords with partitioning | Dataset |
 | `ErrRangeReadNotSupported` | Store doesn't support range reads | Storage |
 | `ErrRangeMissing` | Volume ReadAt range not fully committed | Volume |
@@ -623,7 +636,7 @@ if errors.Is(err, lode.ErrNoSnapshots) {
 **Retry-safe:**
 - Storage I/O errors (network, timeout) — may retry
 - `ErrNotFound` during race — may retry if expecting eventual consistency
-- `ErrSnapshotConflict` — re-read `Latest()`, merge state, re-commit
+- `ErrSnapshotConflict` — re-read `Latest()`, merge state, re-commit (or use `WithRetryCount` for automatic retry)
 
 **Non-retry (configuration/logic error):**
 - `ErrDatasetsNotModeled` — reconfigure with different layout
