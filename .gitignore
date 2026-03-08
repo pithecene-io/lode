@@ -17,3 +17,6 @@ bench-*.txt
 /stream_write_records
 /vector_artifacts
 /volume_sparse
+
+# Bonsai check output (ephemeral)
+ai/out/
