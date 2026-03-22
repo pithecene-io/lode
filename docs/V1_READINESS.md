@@ -43,7 +43,7 @@ as `(private)` instead of by number.
 | Dataset write round-trip | ✅ | 2026-02-23 | Hive-partitioned writes and reads over S3-compatible backend at >100k object scale |
 | Volume write round-trip | N/A | — | Dataset-only integration |
 | Error sentinels observed | ✅ | 2026-02-23 | `ErrNoSnapshots` handled on cold start; latest-pointer resolution exercised |
-| API friction (none = pass) | ❌ | 2026-02-23 | Blob file completeness not verifiable without prefix scan (see §9); concurrent write safety now documented but still operational friction for non-CAS stores |
+| API friction (none = pass) | ⚠️ | 2026-03-22 | Blob file completeness (§9) reclassified as out-of-scope — sidecar files written via `Store.Put()` bypass the Dataset API and are the caller's responsibility (see §9 and `PUBLIC_API.md` §Sidecar Files). CAS friction resolved for CAS-capable stores (R2) via `WithRetryCount` (v0.9.0); non-CAS store guidance documented in `PUBLIC_API.md` §Adapter CAS Support. Remaining friction is caller-side. |
 
 <!--
 ### <project-name or redacted alias>
@@ -273,19 +273,19 @@ as `(private)` instead of by number.
 
 ### 9. Blob File Completeness
 
-- [ ] Blob files written alongside structured data within a snapshot are enumerable without prefix-scanning storage
+- [x] ~~Blob files written alongside structured data within a snapshot are enumerable without prefix-scanning storage~~ Reclassified: out of scope (see below)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Reclassified as out-of-scope. Files written via `Store.Put()` directly — bypassing the Dataset write path — are not tracked by manifests by design. The manifest describes files Lode wrote; caller-managed sidecar files are the caller's responsibility. Correct patterns: use `StreamWrite` to write blobs through Lode, or track file inventories in snapshot `Metadata`. See `PUBLIC_API.md` §Sidecar Files and Store Access.
+> Date: 2026-03-22 | Observer: @pithecene-io | Project: lode
+> Summary: Design analysis confirmed this is a caller-side usage pattern, not a Lode gap. Manifest self-description integrity preserved.
+> Issue: —
 
-- [ ] Consumers can verify which blob files were successfully persisted for a given commit
+- [x] ~~Consumers can verify which blob files were successfully persisted for a given commit~~ Reclassified: out of scope (see above)
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Same reclassification. Blobs written through Lode's write path (`Write`, `StreamWrite`, `StreamWriteRecords`) are tracked in `Manifest.Files` and verifiable. Blobs written outside Lode are outside the manifest's scope.
+> Date: 2026-03-22 | Observer: @pithecene-io | Project: lode
+> Summary: Completeness verification is available for all files written through Lode's API. Files bypassing the API are the caller's concern.
+> Issue: —
 
 ### 10. Data Correctness
 
