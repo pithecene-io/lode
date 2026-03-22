@@ -401,6 +401,58 @@ Common errors when using streaming APIs:
 
 ---
 
+## Sidecar Files and Store Access
+
+**Lode's manifest tracks only files written through Lode's write path.**
+
+Files written via `Store.Put()` directly — bypassing `Dataset.Write`,
+`StreamWrite`, or `StreamWriteRecords` — are not recorded in the manifest
+and are not discoverable via `Snapshots()`, `Read()`, or any Dataset API.
+
+This is by design. The manifest is authoritative because Lode produced the
+files it describes: it knows their size, computed their checksums (when
+configured), and applied the configured codec and compressor. Files Lode
+didn't write cannot carry these guarantees.
+
+### Correct Patterns for Binary Sidecar Files
+
+| Pattern | When to Use | Completeness |
+|---------|-------------|-------------|
+| `StreamWrite` per file | Each sidecar is its own snapshot; manifest tracks it | Full — `Snapshots()` enumerates all committed blobs |
+| `Write` with `[]byte` data | Small blobs that fit in memory | Full — manifest tracks the file |
+| File inventory in `Metadata` | Caller manages storage; Lode tracks the inventory | Caller-verified — paths listed in metadata, existence checked by caller |
+
+### StreamWrite for Sidecar Blobs (Recommended)
+
+<!-- illustrative -->
+```go
+// Each sidecar file gets its own snapshot via StreamWrite
+sw, _ := ds.StreamWrite(ctx, lode.Metadata{"filename": "model.bin", "run_id": "r-123"})
+io.Copy(sw, file)
+snapshot, _ := sw.Commit(ctx)
+// snapshot.Manifest.Files[0] tracks the blob with size and checksum
+```
+
+### File Inventory in Metadata (When Managing Storage Directly)
+
+<!-- illustrative -->
+```go
+// Caller writes files outside Lode and records paths in metadata
+store.Put(ctx, "custom/path/model.bin", modelReader)
+store.Put(ctx, "custom/path/index.bin", indexReader)
+
+snapshot, _ := ds.Write(ctx, records, lode.Metadata{
+    "sidecar_files": []string{"custom/path/model.bin", "custom/path/index.bin"},
+})
+// Caller can later read snapshot.Manifest.Metadata["sidecar_files"]
+// to enumerate files, but must verify existence independently
+```
+
+**Anti-pattern:** Writing files via `Store.Put()` without tracking them in
+metadata or using `StreamWrite`, then expecting the manifest to enumerate them.
+
+---
+
 ## Choosing a Write API
 
 - Use `Write` for in-memory data, partitioned data, or codecs that do not support streaming.
