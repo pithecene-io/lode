@@ -42,8 +42,8 @@ as `(private)` instead of by number.
 |-----------|:---------:|------|-------|
 | Dataset write round-trip | ✅ | 2026-02-23 | Hive-partitioned writes and reads over S3-compatible backend at >100k object scale |
 | Volume write round-trip | N/A | — | Dataset-only integration |
-| Error sentinels observed | ✅ | 2026-02-23 | `ErrNoSnapshots` handled on cold start; latest-pointer resolution exercised |
-| API friction (none = pass) | ⚠️ | 2026-03-22 | Blob file completeness (§9) reclassified as out-of-scope — sidecar files written via `Store.Put()` bypass the Dataset API and are the caller's responsibility (see §9 and `PUBLIC_API.md` §Sidecar Files). CAS friction resolved for CAS-capable stores (R2) via `WithRetryCount` (v0.9.0); non-CAS store guidance documented in `PUBLIC_API.md` §Adapter CAS Support. Remaining friction is caller-side. |
+| Error sentinels observed | ✅ | 2026-03-22 | All 3 sentinels validated: `ErrNoSnapshots` (production), `ErrPathExists` (integration test), `ErrNotFound` (integration test) |
+| API friction (none = pass) | ✅ | 2026-03-22 | All friction resolved. Blob completeness (§9): Quarry tracks sidecar files in snapshot `Metadata["sidecar_files"]` (v0.13.4); caller responsibility, not a Lode gap. CAS: resolved for CAS-capable stores (R2) via `WithRetryCount(3)` (v0.12.1); non-CAS store guidance documented in `PUBLIC_API.md` §Adapter CAS Support. |
 
 <!--
 ### <project-name or redacted alias>
@@ -189,19 +189,19 @@ as `(private)` instead of by number.
 > Summary: Sentinel correctly returned and handled. Latest-pointer self-healing scan fallback exercised on first access.
 > Issue: (private)
 
-- [ ] ErrPathExists observed in real storage confirming immutability enforcement
+- [x] ErrPathExists observed in real storage confirming immutability enforcement
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Not observed in production — validated via targeted integration test (`TestPutFile_ErrPathExists_DoubleWrite` in `quarry/lode/sentinel_test.go`). Double-write via `LodeClient.PutFile()` to memory store confirms `lode.ErrPathExists` returned and classified as `StorageError` with `ErrPathExists` kind. Exercises Quarry's actual sidecar file write path.
+> Date: 2026-03-22 | Observer: @pithecene-io | Project: quarry
+> Summary: Immutability enforcement confirmed via integration test exercising Quarry's production write path against Lode's storage layer.
+> Issue: (private)
 
-- [ ] ErrNotFound observed and handled correctly for a missing snapshot lookup
+- [x] ErrNotFound observed and handled correctly for a missing snapshot lookup
 
-> **Evidence:** _not yet recorded_
-> Date: — | Observer: — | Project: —
-> Summary: —
-> Issue: #___
+> **Evidence:** Not observed in production — validated via targeted integration test (`TestQueryLatestMetrics_ErrNotFound_StaleSnapshotID` in `quarry/lode/sentinel_test.go`). Fabricated snapshot ID passed to `ds.Read()` confirms `lode.ErrNotFound` returned. Exercises the exact code path in `QueryLatestMetrics` where a snapshot could be GC'd between list and read.
+> Date: 2026-03-22 | Observer: @pithecene-io | Project: quarry
+> Summary: Missing-snapshot sentinel confirmed via integration test exercising Quarry's stale-snapshot-ID recovery path.
+> Issue: (private)
 
 ### 6. S3 Backend Verification
 
